@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cspecbrute47"]
+
+[ext_resource type="Script" path="res://tools/probe_specbrute47.gd" id="1_sb47"]
+
+[node name="ProbeSpecBrute47" type="Node"]
+script = ExtResource("1_sb47")

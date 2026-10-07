@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bfinal44"]
+
+[ext_resource type="Script" path="res://tools/probe_final44.gd" id="1_f44"]
+
+[node name="ProbeFinal44" type="Node"]
+script = ExtResource("1_f44")

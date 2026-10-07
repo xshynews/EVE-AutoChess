@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bbrakeflip46"]
+
+[ext_resource type="Script" path="res://tools/probe_brake_flip.gd" id="1_bf46"]
+
+[node name="ProbeBrakeFlip" type="Node"]
+script = ExtResource("1_bf46")

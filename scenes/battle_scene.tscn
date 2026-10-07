@@ -1,0 +1,10 @@
+[gd_scene load_steps=2 format=3 uid="uid://eve_autochess_battle"]
+
+[ext_resource type="Script" path="res://scripts/eve_battle_scene.gd" id="1_battle"]
+
+[node name="BattleScene" type="Node"]
+script = ExtResource("1_battle")
+own_size = 5
+enemy_size = 6
+time_scale = 1.0
+auto_restart_delay = 4.0

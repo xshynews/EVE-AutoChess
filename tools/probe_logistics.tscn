@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bql0g5st1c2mn"]
+
+[ext_resource type="Script" path="res://tools/probe_logistics.gd" id="1_logi"]
+
+[node name="ProbeLogistics" type="Node"]
+script = ExtResource("1_logi")

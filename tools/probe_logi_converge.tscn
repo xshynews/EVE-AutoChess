@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://c1l0gcv2n3pqr"]
+
+[ext_resource type="Script" path="res://tools/probe_logi_converge.gd" id="1_lcv"]
+
+[node name="ProbeLogiConverge" type="Node"]
+script = ExtResource("1_lcv")

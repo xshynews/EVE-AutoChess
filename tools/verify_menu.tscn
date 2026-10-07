@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tools/verify_menu.gd" id="1_vm"]
+
+[node name="VerifyMenu" type="Node"]
+script = ExtResource("1_vm")

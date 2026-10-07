@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bq7run0verify"]
+
+[ext_resource type="Script" path="res://tools/verify_run.gd" id="1_verifyrun"]
+
+[node name="VerifyRun" type="Node"]
+script = ExtResource("1_verifyrun")

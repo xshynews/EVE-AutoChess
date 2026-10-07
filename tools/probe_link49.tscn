@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://clink5aprobe"]
+
+[ext_resource type="Script" path="res://tools/probe_link49.gd" id="1_link49"]
+
+[node name="ProbeLink49" type="Node"]
+script = ExtResource("1_link49")

@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cmin5aprobe"]
+
+[ext_resource type="Script" path="res://tools/probe_min49.gd" id="1_min49"]
+
+[node name="ProbeMin49" type="Node"]
+script = ExtResource("1_min49")

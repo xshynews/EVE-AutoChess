@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://c2g4x3de6o4ni"]
+
+[ext_resource type="Script" path="res://tools/probe_setaxis53.gd" id="1_sa53"]
+
+[node name="ProbeSetAxis53" type="Node"]
+script = ExtResource("1_sa53")

@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cwbow47world"]
+
+[ext_resource type="Script" path="res://tools/probe_worldbow47.gd" id="1_w47"]
+
+[node name="ProbeWorldBow47" type="Node"]
+script = ExtResource("1_w47")

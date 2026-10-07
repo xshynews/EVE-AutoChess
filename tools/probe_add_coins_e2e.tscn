@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://ddcoinse201"]
+
+[ext_resource type="Script" path="res://tools/probe_add_coins_e2e.gd" id="1_e"]
+
+[node name="ProbeAddCoinsE2E" type="Node"]
+script = ExtResource("1_e")

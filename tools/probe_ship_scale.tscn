@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://byhom46u8hae1"]
+
+[ext_resource type="Script" path="res://tools/probe_ship_scale.gd" id="1_pss"]
+
+[node name="ProbeShipScale" type="Node"]
+script = ExtResource("1_pss")

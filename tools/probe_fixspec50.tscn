@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bw28hy7r0j1aw"]
+
+[ext_resource type="Script" path="res://tools/probe_fixspec50.gd" id="1_fs50"]
+
+[node name="ProbeFixSpec50" type="Node"]
+script = ExtResource("1_fs50")

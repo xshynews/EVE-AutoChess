@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cjump53probe"]
+
+[ext_resource type="Script" path="res://tools/probe_jump53.gd" id="1_jp53"]
+
+[node name="ProbeJump53" type="Node"]
+script = ExtResource("1_jp53")

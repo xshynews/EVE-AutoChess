@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cprobeskyuv0"]
+
+[ext_resource type="Script" path="res://tools/probe_sky_uv.gd" id="1_probeskyuv"]
+
+[node name="ProbeSkyUv" type="Node"]
+script = ExtResource("1_probeskyuv")

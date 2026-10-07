@@ -1,0 +1,4 @@
+[gd_scene format=3 uid="uid://cmbuy46probe"]
+[ext_resource type="Script" path="res://tools/probe_mbuy46.gd" id="1"]
+[node name="ProbeMBuy46" type="Node"]
+script = ExtResource("1")

@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://dva3e32q4fis1"]
+
+[ext_resource type="Script" path="res://tools/probe_meshrot53.gd" id="1_mr53"]
+
+[node name="ProbeMeshRot53" type="Node"]
+script = ExtResource("1_mr53")

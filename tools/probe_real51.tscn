@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://c6x6xmeas8v8k"]
+
+[ext_resource type="Script" path="res://tools/probe_real51.gd" id="1_real51"]
+
+[node name="ProbeReal51" type="Node3D"]
+script = ExtResource("1_real51")

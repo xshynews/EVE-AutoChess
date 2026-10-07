@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://b36e6rmg65wgs"]
+
+[ext_resource type="Script" path="res://tools/probe_flip_up_src.gd" id="1_fus53"]
+
+[node name="ProbeFlipUpSrc53" type="Node"]
+script = ExtResource("1_fus53")

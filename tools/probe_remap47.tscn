@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cremap47"]
+
+[ext_resource type="Script" path="res://tools/probe_remap47.gd" id="1_r47"]
+
+[node name="ProbeRemap47" type="Node"]
+script = ExtResource("1_r47")

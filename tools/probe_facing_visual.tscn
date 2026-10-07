@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bewm2ex88s5aa"]
+
+[ext_resource type="Script" path="res://tools/probe_facing_visual.gd" id="1_v"]
+
+[node name="ProbeFacingVisual" type="Node"]
+script = ExtResource("1_v")

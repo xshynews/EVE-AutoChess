@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://dnl0nus6318ae"]
+
+[ext_resource type="Script" path="res://tools/probe_cmp51b.gd" id="1_cmp51b"]
+
+[node name="ProbeCmp51b" type="Node3D"]
+script = ExtResource("1_cmp51b")

@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://cdiagbattle00"]
+
+[ext_resource type="Script" path="res://tools/diag_battle.gd" id="1_diag"]
+
+[node name="DiagBattle" type="Node"]
+script = ExtResource("1_diag")

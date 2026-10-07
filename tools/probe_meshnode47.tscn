@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cmeshn47"]
+
+[ext_resource type="Script" path="res://tools/probe_meshnode47.gd" id="1_m47"]
+
+[node name="ProbeMeshNode47" type="Node"]
+script = ExtResource("1_m47")

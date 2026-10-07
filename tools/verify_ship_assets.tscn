@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bq8w2mve7ship"]
+
+[ext_resource type="Script" path="res://tools/verify_ship_assets.gd" id="1_vsa"]
+
+[node name="VerifyShipAssets" type="Node"]
+script = ExtResource("1_vsa")

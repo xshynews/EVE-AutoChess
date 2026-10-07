@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cdiag5aprobe"]
+
+[ext_resource type="Script" path="res://tools/probe_diag49.gd" id="1_diag49"]
+
+[node name="ProbeDiag49" type="Node"]
+script = ExtResource("1_diag49")

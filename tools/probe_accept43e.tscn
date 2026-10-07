@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bacc43eprobe"]
+
+[ext_resource type="Script" path="res://tools/probe_accept43e.gd" id="1_a43e"]
+
+[node name="probe_accept43e" type="Node"]
+script = ExtResource("1_a43e")

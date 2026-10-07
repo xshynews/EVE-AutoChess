@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cr7vtuyxv3c3y"]
+
+[ext_resource type="Script" path="res://tools/probe_shot52.gd" id="1_shot52"]
+
+[node name="ProbeShot52" type="Node3D"]
+script = ExtResource("1_shot52")

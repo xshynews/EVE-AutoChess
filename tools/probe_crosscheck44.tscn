@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bcrosscheck44"]
+
+[ext_resource type="Script" path="res://tools/probe_crosscheck44.gd" id="1_cc44"]
+
+[node name="ProbeCrosscheck44" type="Node"]
+script = ExtResource("1_cc44")

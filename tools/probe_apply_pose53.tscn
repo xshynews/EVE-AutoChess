@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://002lpgq6dtkx"]
+
+[ext_resource type="Script" path="res://tools/probe_apply_pose53.gd" id="1_ap53"]
+
+[node name="ProbeApplyPose53" type="Node"]
+script = ExtResource("1_ap53")

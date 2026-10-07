@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cshipartsheetpr"]
+
+[ext_resource type="Script" path="res://tools/probe_ship_art.gd" id="1_shipart"]
+
+[node name="ProbeShipArt" type="Control"]
+script = ExtResource("1_shipart")

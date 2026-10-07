@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://brawbow2tgt45"]
+
+[ext_resource type="Script" path="res://tools/probe_bow_to_target.gd" id="1_b2t45"]
+
+[node name="ProbeBowToTarget" type="Node"]
+script = ExtResource("1_b2t45")

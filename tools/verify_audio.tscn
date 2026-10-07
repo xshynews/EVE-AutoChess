@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://verifyaudio0"]
+
+[ext_resource type="Script" path="res://tools/verify_audio.gd" id="1_verifyaudio"]
+
+[node name="VerifyAudio" type="Node"]
+script = ExtResource("1_verifyaudio")

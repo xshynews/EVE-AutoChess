@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://br45shot"]
+
+[ext_resource type="Script" path="res://tools/probe_r45_shot.gd" id="1_r45"]
+
+[node name="ProbeR45Shot" type="Node"]
+script = ExtResource("1_r45")

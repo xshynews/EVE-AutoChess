@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://b5tfub2ljm76r"]
+
+[ext_resource type="Script" path="res://tools/probe_toolvsgame53.gd" id="1_tg53"]
+
+[node name="ProbeToolVsGame53" type="Node"]
+script = ExtResource("1_tg53")

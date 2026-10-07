@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bqvrti8aibkls"]
+
+[ext_resource type="Script" path="res://tools/probe_fight52.gd" id="1_fight52"]
+
+[node name="ProbeFight52" type="Node"]
+script = ExtResource("1_fight52")

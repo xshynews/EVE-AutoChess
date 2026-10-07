@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cyawsheet0001"]
+
+[ext_resource type="Script" path="res://tools/probe_ship_yaw_sheet.gd" id="1_sheet"]
+
+[node name="ProbeShipYawSheet" type="Node3D"]
+script = ExtResource("1_sheet")

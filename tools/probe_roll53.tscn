@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://croll53probe"]
+
+[ext_resource type="Script" path="res://tools/probe_roll53.gd" id="1_rl53"]
+
+[node name="ProbeRoll53" type="Node"]
+script = ExtResource("1_rl53")

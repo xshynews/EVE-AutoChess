@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cend5aprobe"]
+
+[ext_resource type="Script" path="res://tools/probe_end49.gd" id="1_end49"]
+
+[node name="ProbeEnd49" type="Node"]
+script = ExtResource("1_end49")

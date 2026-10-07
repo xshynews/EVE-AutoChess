@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://kdhw5fy4ioe"]
+
+[ext_resource type="Script" path="res://tools/probe_facing_flight.gd" id="1_f"]
+
+[node name="ProbeFacingFlight" type="Node"]
+script = ExtResource("1_f")

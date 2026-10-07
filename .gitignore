@@ -1,0 +1,20 @@
+# Godot 4+ specific ignores
+.godot/
+
+# Godot editor temp / backup files
+*.tmp
+project.godot*.tmp
+*.bak
+*.bak-*
+*.bak.*
+project.godot.bak*
+
+# Local build & internal verification artifacts (not source)
+/android/
+_验收/
+_logs_backup_*/
+QQ图片*
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db

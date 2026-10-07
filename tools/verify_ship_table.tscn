@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://nn4ijt0xa4ih"]
+
+[ext_resource type="Script" path="res://tools/verify_ship_table.gd" id="1_verify"]
+
+[node name="VerifyShipTable" type="Node"]
+script = ExtResource("1_verify")

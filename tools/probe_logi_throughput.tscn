@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://c1uahru2x4pqa"]
+
+[ext_resource type="Script" path="res://tools/probe_logi_throughput.gd" id="1_lt"]
+
+[node name="ProbeLogiThroughput" type="Node"]
+script = ExtResource("1_lt")

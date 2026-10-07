@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bmdmfg0bn24le"]
+
+[ext_resource type="Script" path="res://tools/probe_tabgeom50.gd" id="1_tg50"]
+
+[node name="ProbeTabGeom50" type="Node"]
+script = ExtResource("1_tg50")

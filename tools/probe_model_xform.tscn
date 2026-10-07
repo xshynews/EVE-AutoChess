@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cjbq2fmvbqvlg"]
+
+[ext_resource type="Script" path="res://tools/probe_model_xform.gd" id="1_xf"]
+
+[node name="ProbeModelXform" type="Node"]
+script = ExtResource("1_xf")

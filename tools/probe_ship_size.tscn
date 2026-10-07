@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bshipsi0e01"]
+
+[ext_resource type="Script" path="res://tools/probe_ship_size.gd" id="1_ss"]
+
+[node name="ProbeShipSize" type="Node"]
+script = ExtResource("1_ss")

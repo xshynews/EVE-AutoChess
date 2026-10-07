@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cinrot47"]
+
+[ext_resource type="Script" path="res://tools/probe_innerrot47.gd" id="1_i47"]
+
+[node name="ProbeInnerRot47" type="Node"]
+script = ExtResource("1_i47")

@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cgeom50probe"]
+
+[ext_resource type="Script" path="res://tools/probe_geom50.gd" id="1_geom50"]
+
+[node name="ProbeGeom50" type="Node"]
+script = ExtResource("1_geom50")

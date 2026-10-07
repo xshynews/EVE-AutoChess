@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://dni5n8f3jivwg"]
+
+[ext_resource type="Script" path="res://tools/probe_handoff53.gd" id="1_hd53"]
+
+[node name="ProbeHandoff53" type="Node"]
+script = ExtResource("1_hd53")

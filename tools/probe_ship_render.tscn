@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://dleri2vaf65u5"]
+
+[ext_resource type="Script" path="res://tools/probe_ship_render.gd" id="1_rnd"]
+
+[node name="ProbeShipRender" type="Node3D"]
+script = ExtResource("1_rnd")

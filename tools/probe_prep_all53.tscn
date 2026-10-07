@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cjahl6h66c823"]
+
+[ext_resource type="Script" path="res://tools/probe_prep_all53.gd" id="1_pa53"]
+
+[node name="ProbePrepAll53" type="Node"]
+script = ExtResource("1_pa53")

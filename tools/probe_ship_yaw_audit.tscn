@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cyawaudit0001"]
+
+[ext_resource type="Script" path="res://tools/probe_ship_yaw_audit.gd" id="1_yaw"]
+
+[node name="ProbeShipYawAudit" type="Node"]
+script = ExtResource("1_yaw")

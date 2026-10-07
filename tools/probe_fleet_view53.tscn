@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://iaie3jgvn6y2"]
+
+[ext_resource type="Script" path="res://tools/probe_fleet_view53.gd" id="1_fv53"]
+
+[node name="ProbeFleetView53" type="Node"]
+script = ExtResource("1_fv53")
