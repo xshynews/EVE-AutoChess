@@ -39,16 +39,16 @@ export_presets.cfg  导出预设（不含签名密钥）
 
 仓库内的舰船模型、图标、音频等游戏美术资源**提取自 EVE Echoes 客户端资源**。
 EVE 相关的 IP 与素材著作权归 **Fenris Creations** 所有（该公司于 2026 年 5 月由 CCP Games 更名而来；
-CCP 原名 *Crowd Control Productions*），**本开源项目不持有这些素材的任何权利**，相关内容**不**在本项目的 MIT 许可证覆盖范围内。
+CCP 原名 *Crowd Control Productions*），**本开源项目不持有这些素材的任何权利**，相关内容**不**在本项目的 GNU GPL v3 许可证覆盖范围内。
 
 - 这些资源**仅用于开发、调试与体验目的**；
 - 若你分发包体，请自行确认相关素材的授权合规；
-- 代码（GDScript / 配置 / 工具脚本）以 MIT 许可证自由使用、修改与再分发。
+- 代码（GDScript / 配置 / 工具脚本）以 **GNU GPL v3** 许可证使用、修改与再分发（衍生作品须同样以 GPL v3 开源）。
 
 ## 许可证
 
-- **代码**：[MIT License](./LICENSE)
-- **美术 / 音频资源**：归原权利方所有，非 MIT，见上。
+- **代码**：[GNU GPL v3](./LICENSE)（Copyright © 2026 xshynews）
+- **美术 / 音频资源**：归 Fenris Creations 所有，非本项目许可证覆盖范围，见上。
 
 ## 贡献
 
