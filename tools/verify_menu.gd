@@ -2,6 +2,8 @@ extends Node
 
 ## user:// 迁移（主菜单 `_ready` 会随启动调一次）—— 验收里必须关掉写盘
 const EveUserDir := preload("res://scripts/core/eve_user_dir.gd")
+## 对局存档（「继续上局」入口的可见性靠它）—— 审查 2#2。
+const RUN_STORE := preload("res://scripts/core/eve_run_store.gd")
 
 ## 主界面自检（无头）
 ##
@@ -39,6 +41,73 @@ func _ok(cond: bool, what: String) -> void:
 		print("FAIL  %s" % what)
 
 
+func _step_run_entry() -> void:
+	print("[6] 对局存档入口（继续上局）")
+	# ⚠️ 会真的写/删 `user://run.cfg` ⇒ 先存字节，结束时原样还原。
+	var snap := _read_raw(RUN_STORE.PATH)
+	RUN_STORE.persist = true
+	RUN_STORE.session_active = true
+	# ① 按钮节点**恒存在**（只切 visible）—— 结构稳定，不受存档影响
+	var btn0: Button = _menu.get("_continue_btn")
+	_ok(btn0 != null, "主菜单有「继续上局」按钮节点")
+	# ② 无档 ⇒ 不可见
+	RUN_STORE.clear()
+	var menu_a: Variant = MENU_SCENE.instantiate()
+	add_child(menu_a)
+	var ba: Button = menu_a.get("_continue_btn")
+	_ok(ba != null and not ba.visible, "★ 无存档 ⇒ 「继续上局」不可见")
+	menu_a.queue_free()
+	# ③ 有档 ⇒ 可见
+	RUN_STORE.save_run({"node_index": 3, "coin": 9, "run_seed": 1, "phase": 0})
+	var menu_b: Variant = MENU_SCENE.instantiate()
+	add_child(menu_b)
+	var bb: Button = menu_b.get("_continue_btn")
+	_ok(bb != null and bb.visible, "★ 有存档 ⇒ 「继续上局」可见")
+	menu_b.queue_free()
+	# 收尾：不写盘 + 原样还原玩家档
+	RUN_STORE.session_active = false
+	_restore_raw(RUN_STORE.PATH, snap)
+
+
+func _step_settings_close() -> void:
+	print("[7] 设置窗 ✕ 关闭（主菜单档案）")
+	var sw: Variant = _menu.get("_settings")
+	_ok(sw != null, "主菜单有设置窗实例")
+	if sw == null:
+		return
+	# 主菜单的设置窗**只切 `visible`** —— 先确保是关的，再打开
+	if bool(sw.get("visible")):
+		_menu.call("_toggle_settings")
+	_menu.call("_toggle_settings")
+	_ok(bool(sw.get("visible")), "「设置」→ 设置窗打开")
+	var cb: Control = sw.get("_close_btn")
+	_ok(cb != null, "★ 设置窗标题栏有 ✕（在折叠按钮右边）")
+	if cb != null:
+		var ev := InputEventMouseButton.new()
+		ev.button_index = MOUSE_BUTTON_LEFT
+		ev.pressed = true
+		ev.position = cb.size * 0.5
+		cb.gui_input.emit(ev)
+	_ok(not bool(sw.get("visible")), "★★ 点 ✕ ⇒ 设置窗关闭（主菜单的 closed 接线正确）")
+
+
+func _read_raw(p: String) -> PackedByteArray:
+	if not FileAccess.file_exists(p):
+		return PackedByteArray()
+	var f := FileAccess.open(p, FileAccess.READ)
+	return f.get_buffer(f.get_length()) if f != null else PackedByteArray()
+
+
+func _restore_raw(p: String, b: PackedByteArray) -> void:
+	if b.is_empty():
+		if FileAccess.file_exists(p):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
+		return
+	var f := FileAccess.open(p, FileAccess.WRITE)
+	if f != null:
+		f.store_buffer(b)
+
+
 func _ready() -> void:
 	# ⛔ 验收**不许**去搬玩家的真实存档目录（主菜单 `_ready` 会调迁移）
 	EveUserDir.persist = false
@@ -51,12 +120,15 @@ func _ready() -> void:
 	_step_build()
 	_step_switch()
 	_step_lock()
+	_step_run_entry()
+	_step_settings_close()
 
 	print("")
 	print("RESULT passed=%d failed=%d" % [_pass, _fail])
 	if _fail > 0:
 		print("⚠️ 有失败项 —— 见上面的 FAIL 行")
-	get_tree().quit()
+	# ★ 2026-10-10（审查 R07）：失败 ⇒ 非零退出码（CI 靠它拦回归）
+	get_tree().quit(1 if _fail > 0 else 0)
 
 
 # ------------------------------------------------------------------ 步骤

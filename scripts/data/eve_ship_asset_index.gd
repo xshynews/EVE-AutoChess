@@ -3,7 +3,7 @@ class_name EveShipAssetIndex
 
 ## EVE 自走棋 —— 舰船资产索引（**机生成，不要手改**）
 ##
-## 生成器：`C:\\godot\\_export\\_gen_ship_index.py`
+## 生成器：`tools/pipeline/_gen_ship_index.py`
 ## 数据链：`01_舰船数值全表.csv` → `eve_ship_table.gd`(id/中文名/势力/费用)
 ##         + ESI `/universe/ids/`(id → typeID) → `_ship_manifest.json`
 ##         + `eve_ship_build.py`(typeID → 模型) → 本文件

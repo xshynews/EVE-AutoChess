@@ -95,9 +95,12 @@ const RESULT_HEAD_H := 203.0
 ##    症状 = 底部一条空白（多了）或内容被切（少了）。
 const RESULT_CHROME_H := 41.0
 
+## ★ 2026-10-10 i18n：玩家可见文案一律从这里取（见 eve_text.gd 顶注）。
+const T := preload("res://scripts/core/eve_text.gd")
+
 
 func _ready() -> void:
-	window_title = "节点结算"
+	window_title = T.t("RESULT_TITLE", "节点结算")
 	density = Density.COMPACT
 	super._ready()
 	_build_contents()
@@ -111,7 +114,7 @@ func _build_contents() -> void:
 
 	# ── ① 结论 ──
 	_title = Label.new()
-	_title.text = "拦截成功"
+	_title.text = T.t("RESULT_WIN", "拦截成功")
 	FONT.fs(_title, 22)
 	_title.add_theme_color_override("font_color", C_OK)
 	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -119,7 +122,7 @@ func _build_contents() -> void:
 	content.add_child(_title)
 
 	_subtitle = Label.new()
-	_subtitle.text = "节点 1 / 15 · 遭遇战"
+	_subtitle.text = T.t("RESULT_SUB", "节点 1 / 15 · 遭遇战")
 	FONT.fs(_subtitle, 10)
 	_subtitle.add_theme_color_override("font_color", C_TEXT_DIM)
 	_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -180,15 +183,17 @@ func _build_contents() -> void:
 	# ⚠️ 并排的写法：两个 `make_stat_row` 塞进一个外层 HBox，各自 EXPAND 占一半。
 	#    `_stat()` 仍然用 `get_child(1)` 改值，⛔ 所以**行对象本身不能换**
 	#    （换成别的容器会让 `_stat()` 静默改错控件）。
-	_kill_row = make_stat_row("击毁", "0 艘", C_OK, 40.0)
-	_alive_row = make_stat_row("我方存活", "0 / 0", C_TEXT, 48.0)
+	_kill_row = make_stat_row(T.t("RESULT_KILL", "击毁"),
+			T.t("RESULT_SHIPS_0", "0 艘"), C_OK, 40.0)
+	_alive_row = make_stat_row(T.t("RESULT_ALIVE", "我方存活"), "0 / 0", C_TEXT, 48.0)
 	content.add_child(_pair_hbox(_kill_row, _alive_row))
 
 	content.add_child(make_divider())
 
 	# ── ④ 收益（★ 二改：同样并成一行）──
-	_xp_row = make_stat_row("经验", "+2", C_CAP, 40.0)
-	_loot_row = make_stat_row("残骸", "无", C_ARMOR, 48.0)
+	_xp_row = make_stat_row(T.t("RESULT_XP", "经验"), "+2", C_CAP, 40.0)
+	_loot_row = make_stat_row(T.t("RESULT_WRECK", "残骸"),
+			T.t("RESULT_NONE", "无"), C_ARMOR, 48.0)
 	content.add_child(_pair_hbox(_xp_row, _loot_row))
 
 	content.add_child(make_divider())
@@ -200,7 +205,7 @@ func _build_contents() -> void:
 	content.add_child(acts)
 
 	_end_btn = Button.new()
-	_end_btn.text = "结束本局"
+	_end_btn.text = T.t("RESULT_END", "结束本局")
 	_end_btn.custom_minimum_size = Vector2(0, 28)
 	_end_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_end_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -209,7 +214,7 @@ func _build_contents() -> void:
 	acts.add_child(_end_btn)
 
 	_next_btn = Button.new()
-	_next_btn.text = "继续 · 下一节点"
+	_next_btn.text = T.t("RESULT_NEXT", "继续 · 下一节点")
 	_next_btn.custom_minimum_size = Vector2(0, 28)
 	# 主按钮占更大份量（这是 90% 的情况想点的那一个）
 	_next_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -279,7 +284,7 @@ func _build_salvage_section() -> void:
 	head.add_child(icon)
 
 	_salvage_title = Label.new()
-	_salvage_title.text = "打捞 残骸"
+	_salvage_title.text = T.t("RESULT_SALVAGE_TITLE", "打捞 残骸")
 	FONT.fs(_salvage_title, 12)
 	_salvage_title.add_theme_color_override("font_color", C_ARMOR)
 	_salvage_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -288,7 +293,7 @@ func _build_salvage_section() -> void:
 
 	# 机制说明：挤在标题右边（EXPAND 吃掉中间空白），字号压到 8
 	_salvage_hint = Label.new()
-	_salvage_hint.text = "下单即付款 · 下节点到账占位"
+	_salvage_hint.text = T.t("RESULT_SALVAGE_HINT", "下单即付款 · 下节点到账占位")
 	FONT.fs(_salvage_hint, 8)
 	_salvage_hint.add_theme_color_override("font_color", C_TEXT_FAINT)
 	_salvage_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -305,7 +310,8 @@ func _build_salvage_section() -> void:
 	_salvage_close_btn.text = "✕"
 	_salvage_close_btn.custom_minimum_size = Vector2(18, 16)
 	_salvage_close_btn.focus_mode = Control.FOCUS_NONE
-	_salvage_close_btn.tooltip_text = "收起打捞区（残骸仍保留）"
+	_salvage_close_btn.tooltip_text = T.t("RESULT_SALVAGE_CLOSE_TIP",
+				"收起打捞区（残骸仍保留）")
 	EveButtonTheme.apply(_salvage_close_btn, "hud")
 	_salvage_close_btn.pressed.connect(func(): salvage_section_closed.emit())
 	_salvage_close_btn.visible = false
@@ -358,9 +364,9 @@ func _build_salvage_section() -> void:
 	# ── 零选二次确认（「本回合不决定 → 永久作废」的护栏）──
 	# ── 零选二次确认（图 1 那种「本回合不决定 → 永久作废」的护栏）──
 	_salvage_ask = ConfirmationDialog.new()
-	_salvage_ask.title = "放弃打捞"
-	_salvage_ask.ok_button_text = "确定放弃"
-	_salvage_ask.cancel_button_text = "回去再选"
+	_salvage_ask.title = T.t("RESULT_SALVAGE_ASK_TITLE", "放弃打捞")
+	_salvage_ask.ok_button_text = T.t("RESULT_SALVAGE_ASK_OK", "确定放弃")
+	_salvage_ask.cancel_button_text = T.t("RESULT_SALVAGE_ASK_CANCEL", "回去再选")
 	add_child(_salvage_ask)
 	_salvage_ask.confirmed.connect(_emit_zero_pick_confirmed)
 
@@ -374,7 +380,7 @@ func _add_salvage_row(it: Dictionary) -> void:
 	# 左：舰名 + 星级（阵营用颜色区分，不用文字标签 —— 少一列更清爽）
 	var name_lb := Label.new()
 	var team := int(it.get("team", 0))
-	name_lb.text = "节点 %d · %s ★%d" % [int(it.get("node", 1)),
+	name_lb.text = T.t("RESULT_SALVAGE_ROW", "节点 %d · %s ★%d") % [int(it.get("node", 1)),
 			String(it.get("name", "?")), int(it.get("star", 1))]
 	FONT.fs(name_lb, 10)
 	name_lb.add_theme_color_override("font_color", C_OK if team == 0 else C_TEXT)
@@ -398,7 +404,7 @@ func _add_salvage_row(it: Dictionary) -> void:
 
 	# 右：打捞按钮（★ 核心：逐艘直接点，不用先勾后确认）
 	var btn := Button.new()
-	btn.text = "打捞"
+	btn.text = T.t("RESULT_SALVAGE_BTN", "打捞")
 	# ★ 二改：按钮高 22 → 18（压短；仍是标准「打捞」按钮的形态）
 	btn.custom_minimum_size = Vector2(50, 18)
 	btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -449,7 +455,8 @@ func refresh_salvage(res: Dictionary, ended: bool = false) -> void:
 
 	# ── ① 列表形态 ──
 	if not items.is_empty():
-		_salvage_warn.text = "⚠ 不决定就作废（%d 艘）" % items.size()
+		_salvage_warn.text = T.t("RESULT_SALVAGE_WARN", "⚠ 不决定就作废（%d 艘）") \
+				% items.size()
 		_salvage_warn.visible = true
 		_salvage_list.visible = true
 		for it in items:
@@ -465,7 +472,7 @@ func refresh_salvage(res: Dictionary, ended: bool = false) -> void:
 				Vector2(0, 0)
 		# 「暂无残骸」占位（参考图 2 的那句）
 		var none_lb := Label.new()
-		none_lb.text = "暂无残骸 —— 舰船被击毁后会出现在这里"
+		none_lb.text = T.t("RESULT_SALVAGE_EMPTY", "暂无残骸 —— 舰船被击毁后会出现在这里")
 		FONT.fs(none_lb, 9)
 		none_lb.add_theme_color_override("font_color", C_TEXT_FAINT)
 		none_lb.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -485,9 +492,10 @@ func refresh_salvage(res: Dictionary, ended: bool = false) -> void:
 		for q in queue:
 			names.append("%s ★%d" % [String((q as Dictionary).get("name", "?")),
 					int((q as Dictionary).get("star", 1))])
-		_salvage_queue.text = "修复队列（下回合到账）：%s" % ", ".join(names)
+		_salvage_queue.text = T.t("RESULT_SALVAGE_QUEUE", "修复队列（下回合到账）：%s") \
+				% ", ".join(names)
 		_salvage_queue.visible = true
-	_salvage_coin.text = "持有 %d 星币" % coin
+	_salvage_coin.text = T.t("RESULT_COIN", "持有 %d 星币") % coin
 	_fit_salvage_height()
 
 
@@ -572,14 +580,16 @@ func show_result(res: Dictionary) -> void:
 	_data = res.duplicate(true)
 	var won := bool(res.get("won", false))
 
-	_title.text = "拦截成功" if won else "拦截失败"
+	_title.text = T.t("RESULT_WIN", "拦截成功") if won \
+			else T.t("RESULT_LOSE", "拦截失败")
 	_title.add_theme_color_override("font_color", C_OK if won else C_HULL)
 
 	# 结束原因（敌方全灭 / 我方全灭 / 时限耗尽 / 未部署）——
 	# ★ 玩家看结算时唯一能回答「为什么会漏网」的一行。
 	var reason := String(res.get("reason", ""))
-	_subtitle.text = "节点 %d / 15 · %s%s" % [
-		int(res.get("node", 1)), String(res.get("stage", "遭遇战")),
+	_subtitle.text = T.t("RESULT_SUB_FMT", "节点 %d / 15 · %s%s") % [
+		int(res.get("node", 1)),
+		res.get("stage", T.t("RESULT_STAGE_SKIRMISH", "遭遇战")),
 		"" if reason.is_empty() else " · " + reason]
 
 	_beacon_before.text = str(int(res.get("beacon_before", 0)))
@@ -595,15 +605,15 @@ func show_result(res: Dictionary) -> void:
 	_beacon_after.add_theme_color_override("font_color",
 			C_OK if ratio > 0.60 else (C_WARN if ratio > 0.30 else C_HULL))
 
-	_stat(_kill_row, "%d 艘" % int(res.get("destroyed", 0)))
+	_stat(_kill_row, T.t("RESULT_SHIPS_N", "%d 艘") % int(res.get("destroyed", 0)))
 	_stat(_alive_row, "%d / %d" % [int(res.get("alive", 0)), int(res.get("total", 0))])
 	_stat(_xp_row, "+%d" % int(res.get("xp", 0)))
 	if bool(res.get("wreck", false)):
 		# ★ 2026-10-04 多选：收益行只报**数量**，逐艘的选择在页面下方的打捞区。
-		_stat(_loot_row, "%d 艘待打捞" % int(res.get("wreck_count", 1)))
+		_stat(_loot_row, T.t("RESULT_WRECK_N", "%d 艘待打捞") % int(res.get("wreck_count", 1)))
 		_loot_row.get_child(1).add_theme_color_override("font_color", C_ARMOR)
 	else:
-		_stat(_loot_row, "无")
+		_stat(_loot_row, T.t("RESULT_NONE", "无"))
 		_loot_row.get_child(1).add_theme_color_override("font_color", C_TEXT_FAINT)
 	# ⚠️ 结局页（ENDING）不给打捞区：那时局已经结束了，
 	#    摆个按钮在那儿点了也没用（打捞要在战斗结算页做，而结局页不是）。
@@ -617,10 +627,11 @@ func show_result(res: Dictionary) -> void:
 	# 所以换成「再来一局」，并且**去掉**「结束本局」——两个按钮做同一件事很蠢。
 	var ending := String(res.get("ending", ""))
 	if ending != "":
-		_title.text = "遥望边境已肃清" if ending == "cleared" else "信标归零 · 撤离"
+		_title.text = T.t("RESULT_ENDING_CLEARED", "遥望边境已肃清") if ending == "cleared" \
+			else T.t("RESULT_ENDING_BEACON", "信标归零 · 撤离")
 		_title.add_theme_color_override("font_color",
 				C_OK if ending == "cleared" else C_HULL)
-		_next_btn.text = "↻ 再来一局"
+		_next_btn.text = T.t("RESULT_AGAIN", "↻ 再来一局")
 		_end_btn.visible = false
 
 

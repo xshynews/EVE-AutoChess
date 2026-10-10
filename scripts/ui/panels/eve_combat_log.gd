@@ -14,7 +14,7 @@ extends "res://scripts/ui/eve_window.gd"
 ##
 ## 变更清单（实装版）：
 ##   - 窄栏紧凑行（时间戳 30px + 分类色块 + 单行省略文本）
-##   - 分类前缀用中文小字（结算 / 拾取 / 装备 / 打捞 / 提示 / 射击 / 破层 / 电子战）
+##   - 分类前缀用中文小字（结算 / 拾取 / 装备 / 打捞 / 提示 / 射击 / 破层）
 ##   - 自动滚动到底 + 上限裁剪
 
 const MAX_LINES := 120
@@ -23,7 +23,6 @@ const CAT_COLORS := {
 	&"fire": Color(0.62, 0.80, 0.86),
 	&"damage": Color(0.88, 0.45, 0.35),
 	&"break": Color(0.90, 0.68, 0.30),
-	&"ewar": Color(0.72, 0.58, 0.86),
 	&"system": Color(0.48, 0.58, 0.62),
 	&"economy": Color(0.60, 0.76, 0.48),
 	# 阶段 B 新增两类：布阵与出售都是「编制」类操作，用同一个偏青的色
@@ -47,10 +46,12 @@ const CAT_LABELS := {
 	&"system": "系统",
 	&"damage": "损伤",
 	&"break": "破层",
-	&"ewar": "电子战",
 	&"fire": "射击",
 	&"repair": "后勤",
 }
+
+## ★ 2026-10-11（i18n）：文案取词（见 `eve_text.gd` 顶注）。
+const T := preload("res://scripts/core/eve_text.gd")
 
 var _scroll: ScrollContainer
 var _list: VBoxContainer
@@ -59,7 +60,7 @@ var _built := false
 
 
 func _ready() -> void:
-	window_title = "战斗日志"
+	window_title = T.t("LOG_TITLE", "战斗日志")
 	density = Density.COMPACT
 	show_status_text = false
 	super._ready()
@@ -124,7 +125,8 @@ func _append_line(entry) -> void:
 	var text := Label.new()
 	# ⚠️ 必须显式标注 String —— Dictionary.get() 返回 Variant，
 	#    用 := 推断会被判为「从 Variant 推断类型」而报错（工程把它当 error）。
-	var prefix: String = CAT_LABELS.get(cat, "")
+	var prefix: String = T.t("LOG_CAT_%s" % String(cat).to_upper(),
+			String(CAT_LABELS.get(cat, "")))
 	text.text = ("%s " % prefix if prefix != "" else "") + _text_of(entry)
 	text.add_theme_color_override("font_color", _text_color_for(cat))
 	FONT.fs(text, 9)
@@ -163,7 +165,6 @@ func _text_color_for(cat: StringName) -> Color:
 	match cat:
 		&"damage": return Color(0.80, 0.56, 0.50)
 		&"break": return Color(0.82, 0.68, 0.44)
-		&"ewar": return Color(0.72, 0.64, 0.82)
 		&"system": return Color(0.55, 0.64, 0.68)
 		&"economy": return Color(0.62, 0.78, 0.52)
 		_: return Color(0.66, 0.78, 0.82)

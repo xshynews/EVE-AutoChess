@@ -37,10 +37,13 @@ const NODE_TOTAL := 15
 ## 首领节点（1-based 的第 9 / 12 / 15 个 = 下标 8 / 11 / 14）
 ## ⚠️ 与 EveNodeTable.BOSS_INDEXES 同一个口径，改一处必须改两处
 ##    （自检 tools/verify_run.tscn 会断言两者一致）
+## ★ 2026-10-11（i18n）：文案取词（见 `eve_text.gd` 顶注）。
+const T := preload("res://scripts/core/eve_text.gd")
+
 const BOSS_NODES: Array[int] = [8, 11, 14]
 
 var node_index: int = 1
-var stage_label: String = "遭遇战"
+var stage_label: String = T.t("BAR_STAGE_DEFAULT", "遭遇战")
 var time_left: float = 24.0
 var time_total: float = 60.0
 ## 战败会掉多少信标（预览）。⛔ 原字段名 `leak_damage` 随漏网机制一起删了。
@@ -64,7 +67,7 @@ var _expired_emitted := false
 
 
 func _ready() -> void:
-	window_title = "舰队指挥"
+	window_title = T.t("BAR_TITLE", "舰队指挥")
 	density = Density.BARE
 	show_header = false          # 裸条：没有标题栏
 	show_status_text = false
@@ -90,7 +93,7 @@ func _build_contents() -> void:
 	bar.add_child(stage)
 
 	_stage_phase = Label.new()
-	_stage_phase.text = "节点 %d" % node_index
+	_stage_phase.text = T.t("BAR_NODE", "节点 %d") % node_index
 	_stage_phase.add_theme_color_override("font_color", Color(0.918, 0.969, 0.980))
 	FONT.fs(_stage_phase, 14)
 	_stage_phase.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -123,7 +126,7 @@ func _build_contents() -> void:
 	beacon_box.add_child(_beacon_value)
 
 	var beacon_unit := Label.new()
-	beacon_unit.text = "信标"
+	beacon_unit.text = T.t("BAR_BEACON", "信标")
 	beacon_unit.add_theme_color_override("font_color", C_TEXT_DIM)
 	FONT.fs(beacon_unit, 9)
 	beacon_unit.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -140,7 +143,7 @@ func _build_contents() -> void:
 	# ⚠️ 同一个环在准备阶段是「布阵倒计时」、在战斗阶段是「战斗时限」，
 	#    含义不同 —— 所以必须把阶段名写出来，不能只留一个转圈的表。
 	_phase_label = Label.new()
-	_phase_label.text = "准备"
+	_phase_label.text = T.t("BAR_PHASE_PREP", "准备")
 	_phase_label.add_theme_color_override("font_color", C_ACCENT)
 	FONT.fs(_phase_label, 10)
 	_phase_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -186,7 +189,7 @@ func _build_contents() -> void:
 	# ⚠️ 这是**预览**（"这一场输了会掉多少"），不是已经发生的事。
 	#    ⛔ 原来写「若全漏 −N」——「漏」字是漏网机制的残留，玩家看不懂，
 	#       2026-10-01 改成「战败 −N」。
-	_loss_label.text = "战败 −0"
+	_loss_label.text = T.t("BAR_LOSS", "战败 −%d") % 0
 	_loss_label.add_theme_color_override("font_color", C_WARN)
 	FONT.fs(_loss_label, 10)
 	_loss_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -200,7 +203,7 @@ func _build_contents() -> void:
 	bar.add_child(pad1)
 
 	var start_btn := Button.new()
-	start_btn.text = "✦ 开战"
+	start_btn.text = T.t("BAR_START", "✦ 开战")
 	start_btn.custom_minimum_size = Vector2(0, 26)
 	start_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	EveButtonTheme.apply(start_btn, "hud_main")
@@ -215,7 +218,8 @@ func _build_contents() -> void:
 
 	var set_btn := Button.new()
 	set_btn.text = "≡"
-	set_btn.tooltip_text = "设置（待接入：天空盒切换 / 显示模式）"
+	set_btn.tooltip_text = T.t("BAR_SETTINGS_TIP",
+			"设置（待接入：天空盒切换 / 显示模式）")
 	set_btn.custom_minimum_size = Vector2(26, 26)
 	set_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	EveButtonTheme.apply(set_btn, "hud")
@@ -286,17 +290,21 @@ func _dot_box(done: bool, boss: bool) -> StyleBoxFlat:
 # ------------------------------------------------------------------ 刷新
 
 const PHASE_NAMES: Array[String] = ["准备", "交战", "结算"]
+## 与 `PHASE_NAMES` **一一对应**的 key（⛔ 顺序不许错）。
+const PHASE_KEYS: Array[String] = [
+	"BAR_PHASE_PREP", "BAR_PHASE_BATTLE", "BAR_PHASE_RESOLVE",
+]
 
 
 ## 把当前状态刷进 UI。战斗主控每帧或状态变化时调一次。
 func refresh() -> void:
-	_stage_phase.text = "节点 %d" % node_index
+	_stage_phase.text = T.t("BAR_NODE", "节点 %d") % node_index
 	_stage_tag.text = stage_label
-	_loss_label.text = "战败 −%d" % loss_cost
+	_loss_label.text = T.t("BAR_LOSS", "战败 −%d") % loss_cost
 	_refresh_beacon()
 
 	var ph := clampi(phase, 0, PHASE_NAMES.size() - 1)
-	_phase_label.text = PHASE_NAMES[ph]
+	_phase_label.text = T.t(PHASE_KEYS[ph], PHASE_NAMES[ph])
 	_phase_label.add_theme_color_override("font_color",
 			[C_ACCENT, C_WARN, C_OK][ph])
 

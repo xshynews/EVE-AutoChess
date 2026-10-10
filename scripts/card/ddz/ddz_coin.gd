@@ -1,4 +1,7 @@
 extends RefCounted
+## 存档格式版本号工具（⛔ 用 preload 常量，别裸写 class_name —— 无头跑没有类缓存）。
+const SAVE_SCHEMA := preload("res://scripts/core/eve_save_schema.gd")
+
 ## 娱乐币 —— **娱乐总汇（棋牌室）的记分货币**。
 ##
 ## ★ 2026-10-06 用户拍板：**先做方案 A（纯记分）**，但**字段按 B/C 设计**。
@@ -15,6 +18,9 @@ extends RefCounted
 
 const SAVE_PATH := "user://card_coin.cfg"
 const SECTION := "card"
+
+## ★ 2026-10-10（审查 2#3）：格式版本（详见 `EveSaveSchema` 顶注四条规则）。
+const SCHEMA_VERSION := 1
 
 ## 余额（A 方案：**可以为负**）
 static var coin := 0
@@ -49,12 +55,16 @@ static func save_it() -> void:
 	if not persist:
 		return
 	var cf := ConfigFile.new()
+	# ⚠️ 2026-10-10：**必须先 load** —— 旧实现直接 new 一个空的 ConfigFile 再 save，
+	#    会把文件里**其它段**（现在有 `[meta] schema_version`）整段抹掉。
+	cf.load(SAVE_PATH)
 	cf.set_value(SECTION, "coin", coin)
 	cf.set_value(SECTION, "net", net)
 	cf.set_value(SECTION, "games", games)
 	cf.set_value(SECTION, "wins", wins)
 	cf.set_value(SECTION, "staked", staked)
 	cf.set_value(SECTION, "bankrupt", bankrupt)
+	SAVE_SCHEMA.stamp(cf, SCHEMA_VERSION)          # ★ 写盘永远盖版本号
 	cf.save(SAVE_PATH)
 
 

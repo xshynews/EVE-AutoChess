@@ -31,9 +31,24 @@
 scripts/        游戏逻辑（ui / core / card/ddz / data 等）
 scenes/         Godot 场景（主菜单、战斗、斗地主牌桌、片头等）
 assets/         美术 / 音频资源（见下方版权说明）
+data/           设计侧数据源（CSV 原稿 + 开场时间轴，见 data/README.md）
 tools/          无头验证与探针脚本（verify_* / probe_*）
+tools/pipeline/ 离线生成脚本（舰船/朝向/牌面/天空盒，见其 README）
 export_presets.cfg  导出预设（不含签名密钥）
 ```
+
+## 跑验收
+
+统一入口（读退出码，可直接给 CI 用）：
+
+```bash
+GODOT_BIN=/path/to/Godot_v4.7.2-stable_win64_console.exe tools/run_verifies.sh
+```
+
+判据不止退出码 —— 还要求**出现完成标记**、且输出里**没有** `SCRIPT ERROR`。
+⚠️ `verify_run` 在引擎收尾时会 SIGSEGV（退出码 139，结果其实完整），runner 对它只认结果行。
+诊断型脚本（`verify_battle` / `verify_background` / `verify_camera` / `probe_*`）只出数、
+没有通过/失败语义，**不在套件里**。
 
 ## 美术资源版权说明
 
@@ -49,6 +64,20 @@ CCP 原名 *Crowd Control Productions*），**本开源项目不持有这些素�
 
 - **代码**：[GNU GPL v3](./LICENSE)（Copyright © 2026 xshynews）
 - **美术 / 音频资源**：归 Fenris Creations 所有，非本项目许可证覆盖范围，见上。
+
+## 多语言（i18n）：目前**只出中文**，英文有意冻结
+
+仓库里有一套 i18n 基建（`i18n/strings.csv` 是唯一文案真相源，代码一律经 `EveText.t()` 取词），
+但**当前交付语言只有简体中文**——英文不是"做了一半丢在那"，是**有意冻结**：
+
+- **为什么**：英文文案本身还没过审（`strings.csv` 的 `en` 列大量是占位/直译），
+  UI 面也只迁了一半。这时开放语言切换，玩家只会看到中英混杂的半成品。
+- **表现**：设置窗里**没有**「语言」这一行。开关是 `scripts/core/eve_text.gd` 的
+  **`LANGUAGE_ENABLED = false`**（唯一真源，代码都保留着，只是被这个常量挡住）。
+- **要不要紧**：不影响中文版任何行为——默认 locale 是 `zh_CN`，取词原样返回中文、逐字不变；
+  `verify_i18n` 就是这条的护栏（它同时也断言"冻结期语言行不存在 / 存档语言会被忽略"）。
+- **想启用 / 想加语言**：见 [`i18n/README.md`](./i18n/README.md) 顶部的解冻四步，
+  **翻那一个常量**就能先看到界面入口；英文文案（`en` 列）是最欢迎 PR 的部分。
 
 ## 贡献
 

@@ -63,6 +63,17 @@ var _sessions: Dictionary = {}  # session_id -> session_data
 var _allow_remote: bool = false
 var _cors_origin: String = "*"
 
+## ★★ 2026-10-10（代码审查 R06）：监听地址的**安全默认**。
+##
+##   旧实现无条件 `_tcp_server.listen(_port)` —— 等价于绑通配地址 `*`，
+##   即使 `allow_remote=false`，**局域网内其他主机照样能连**，而插件默认
+##   `auth_enabled=false` ⇒ 无鉴权即可调用脚本读写等开发工具。
+##   ⇒ 现在：非远程模式**只绑回环** `127.0.0.1`；远程模式必须显式开启
+##     且**必须配好认证**，否则拒绝启动（见 `start()`）。
+##   ⛔ 别把回环改回 `*`；CORS 不能替代监听限制或鉴权。
+const BIND_LOOPBACK := "127.0.0.1"
+const BIND_ANY := "*"
+
 
 ## 日志回调函数（由 McpServerCore 设置，用于替代 printerr）
 var _log_callback: Callable = Callable()
@@ -103,10 +114,21 @@ func start() -> bool:
 		return false
 	
 	_tcp_server = TCPServer.new()
-	
-	var error: Error = _tcp_server.listen(_port)
+
+	# ★ R06：远程模式**必须**有认证 —— 缺认证就拒绝启动，绝不"默认裸奔"。
+	if _allow_remote and _auth_manager == null:
+		var auth_msg: String = "allow_remote=true 但未配置认证 —— 拒绝启动（远程访问必须带 Bearer token）"
+		server_error.emit(auth_msg)
+		if _log_callback.is_valid():
+			_log_callback.call("ERROR", auth_msg)
+		push_error(auth_msg)
+		return false
+
+	# ★ R06：非远程模式只绑回环（默认）；远程模式才绑通配地址。
+	var bind_addr: String = BIND_ANY if _allow_remote else BIND_LOOPBACK
+	var error: Error = _tcp_server.listen(_port, bind_addr)
 	if error != OK:
-		var error_msg: String = "Failed to listen on port " + str(_port) + ": " + str(error)
+		var error_msg: String = "Failed to listen on " + bind_addr + ":" + str(_port) + ": " + str(error)
 		server_error.emit(error_msg)
 		if _log_callback.is_valid():
 			_log_callback.call("ERROR", error_msg)
@@ -118,7 +140,8 @@ func start() -> bool:
 	
 	server_started.emit()
 	if _log_callback.is_valid():
-		_log_callback.call("INFO", "Server started on port " + str(_port))
+		_log_callback.call("INFO", "Server started on " + bind_addr + ":" + str(_port)
+				+ ("（远程模式）" if _allow_remote else "（仅本机）"))
 	
 	return true
 

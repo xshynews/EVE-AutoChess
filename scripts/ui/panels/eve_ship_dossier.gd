@@ -22,6 +22,13 @@ extends "res://scripts/ui/eve_window.gd"
 ##   - 属性按【权威表原值】显示（攻击 / 攻击间隔 / 射程格 / 移速格），
 ##     只有「信号半径 / 吨位」是工程派生值（权威表没有这两列）
 
+## ★ 2026-10-10（审查 2#5）：`_extra` 键名常量（拼错键不报错 ⇒ 用常量）。
+const CIDS := preload("res://scripts/core/eve_combat_ids.gd")
+## ★ 2026-10-10（i18n）：术语取词（见 `eve_terms.gd` 顶注）。
+const TERMS := preload("res://scripts/core/eve_terms.gd")
+## ★ 2026-10-10（i18n）：文案取词（见 `eve_text.gd` 顶注）。
+const T := preload("res://scripts/core/eve_text.gd")
+
 const W_COLLAPSED := 128.0
 const H_COLLAPSED := 128.0
 const H_EXPANDED := 320.0
@@ -47,7 +54,7 @@ func _ready() -> void:
 	#   否则两套收起会互相打架（一个收一个展，看起来像抽风）。
 	collapsible = false
 	persist_layout = false   # 它自己管高度，别让玩家的拖动记录压过 128/320
-	window_title = "舰船档案"
+	window_title = T.t("DOSSIER_TITLE", "舰船档案")
 	density = Density.COMPACT
 	show_status_text = false
 	super._ready()
@@ -88,14 +95,14 @@ func _build_contents() -> void:
 	_empty_box.add_child(ic)
 
 	var h := Label.new()
-	h.text = "点击舰船查看"
+	h.text = T.t("DOSSIER_EMPTY_H", "点击舰船查看")
 	h.add_theme_color_override("font_color", Color(0.561, 0.651, 0.686))
 	FONT.fs(h, 11)
 	h.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_empty_box.add_child(h)
 
 	var p := Label.new()
-	p.text = "战场 / 备战席 / 商店卡\n任一处点选即可"
+	p.text = T.t("DOSSIER_EMPTY_P", "战场 / 备战席 / 商店卡\n任一处点选即可")
 	p.add_theme_color_override("font_color", C_TEXT_FAINT)
 	FONT.fs(p, 9)
 	p.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -122,7 +129,7 @@ func _build_contents() -> void:
 	_full_box.add_child(head)
 
 	_name_label = Label.new()
-	_name_label.text = "未选中"
+	_name_label.text = T.t("DOSSIER_NONE", "未选中")
 	_name_label.add_theme_color_override("font_color", Color(0.918, 0.969, 0.980))
 	FONT.fs(_name_label, 12)
 	_name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -154,9 +161,9 @@ func _build_contents() -> void:
 
 	# 三层血量
 	for item in [
-		["护盾", "shield", C_SHIELD],
-		["装甲", "armor", C_ARMOR],
-		["结构", "hull", C_HULL],
+		[T.t("DOSSIER_HP_SHIELD", "护盾"), "shield", C_SHIELD],
+		[T.t("DOSSIER_HP_ARMOR", "装甲"), "armor", C_ARMOR],
+		[T.t("DOSSIER_HP_HULL", "结构"), "hull", C_HULL],
 	]:
 		var bar_row := make_bar_row(String(item[0]), item[2], 1.0, 26.0, 44.0)
 		_full_box.add_child(bar_row["row"])
@@ -172,9 +179,12 @@ func _build_contents() -> void:
 	grid.add_theme_constant_override("v_separation", 0)
 	_full_box.add_child(grid)
 	for item in [
-		["攻击", "attack"], ["攻击间隔", "interval"],
-		["射程", "range"], ["移速", "speed"],
-		["信号半径", "sig"], ["吨位", "class"],
+		[T.t("DOSSIER_ATTR_ATTACK", "攻击"), "attack"],
+		[T.t("DOSSIER_ATTR_INTERVAL", "攻击间隔"), "interval"],
+		[T.t("DOSSIER_ATTR_RANGE", "射程"), "range"],
+		[T.t("DOSSIER_ATTR_SPEED", "移速"), "speed"],
+		[T.t("DOSSIER_ATTR_SIG", "信号半径"), "sig"],
+		[T.t("DOSSIER_ATTR_CLASS", "吨位"), "class"],
 	]:
 		var row := _build_attr(String(item[0]), String(item[1]))
 		grid.add_child(row["root"])
@@ -184,7 +194,7 @@ func _build_contents() -> void:
 
 	# 特性 / 定位
 	_role_label = Label.new()
-	_role_label.text = "定位　—"
+	_role_label.text = T.t("DOSSIER_ROLE_NONE", "定位　—")
 	_role_label.add_theme_color_override("font_color", C_TEXT_DIM)
 	FONT.fs(_role_label, 10)
 	_role_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -286,7 +296,7 @@ func set_ship(p_ship: EveShip) -> void:
 
 	_name_label.text = ship.ship_name
 	_star_label.text = "★ %d" % _stars_for_cost(ship.cost)
-	_meta_label.text = "%s · %s · %d 费" % [
+	_meta_label.text = T.t("DOSSIER_META", "%s · %s · %d 费") % [
 		ship.faction_name(), ship.class_name_cn(), ship.cost]
 
 	var art: _Portrait = _portrait
@@ -296,14 +306,14 @@ func set_ship(p_ship: EveShip) -> void:
 	# 属性（权威表原值优先，缺了才退回派生值）
 	_stat_labels["attack"].text = "%d" % int(ship.attack)
 	_stat_labels["interval"].text = "%d" % int(ship.attack_interval)
-	_stat_labels["range"].text = "%d 格" % ship.range_cells
-	_stat_labels["speed"].text = "%.2f 格/s" % ship.speed_cells
-	_stat_labels["sig"].text = "%d m" % int(_extra_stat("signature", 0.0))
+	_stat_labels["range"].text = T.t("DOSSIER_RANGE", "%d 格") % ship.range_cells
+	_stat_labels["speed"].text = T.t("DOSSIER_SPEED", "%.2f 格/s") % ship.speed_cells
+	_stat_labels["sig"].text = "%d m" % int(_extra_stat(CIDS.X_SIGNATURE, 0.0))
 	_stat_labels["class"].text = ship.class_name_cn()
 
-	_role_label.text = "定位　%s%s" % [
-		String(ship.role),
-		"（后勤）" if ship.is_logistics else ""]
+	_role_label.text = T.t("DOSSIER_ROLE", "定位　%s%s") % [
+		ship.role_label(),
+		(T.t("DOSSIER_LOGI", "（后勤）") if ship.is_logistics else "")]
 
 	_refresh_traits()
 	_refresh_live()
@@ -359,13 +369,14 @@ func _refresh_traits() -> void:
 		var active := EveTraitTable.is_active(group, n)
 
 		chip.color = _trait_color(group, mine)
-		nm.text = mine
+		# ★ i18n：显示名走取词；`mine` 仍是**逻辑键**（`count()` / `_trait_color()` 都按它查）。
+		nm.text = TERMS.trait_member(group, mine)
 		ratio.text = "%d/%d" % [n, full]
 		if active:
-			state.text = "已生效"
+			state.text = T.t("DOSSIER_TRAIT_ACTIVE", "已生效")
 			state.add_theme_color_override("font_color", C_OK)
 		else:
-			state.text = "差 %d 档" % _tiers_away(group, n)
+			state.text = T.t("DOSSIER_TRAIT_AWAY", "差 %d 档") % _tiers_away(group, n)
 			state.add_theme_color_override("font_color", C_TEXT_FAINT)
 
 

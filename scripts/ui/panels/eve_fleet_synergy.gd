@@ -32,16 +32,18 @@ func _build_contents() -> void:
 	for g in EveTraitTable.GROUPS:
 		var key: StringName = g["key"]
 
-		var gh := make_group_header(String(g["label"]))
+		var gh := make_group_header(EveTraitTable.group_label(key))
 		content.add_child(gh)
 
 		for m in EveTraitTable.members(key):
-			var row := _build_row(key, String(m["name"]), m["color"])
+			# ⚠️ `name` = 逻辑键（查表/计数用），`label` = 显示名（i18n）。
+			#    ⛔ 两个别混 —— 拿 label 去 `count()` 会永远得 0。
+			var row := _build_row(key, String(m["name"]), String(m["label"]), m["color"])
 			content.add_child(row["root"])
 			_rows.append(row)
 
 
-func _build_row(group: StringName, member: String, color: Color) -> Dictionary:
+func _build_row(group: StringName, member: String, label: String, color: Color) -> Dictionary:
 	var root := HBoxContainer.new()
 	root.add_theme_constant_override("separation", 5)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -68,7 +70,8 @@ func _build_row(group: StringName, member: String, color: Color) -> Dictionary:
 	root.add_child(chip)
 
 	var name_label := Label.new()
-	name_label.text = member
+	# ★ i18n：显示名（`label`），不是逻辑键（`member`）。
+	name_label.text = label
 	name_label.add_theme_color_override("font_color", C_TEXT)
 	FONT.fs(name_label, 11)
 	name_label.custom_minimum_size = Vector2(58, 0)

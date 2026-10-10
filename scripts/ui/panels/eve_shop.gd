@@ -30,6 +30,13 @@ signal levelup_requested()
 signal lock_toggled(on: bool)
 signal salvage_requested()
 
+## ★ 2026-10-10（审查 2#5）：武器/防御 id（逻辑只认 id、不认中文）。
+const CIDS := preload("res://scripts/core/eve_combat_ids.gd")
+## ★ 2026-10-10（i18n）：术语取词（见 `eve_terms.gd` 顶注）。
+const TERMS := preload("res://scripts/core/eve_terms.gd")
+## ★ 2026-10-10（i18n）：文案取词（见 `eve_text.gd` 顶注）。
+const T := preload("res://scripts/core/eve_text.gd")
+
 const CARD_COUNT := 5
 
 var coin: int = 0
@@ -74,7 +81,7 @@ var _lock_btn: Button
 
 
 func _ready() -> void:
-	window_title = "商店"
+	window_title = T.t("SHOP_TITLE", "商店")
 	density = Density.NORMAL
 	super._ready()
 	_build_header_extras()
@@ -138,7 +145,7 @@ func _build_econ() -> Control:
 	coin_row.add_child(_coin_label)
 
 	var unit := Label.new()
-	unit.text = "星币"
+	unit.text = T.t("SHOP_COIN_UNIT", "星币")
 	unit.add_theme_color_override("font_color", C_TEXT_DIM)
 	FONT.fs(unit, 10)
 	unit.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
@@ -161,7 +168,7 @@ func _build_econ() -> Control:
 	box.add_child(ops)
 
 	_refresh_btn = Button.new()
-	_refresh_btn.text = "↻ 刷新 %d" % refresh_cost
+	_refresh_btn.text = T.t("SHOP_REFRESH", "↻ 刷新 %d") % refresh_cost
 	_refresh_btn.custom_minimum_size = Vector2(0, 24)
 	_refresh_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	EveButtonTheme.apply(_refresh_btn, "hud_warn")
@@ -169,7 +176,7 @@ func _build_econ() -> Control:
 	ops.add_child(_refresh_btn)
 
 	_levelup_btn = Button.new()
-	_levelup_btn.text = "▲ 升级 %d" % levelup_cost
+	_levelup_btn.text = T.t("SHOP_LEVELUP", "▲ 加速等级 %d") % levelup_cost
 	_levelup_btn.custom_minimum_size = Vector2(0, 24)
 	_levelup_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	EveButtonTheme.apply(_levelup_btn, "hud")
@@ -177,7 +184,7 @@ func _build_econ() -> Control:
 	ops.add_child(_levelup_btn)
 
 	_lock_btn = Button.new()
-	_lock_btn.text = "✦ 锁定加速列表"
+	_lock_btn.text = T.t("SHOP_LOCK", "✦ 锁定加速列表")
 	_lock_btn.custom_minimum_size = Vector2(0, 24)
 	_lock_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_lock_btn.toggle_mode = true
@@ -190,7 +197,8 @@ func _build_econ() -> Control:
 
 func _on_lock_toggled(on: bool) -> void:
 	locked = on
-	_lock_btn.text = "✦ 已锁定加速列表" if on else "✦ 锁定加速列表"
+	_lock_btn.text = (T.t("SHOP_LOCKED", "✦ 已锁定加速列表") if on
+			else T.t("SHOP_LOCK", "✦ 锁定加速列表"))
 	lock_toggled.emit(on)
 
 
@@ -202,7 +210,8 @@ func set_locked(on: bool) -> void:
 	locked = on
 	if _lock_btn != null:
 		_lock_btn.set_pressed_no_signal(on)
-		_lock_btn.text = "✦ 已锁定加速列表" if on else "✦ 锁定加速列表"
+		_lock_btn.text = (T.t("SHOP_LOCKED", "✦ 已锁定加速列表") if on
+				else T.t("SHOP_LOCK", "✦ 锁定加速列表"))
 
 
 ## 买得起 / 买不起的视觉。
@@ -381,7 +390,7 @@ func _fill_card(w: Dictionary, offer, index: int) -> void:
 		root.visible = true
 		root.modulate = Color(1, 1, 1, 0.34)
 		top.color = Color(0.14, 0.18, 0.21)
-		nm.text = "已买走"
+		nm.text = T.t("SHOP_BOUGHT", "已买走")
 		cost.text = "—"
 		stat.text = ""
 		art.accent = Color(0.35, 0.42, 0.46)
@@ -397,7 +406,7 @@ func _fill_card(w: Dictionary, offer, index: int) -> void:
 	if is_salvage:
 		top.color = C_ACCENT
 		art.accent = C_ACCENT
-		nm.text = "修复 " + String(d.get("name", "—"))
+		nm.text = T.t("SHOP_SALVAGE", "修复 %s") % String(d.get("name", "—"))
 	else:
 		top.color = fcol
 		art.accent = fcol
@@ -410,12 +419,18 @@ func _fill_card(w: Dictionary, offer, index: int) -> void:
 	#   ⇒ 打捞品靠「修复」前缀 + 青色顶带识别，价格格不需要内容。
 	cost.text = "" if is_salvage else str(int(d.get("cost", 0)))
 
-	var wname := String(d.get("weapon_type", ""))
-	var dname := String(d.get("defense_type", ""))
-	stat.text = "%s · %s\n攻 %d　%s %d" % [
-		wname, dname,
-		int(d.get("attack", 0)), "盾" if dname == "盾抗" else "甲",
-		int(d.get("shield", 0)) if dname == "盾抗" else int(d.get("armor_struct", 0)),
+	# ★ 2026-10-10（审查 2#5）：判据走 id（⛔ 不拿中文当主键）。
+	# ★ 2026-10-10（i18n）：**显示名走取词** —— 武器/防御的英文用 EVE 官方
+	#   市场分组名（Energy Turret / Hybrid Turret / Projectile Turret /
+	#   Missile Launcher）与 EVE 官方 Shield / Armor。默认 locale 下逐字不变。
+	var wid := CIDS.weapon_id_of(String(d.get("weapon_type", "")))
+	var did := CIDS.defense_id_of(String(d.get("defense_type", "")))
+	var is_shield := did == CIDS.D_SHIELD
+	stat.text = T.t("SHOP_CARD_STAT", "%s · %s\n攻 %d　%s %d") % [
+		TERMS.weapon(wid), TERMS.defense(did),
+		int(d.get("attack", 0)),
+		(T.t("SHOP_DEF_SHIELD", "盾") if is_shield else T.t("SHOP_DEF_ARMOR", "甲")),
+		int(d.get("shield", 0)) if is_shield else int(d.get("armor_struct", 0)),
 	]
 
 
@@ -460,7 +475,7 @@ func _build_salvage() -> Control:
 	_slv_box.add_child(col)
 
 	_slv_head = Label.new()
-	_slv_head.text = "待打捞"
+	_slv_head.text = T.t("SHOP_SALVAGE_HEAD", "待打捞")
 	_slv_head.add_theme_color_override("font_color", C_TEXT_FAINT)
 	FONT.fs(_slv_head, 9)
 	_slv_head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -550,7 +565,7 @@ func set_salvage(info: Dictionary) -> void:
 		c.queue_free()
 
 	if _slv_state == "empty":
-		_slv_head.text = "待打捞"
+		_slv_head.text = T.t("SHOP_SALVAGE_HEAD", "待打捞")
 		_slv_head.add_theme_color_override("font_color", C_TEXT_FAINT)
 
 		var big := Label.new()
@@ -563,13 +578,13 @@ func set_salvage(info: Dictionary) -> void:
 		var hint := Label.new()
 		# ★ 2026-10-04：打捞改在**结算页**选，这个框只显示已到账的修复品。
 		#    文案必须指向新入口，否则玩家在商店里找不到「打捞」按钮。
-		hint.text = "打捞请在\n战斗结算页选"
+		hint.text = T.t("SHOP_SALVAGE_HINT", "打捞请在\n战斗结算页选")
 		hint.add_theme_color_override("font_color", Color(0.561, 0.651, 0.686))
 		FONT.fs(hint, 9)
 		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_slv_body.add_child(hint)
 	elif _slv_state == "wreck":
-		_slv_head.text = "待打捞 1"
+		_slv_head.text = T.t("SHOP_SALVAGE_HEAD_N", "待打捞 %d") % 1
 		_slv_head.add_theme_color_override("font_color", C_WARN)
 
 		var ic := EveIcon.make(&"hangar", 34, Color(1.0, 0.72, 0.45))
@@ -589,9 +604,10 @@ func set_salvage(info: Dictionary) -> void:
 		#    `EveRunState.derive_wreck_tier()` 的 §2。
 		var exact := bool(info.get("base_exact", true))
 		var st2 := Label.new()
-		st2.text = "打击 %d · %s %d" % [
+		st2.text = T.t("SHOP_WRECK_STAT", "打击 %d · %s %d") % [
 			int(info.get("atk", 0)),
-			"强化" if not exact else "防御",
+			(T.t("SHOP_WRECK_BOOSTED", "强化") if not exact
+				else T.t("SHOP_WRECK_DEFENSE", "防御")),
 			int(info.get("def", 0)),
 		]
 		st2.add_theme_color_override("font_color", Color(0.78, 0.85, 0.88))
@@ -601,20 +617,20 @@ func set_salvage(info: Dictionary) -> void:
 
 		# 价格必须写出来：打捞是**花钱**的决定，框上不写价格等于让玩家盲点。
 		var pr := Label.new()
-		pr.text = "下单 −%d ◆" % int(info.get("price", 0))
+		pr.text = T.t("SHOP_WRECK_ORDER", "下单 −%d ◆") % int(info.get("price", 0))
 		pr.add_theme_color_override("font_color", C_GOLD)
 		FONT.fs(pr, 10)
 		pr.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_slv_body.add_child(pr)
 
 		var sm := Label.new()
-		sm.text = "下节点到账"
+		sm.text = T.t("SHOP_NEXT_NODE", "下节点到账")
 		sm.add_theme_color_override("font_color", Color(0.561, 0.651, 0.686))
 		FONT.fs(sm, 9)
 		sm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_slv_body.add_child(sm)
 	else:
-		_slv_head.text = "修复中"
+		_slv_head.text = T.t("SHOP_REPAIRING", "修复中")
 		_slv_head.add_theme_color_override("font_color", C_ACCENT)
 
 		var ic := EveIcon.make(&"clock", 34, Color(0.62, 0.83, 0.87))
@@ -629,7 +645,7 @@ func set_salvage(info: Dictionary) -> void:
 		_slv_body.add_child(nm)
 
 		var sm := Label.new()
-		sm.text = "下节点到账\n顶掉 1 个货位"
+		sm.text = T.t("SHOP_NEXT_NODE_SLOT", "下节点到账\n顶掉 1 个货位")
 		sm.add_theme_color_override("font_color", Color(0.561, 0.651, 0.686))
 		FONT.fs(sm, 9)
 		sm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -709,8 +725,8 @@ func set_economy(p_coin: int, p_level: int, p_xp: int, p_xp_need: int,
 	xp_need = p_xp_need
 	refresh_cost = p_refresh_cost
 	levelup_cost = p_levelup_cost
-	_refresh_btn.text = "↻ 刷新 %d" % refresh_cost
-	_levelup_btn.text = "▲ 加速等级 %d" % levelup_cost
+	_refresh_btn.text = T.t("SHOP_REFRESH", "↻ 刷新 %d") % refresh_cost
+	_levelup_btn.text = T.t("SHOP_LEVELUP", "▲ 加速等级 %d") % levelup_cost
 	_coin_label.text = str(coin)
 	_level_label.text = "Lv.%d · %d / %d" % [level, xp, xp_need]
 	set_affordable(coin)
@@ -719,7 +735,7 @@ func set_economy(p_coin: int, p_level: int, p_xp: int, p_xp_need: int,
 func set_bench(used: int, cap: int) -> void:
 	bench_used = used
 	bench_cap = cap
-	set_status("备战席 %d / %d" % [used, cap])
+	set_status(T.t("SHOP_BENCH", "备战席 %d / %d") % [used, cap])
 
 
 # ------------------------------------------------------------------ 自绘件
@@ -793,7 +809,7 @@ class _SellOverlay extends Control:
 			y += seg + gap
 
 		var font := ThemeDB.fallback_font
-		var text := "拖到此处出售 · 返还 ◆"
+		var text := T.t("SHOP_SELL_HINT", "拖到此处出售 · 返还 ◆")
 		var fs := FONT.s(19)
 		var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		draw_string(font, Vector2((size.x - w) * 0.5, size.y * 0.5 + 7.0),

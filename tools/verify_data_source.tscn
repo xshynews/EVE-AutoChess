@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tools/verify_data_source.gd" id="1_vds"]
+
+[node name="VerifyDataSource" type="Node"]
+script = ExtResource("1_vds")

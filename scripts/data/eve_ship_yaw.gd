@@ -33,7 +33,7 @@ class_name EveShipYawTable
 ## ⚠️ 改完这里**必须重跑总览图复核**，别只对着数字想。
 ## ⚠️ 但**别再拿那张老总览图上的箭头当判据** —— 箭头方向已确认是反的。
 ##    现行判据是**物理**的：`_e` 自发光贴图里「法线平行于舰艏轴」的面聚在哪端 ⇒ 那端是船尾。
-##    工具 `C:\godot\_export\pose_sheet.py`（全库）· `multi_e_test.py` · `proof_pair.py`。
+##    工具 `tools/pipeline/pose_sheet.py`（全库）· `multi_e_test.py` · `proof_pair.py`。
 ##    ⚠️「端部宽度分布」与「轮廓 IoU」两条自动路仍不可用（前者把磨难级判成同向、
 ##    后者 margin 落进噪声），过程见 `.workbuddy/memory/REF_3D模型朝向标定.md`。
 
@@ -65,11 +65,11 @@ class_name EveShipYawTable
 ##  **「模型真的歪吗？」**
 ##
 ##  用两条**互相独立**、且都**不经过 PCA** 的判据全库重测：
-##    ① `C:\godot\_export\nozzle_axis.py` —— **有向**喷口法线反解真轴方位。
+##    ① `tools/pipeline/nozzle_axis.py` —— **有向**喷口法线反解真轴方位。
 ##       取 `_e` 自发光且法线沿轴的面，求有向面积加权和 `v = Σ w·NR`（**不翻符号**）。
 ##       喷口朝外 ⇒ `v ≈ −A′`（A′ = 真舰艏轴）⇒ 它在 (A, 侧向) 平面内的方位角
 ##       与 180° 的差就是 A′ 相对 A 的偏角 δ，**δ 就是该船的 AXIS_DEG**。
-##    ② `C:\godot\_export\sym_audit.py` —— 俯视**实心轮廓**与其左右镜像的 IoU
+##    ② `tools/pipeline/sym_audit.py` —— 俯视**实心轮廓**与其左右镜像的 IoU
 ##       最大时的旋转角（与自发光、与 PCA 都无关）。从面积加权质心起算，扫到 0.02°。
 ##
 ##  **两条判据在对照组上逐度一致**（rifter / hyperion / apocalypse / abaddon 等
@@ -223,7 +223,7 @@ const AXIS_DEG := {
 ##   ⇒ 这是**第一行**的改动，180° 与别的船无关（`myrmidon` 已不在 `FLIP` 里，见下）。
 ##
 ## 定位过程（三个候选互相排斥，只有第三个同时满足全部）：
-##   · 起点：离线 6 机位正交渲染（`C:\godot\_export\_rot8.py`，长轴竖直 × 绕长轴 4 个 roll）
+##   · 起点：离线 6 机位正交渲染（`tools/pipeline/_rot8.py`，长轴竖直 × 绕长轴 4 个 roll）
 ##     与用户 6 张实机图逐列比 ⇒ 只有 **roll 90°/270°** 能让「俯视/仰视」列的翼展变竖向
 ##     （roll 0/180 时翼展在画面里横摊，与实机不符）⇒ 先把 roll 收窄到两个。
 ##   · 再用「**模型 −X 端（喷口端）涂红 / +X 端（舰艏）涂绿**」取舍（`_rollc.py`）：
@@ -244,7 +244,7 @@ const AXIS_DEG := {
 ## ⚠️ 副作用一：`AXIS_DEG` 的物理含义变了 —— 它加在 `yaw` 上、即绕**世界 Y**；
 ##   以前长轴是水平的，绕 Y 是 yaw 残差；现在长轴**就是世界 Y** ⇒ 绕 Y = **绕长轴（roll）**。
 ##   旧的 `+0.02°` 是在旧平面（水平）量的，语义不再对应 ⇒ **置 `0.0`**（量级上本来也≈0）。
-## ⚠️ 副作用二：`C:\godot\_export\_ba4.py` 的 `axis_index()` 假设「spec 第一行 = 舰艏轴」，
+## ⚠️ 副作用二：`tools/pipeline/_ba4.py` 的 `axis_index()` 假设「spec 第一行 = 舰艏轴」，
 ##   这条假设只在「舰艏朝世界 +X」时成立。本船现在舰艏在 **第二行** ⇒ 用 `_ba4.py`
 ##   核它时必须先改那个函数，否则会把「模型 −Y」当成舰艏（结论正好错 90°）。
 ##
@@ -423,7 +423,7 @@ const AXIS_DEG := {
 ##       `M·mesh_rot·side = +X`（★这条必须有，否则左右镜像也是解 ⇒ 解不唯一）
 ##   解析走**生产函数** `parse_axis_remap()`（红线 40 同源，不自己复刻一份）。
 ##   结果：**52 艘全部唯一命中、零失败、零歧义**。
-##   产出留档：`user://bow_calib/remap47.txt`；落盘脚本 `C:\godot\_export\_apply_remap47.py`
+##   产出留档：`user://bow_calib/remap47.txt`；落盘脚本 `tools/pipeline/_apply_remap47.py`
 ##
 ## ── 为什么旧表"看起来也对"却全错（红线 40 第 7 次现形）──────────
 ##   旧探针算的是 `v.quaternion · (model.basis · bow_local)` —— 这两个值
@@ -694,7 +694,7 @@ static func mesh_rot_for(ship_id: StringName) -> Basis:
 ##        `noz2 > +0.5` ⇒ 喷口朝 +A ⇒ **舰艏在 −A ⇒ 要翻**。
 ##        辅判据 `ratio1` = 两端各 20% 长度带内自发光**面积**之比。
 ##  52 艘判完：判得动 44 · 与旧表不一致 **36**。
-##  工具：`C:\godot\_export\pose_sheet.py`（全库）· `multi_e_test.py`（多套 `_e` 的 5 艘逐张试）
+##  工具：`tools/pipeline/pose_sheet.py`（全库）· `multi_e_test.py`（多套 `_e` 的 5 艘逐张试）
 ##        · `proof_pair.py`（「现在 vs 修正后」同机位并排实拍）。
 ##  证据全文：`F:\evezzq\接手手册-2026-09-24\09_朝向问题盘点-2026-09-26.md`。
 ##

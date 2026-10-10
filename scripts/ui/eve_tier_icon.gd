@@ -27,7 +27,7 @@ class_name EveTierIcon
 ##   antialiased 参数 ⇒ 2D 侧画这个符号必然是硬锯齿。
 ##   开 `msaa_2d` 是**全局**改动：HUD 里大量「像素对齐的 1px 边框」
 ##   （格带边框、棋盘线、窗口边）会一起被揉成半透明灰边。
-##   ⇒ 边缘覆盖率**离线算**：`C:\godot\_export\tier_icons.py`
+##   ⇒ 边缘覆盖率**离线算**：`tools/pipeline/tier_icons.py`
 ##     在 16x 超采样画布上描边，再盒式降采样到 48px 宽。
 ##
 ## ⚠️ 纹理 = **符号自身包围盒**（不留白），宽固定 24px = 显示宽度的 **2 倍**。
@@ -50,6 +50,9 @@ class_name EveTierIcon
 
 ## 贴图目录。约定：`res://assets/ui/tier/tier_<cost>.png`
 const DIR := "res://assets/ui/tier/"
+
+## ★ 2026-10-10（i18n）：术语取词（见 `eve_terms.gd` 顶注）。
+const TERMS := preload("res://scripts/core/eve_terms.gd")
 
 ## 纹理缓存。Key = cost（1~5），Value = Texture2D 或 null（未命中也要缓存，
 ## 避免每帧对不存在的路径反复做 ResourceLoader.exists 的磁盘探测）。
@@ -107,6 +110,10 @@ static func draw_centered(ci: CanvasItem, center: Vector2, width_px: float,
 	draw(ci, center - d * 0.5, width_px, cost, col)
 
 
-## 吨位中文名（与 EveShipTable.CLASS_NAMES_BY_COST 同源，不另立一份真相）
+## 吨位名（与 EveShipTable.CLASS_NAMES_BY_COST 同源，不另立一份真相）。
+## ★ 2026-10-10（i18n）：**显示名走取词**（英文 = EVE 官方舰级名 Frigate…）；
+##    中文兜底仍取那张表 ⇒ 默认 locale 下逐字不变。
 static func label(cost: int) -> String:
-	return String(EveShipTable.CLASS_NAMES_BY_COST.get(clampi(cost, 1, 5), ""))
+	var c := clampi(cost, 1, 5)
+	var cn := String(EveShipTable.CLASS_NAMES_BY_COST.get(c, ""))
+	return TERMS.ship_class(c, cn) if cn != "" else ""

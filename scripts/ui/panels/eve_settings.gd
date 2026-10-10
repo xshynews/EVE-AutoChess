@@ -122,6 +122,10 @@ func _is_menu() -> bool:
 ##   ④ eve_battle_scene 里的 handler（如果加了）⑤ `add_coins_requested` 的所有 grep 引用。
 signal add_coins_requested(amount: int)
 signal closed()
+## ★ 2026-10-10 i18n：玩家切换了界面语言（`code` = 新 locale）。
+## ⚠️ 发出后本窗会**重载当前场景** —— 文案是建 UI 时取词的，
+##    只有重建才能全部换语言（见 `_pick_language`）。
+signal language_changed(code: String)
 
 ## 当前天空盒候选（与 EveBattleArena 的 background_id 导出枚举同源）。
 ##
@@ -140,6 +144,11 @@ const MOODS: Array = [
 	{"v": 1, "name": "氛围"},
 ]
 
+## ★ 2026-10-10 「重置」区那行说明的默认文案。
+## ⚠️ 必须**短**：它和按钮同一行，窗宽只有 320（见 `_build_contents` 里的说明）。
+##    点了重置会临时换成「✓ 已恢复默认」，开窗时换回。
+const RESET_NOTE_HINT := "Ctrl + F11"
+
 ## 设置持久化。
 ##
 ## ⚠️ 用 `preload` 而不是直接写类名：全局 class_name 要等 `.godot` 重新扫描
@@ -150,6 +159,10 @@ const STORE := preload("res://scripts/core/eve_settings_store.gd")
 const UI_SCALE_SCRIPT := preload("res://scripts/ui/eve_ui_scale.gd")
 ## ★ 窗口分辨率档（唯一真相源）。⚠️ 只在**桌面端**生效。
 const RESOLUTION_SCRIPT := preload("res://scripts/ui/eve_resolution.gd")
+## ★ 2026-10-10 i18n：玩家可见文案一律从这里取（见 eve_text.gd 顶注）。
+const T := preload("res://scripts/core/eve_text.gd")
+## 切语言要重载场景；战场上重载前得先置「继续上一局」。
+const RUN_STORE := preload("res://scripts/core/eve_run_store.gd")
 
 ## 音量的四档 —— 顺序 = 窗里的顺序，键 = `EveAudio.set_volume` 的 kind。
 ##
@@ -169,7 +182,10 @@ var _mood_btns: Array[Button] = []
 ## 缩放档按钮（**只有移动端才建** ⇒ 桌面端这里是空的，别当成 bug）
 var _scale_btns: Array[Button] = []
 ## 分辨率档按钮（**只有桌面端才建** ⇒ 移动端这里是空的，别当成 bug）
+## ⚠️ 顺序 = [自适应] + `CHOICES` ⇒ **下标比 CHOICES 大 1**（见 `set_resolution`）。
 var _res_btns: Array[Button] = []
+## ★ 2026-10-10 「重置」区那行说明（默认显示快捷键提示，点过重置后变成「已恢复」）。
+var _reset_note: Label = null
 ## 本窗认为的缩放档（存档原值，0 = 自动）
 var _cur_ui_scale := 0.0
 ## 二态开关（雾 / 射程环 / 棋盘 / 静音）—— 值存在这里，刷新时按值上皮肤
@@ -185,18 +201,41 @@ var _font_slider: Dictionary = {}
 var _paused := false
 
 var _pause_btn: Button = null
+## 「语言」行的按钮（**单行**：标签与按钮同排，见 `_build_display_rows` 的说明）
+var _lang_btns: Array[Button] = []
+## 防重入：切语言会重载场景，重载前后可能各触发一次 pressed
+var _lang_pick_guard := false
 ## DEBUG 区（默认收起）—— 常驻显示的话，一个正式设置窗里挂着加币按钮很出戏
 var _dbg_box: VBoxContainer = null
 var _dbg_btn: Button = null
 
 
 func _ready() -> void:
-	window_title = "设置"
+	# ⚠️ 标题也会被 i18n 化 ⇒ 它**不能**当布局存档键（见 hud_root 里的 layout_key）。
+	window_title = T.t(&"SETTINGS_TITLE", "设置")
 	density = Density.COMPACT
+	# ★ 2026-10-10：标题栏右上角给一枚 ✕（在折叠按钮**右边**）。
+	#   设置窗是「点开就为一个目的」的窗 —— 此前只能靠再点一次顶条 ≡ 或 ESC
+	#   关掉，玩家第一眼是找不到出口的。⚠️ 必须在 `super._ready()` **之前**设，
+	#   因为基类的 `_build()` 读 `closable` 决定建不建那枚按钮。
+	closable = true
+	# ⚠️★ 2026-10-10 i18n：**布局存档键必须与文案脱钩**。
+	#   `EveWindow._layout_key()` 在 `layout_key` 为空时回落到 `window_title`，
+	#   而标题现在会被 i18n 化 ⇒ 空着的话「切一次语言 = 这扇窗的布局键跟着变
+	#   = 玩家摆好的窗口位置丢失」。按档案推导一个稳定的键（三个档案各自一个位，
+	#   与牌桌 / 主菜单以前手写的那两个键**同名** ⇒ 不需要迁移）。
+	if layout_key == "":
+		layout_key = "%s_settings" % profile
+	# 按钮按下 ⇒ 复用本窗**已有**的 `closed` 信号（HUD 早就把它接到 hide_settings 了）。
+	close_requested.connect(func() -> void: closed.emit())
 	# ★ 高度由内容反推（见 `_fit_height`）⇒ 允许它高过设计稿的 480，
 	#   摆位时由基类把它上移进屏（否则底部会被切掉）。
 	fit_in_viewport = true
 	super._ready()
+	# ★ 2026-10-10 Ctrl+F11 = 恢复默认设置：**显式**开启 unhandled_input，
+	#   不依赖"脚本定义了 `_unhandled_input` 引擎就自动开"这条隐式规则。
+	#   ⚠️ `_unhandled_input` 不受 `visible` 影响 ⇒ 窗关着也按得到（救命键的关键）。
+	set_process_unhandled_input(true)
 	_build_contents()
 	set_paused(false)
 	#
@@ -209,6 +248,36 @@ func _ready() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	_fit_height()
+
+
+## 把 `[{"id"/"k"/"v": ..., "name": 中文}]` 这类表的**显示名**过一遍 i18n。
+##
+## ★ 数据表（BACKGROUNDS / MOODS / VOLUME_KINDS）里**保持中文源文**：
+##   中文既是兜底也是活文档，**渲染时**才过一遍 `T.t()`
+##   ⇒ 加语言不用改数据表，改数据表也不用碰 i18n。
+## ⚠️ `id_field` 一律取 ASCII 稳定标识（⛔ 别用中文当 key 的一部分）。
+## ⚠️⚠️ **用 `str()` 不是 `String()`**：`MOODS` 的 `v` 是 `int`，而 GDScript 的
+##    `String()` 构造函数**不接 int**（实测 `String(0)` ⇒
+##    `Invalid call 'String' constructor`）—— 开窗时才炸，中文版也一样。
+static func _names(items: Array, key_prefix: String, id_field := "id") -> Array:
+	var out: Array = []
+	for it in items:
+		var d: Dictionary = (it as Dictionary).duplicate()
+		d["name"] = T.t("%s_%s" % [key_prefix, str(d[id_field]).to_upper()],
+				String(d["name"]))
+		out.append(d)
+	return out
+
+
+## 界面缩放档：只有「自动」需要翻译（`100%` / `115%` 中英文一样）。
+static func _ui_scale_items() -> Array:
+	var out: Array = []
+	for c in UI_SCALE_SCRIPT.CHOICES:
+		var d: Dictionary = (c as Dictionary).duplicate()
+		if float(d["v"]) == 0.0:
+			d["name"] = T.t("SET_UISCALE_AUTO", String(d["name"]))
+		out.append(d)
+	return out
 
 
 func _build_contents() -> void:
@@ -232,8 +301,8 @@ func _build_contents() -> void:
 		content.add_child(make_divider())
 
 	# ── ① 音频（**两个档案都有**）──
-	content.add_child(make_group_header("音频  AUDIO"))
-	for item in VOLUME_KINDS:
+	content.add_child(make_group_header(T.t("SET_GROUP_AUDIO", "音频  AUDIO")))
+	for item in _names(VOLUME_KINDS, "SET_VOL", "k"):
 		var kind: StringName = item["k"]
 		var made := _build_slider_row(String(item["name"]), 1.0,
 				func(v: float): _pick_volume(kind, v))
@@ -243,7 +312,7 @@ func _build_contents() -> void:
 	var mute_row := HBoxContainer.new()
 	mute_row.add_theme_constant_override("separation", 5)
 	mute_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	mute_row.add_child(_make_toggle("mute", "静音", func(on: bool):
+	mute_row.add_child(_make_toggle("mute", T.t("SET_MUTE", "静音"), func(on: bool):
 		STORE.save_one("muted", on)
 		mute_toggled.emit(on)))
 	content.add_child(mute_row)
@@ -267,8 +336,8 @@ func _build_contents() -> void:
 	#    （窗口大小是玩家自己拖的，字号未必跟着舒服）。
 	# ★ 2026-10-10 主界面档案**不建**这一行：主菜单恒定 100%（见 `PROFILE_MENU`）。
 	if not _is_menu():
-		content.add_child(make_group_header("界面  INTERFACE"))
-		_font_slider = _build_slider_row("字号", FONT.scale,
+		content.add_child(make_group_header(T.t("SET_GROUP_INTERFACE", "界面  INTERFACE")))
+		_font_slider = _build_slider_row(T.t("SET_FONT_SCALE", "字号"), FONT.scale,
 				func(v: float): _pick_font_scale(v),
 				FONT.MIN_SCALE, FONT.MAX_SCALE, FONT.STEP)
 		content.add_child(_font_slider["row"])
@@ -278,10 +347,10 @@ func _build_contents() -> void:
 	#    ⚠️ 牌桌没有 3D 场景可换：它的背景是 `ddz_table` 自己画的，
 	#       由牌桌档案的「牌桌美化」项管，⛔ 别把天空盒搬过去（那是死按钮）。
 	if _is_battle():
-		content.add_child(make_group_header("画面  RENDER"))
+		content.add_child(make_group_header(T.t("SET_GROUP_RENDER", "画面  RENDER")))
 		# ⚠️ 天空盒用 2×2 而不是一行 4 个：窗宽 320 时一行 4 个每个只有 ~70px，
 		#    「加达里 C07」这种 7 字标签会被压成省略号（改窗宽就会复现）。
-		var bg := _build_choice_block(BACKGROUNDS, "name", 2,
+		var bg := _build_choice_block(_names(BACKGROUNDS, "SET_BG"), "name", 2,
 				func(i: int): _pick_background(i))
 		var bg_btns: Array = bg["btns"]
 		for b in bg_btns:
@@ -290,7 +359,8 @@ func _build_contents() -> void:
 		for r in bg_rows:
 			content.add_child(r)
 
-		var mood := _build_choice_block(MOODS, "name", 2, func(i: int): _pick_mood(i))
+		var mood := _build_choice_block(_names(MOODS, "SET_MOOD", "v"), "name", 2,
+				func(i: int): _pick_mood(i))
 		var mood_btns: Array = mood["btns"]
 		for b in mood_btns:
 			_mood_btns.append(b as Button)
@@ -300,15 +370,15 @@ func _build_contents() -> void:
 		content.add_child(make_divider())
 
 		# ── ⑤ 战斗界面（空间雾 / 射程环 / 棋盘）—— **只有战场有** ──
-		content.add_child(make_group_header("战斗界面  BATTLE UI"))
+		content.add_child(make_group_header(T.t("SET_GROUP_BATTLE_UI", "战斗界面  BATTLE UI")))
 		var toggles := HBoxContainer.new()
 		toggles.add_theme_constant_override("separation", 5)
 		toggles.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		toggles.add_child(_make_toggle("fog", "空间雾", func(on: bool):
+		toggles.add_child(_make_toggle("fog", T.t("SET_TOGGLE_FOG", "空间雾"), func(on: bool):
 			fog_toggled.emit(on)))
-		toggles.add_child(_make_toggle("rings", "射程环", func(on: bool):
+		toggles.add_child(_make_toggle("rings", T.t("SET_TOGGLE_RINGS", "射程环"), func(on: bool):
 			range_rings_toggled.emit(on)))
-		toggles.add_child(_make_toggle("board", "棋盘", func(on: bool):
+		toggles.add_child(_make_toggle("board", T.t("SET_TOGGLE_BOARD", "棋盘"), func(on: bool):
 			board_toggled.emit(on)))
 		content.add_child(toggles)
 		content.add_child(make_divider())
@@ -318,15 +388,15 @@ func _build_contents() -> void:
 	#      离开这一局·回主界面」，在主界面上**一个对应物都没有**（我们就在主界面）。
 	#      建出来就是一排点不动的死按钮（红线 9，见 `PROFILE_MENU`）。
 	if not _is_menu():
-		content.add_child(make_group_header("操作  ACTION"))
+		content.add_child(make_group_header(T.t("SET_GROUP_ACTION", "操作  ACTION")))
 		if _is_battle():
 			var acts := HBoxContainer.new()
 			acts.add_theme_constant_override("separation", 5)
 			acts.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			var cam_btn := _mk_btn("相机复位")
+			var cam_btn := _mk_btn(T.t("SET_ACT_CAMERA", "相机复位"))
 			cam_btn.pressed.connect(func(): camera_reset_requested.emit())
 			acts.add_child(cam_btn)
-			var restart_btn := _mk_btn("重开一局")
+			var restart_btn := _mk_btn(T.t("SET_ACT_RESTART", "重开一局"))
 			EveButtonTheme.apply(restart_btn, "hud_warn")
 			restart_btn.pressed.connect(func(): run_restart_requested.emit())
 			acts.add_child(restart_btn)
@@ -339,7 +409,8 @@ func _build_contents() -> void:
 		var back_row := HBoxContainer.new()
 		back_row.add_theme_constant_override("separation", 5)
 		back_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var menu_btn := _mk_btn("放弃本局 · 回主界面" if _is_battle() else "返回主界面")
+		var menu_btn := _mk_btn(T.t("SET_ACT_BACK_BATTLE", "放弃本局 · 回主界面")
+				if _is_battle() else T.t("SET_ACT_BACK_LOUNGE", "返回主界面"))
 		menu_btn.pressed.connect(func(): back_to_menu_requested.emit())
 		back_row.add_child(menu_btn)
 		content.add_child(back_row)
@@ -360,7 +431,7 @@ func _build_contents() -> void:
 	#   ⚠️ 加币是**战场经济**的调试手段（星币）⇒ 牌桌档案里同样不该出现。
 	if _is_battle() and not OS.has_feature("release"):
 		content.add_child(make_divider())
-		content.add_child(make_group_header("系统  SYSTEM"))
+		content.add_child(make_group_header(T.t("SET_GROUP_SYSTEM", "系统  SYSTEM")))
 		# 三个常见经济档位的快速加币按钮：
 		#   100 = 买 1 次超频 + 1 次经验档
 		#   300 = 日常调试（刷新 / 加速 / 打捞都够用 1~2 次）
@@ -379,13 +450,43 @@ func _build_contents() -> void:
 		dbg.add_theme_constant_override("separation", 5)
 		dbg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		for amt in [100, 300, 999]:
-			var b := _mk_btn("+%d 星币" % amt)
+			var b := _mk_btn(T.t("SET_DEBUG_COINS", "+%d 星币") % amt)
 			b.pressed.connect(func(a = amt): add_coins_requested.emit(a))
 			dbg.add_child(b)
 		_dbg_box.add_child(dbg)
 		content.add_child(_dbg_box)
 		# ⚠️ 传 false：此刻窗口宽度还是 0，反推高度会拿到垃圾值（见 _set_debug_open 的说明）
 		_set_debug_open(false, false)
+
+	# ── ⑧ 重置（**所有档案都有**）──────────────────────────────────
+	#
+	# ★ 2026-10-10：用户要「一个 Ctrl+F11 恢复默认设置的按钮」。
+	#   ⚠️ 它本质是**救命键**：玩家把分辨率 / 字号 / 音量调歪了、界面没法用的时候，
+	#      按它就能把设置拉回出厂值。所以：
+	#        ① 按钮放在**所有档案都建**的这一区（⛔ 别塞进「操作」，那区主界面没有）；
+	#        ② `_unhandled_input` 挂在**本窗**上（三个场景都建了它）——
+	#           `_unhandled_input` 不受 `visible` 影响 ⇒ **窗关着也按得到**。
+	content.add_child(make_divider())
+	content.add_child(make_group_header(T.t("SET_GROUP_RESET", "重置  RESET")))
+	# ⚠️ 按钮与快捷键说明**排在同一行**：设置窗已经很高（地面档案含分辨率块
+	#    实测 ~940），**多占一行**就会把整扇窗顶过 `_fit_height` 的视口上限
+	#    ⇒ 触发那条守卫（拒绝设高）⇒ 窗底被切掉（2026-10-10 出图时踩到）。
+	var reset_row := HBoxContainer.new()
+	reset_row.add_theme_constant_override("separation", 8)
+	reset_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var reset_btn := _mk_btn(T.t(&"SETTINGS_RESET", "恢复默认设置"))
+	reset_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN   # 别撑满，给说明留位
+	reset_btn.pressed.connect(reset_to_defaults)
+	reset_row.add_child(reset_btn)
+	# ⚠️ 说明**不许开 autowrap**（窗宽只有 320，见下面 hint 的同款说明）
+	_reset_note = Label.new()
+	_reset_note.text = RESET_NOTE_HINT
+	_reset_note.add_theme_color_override("font_color", C_TEXT_FAINT)
+	FONT.fs(_reset_note, 9)
+	_reset_note.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_reset_note.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	reset_row.add_child(_reset_note)
+	content.add_child(reset_row)
 
 	# 快捷键备忘 —— 设置窗的一大价值就是「让隐藏操作变得可发现」
 	#
@@ -398,16 +499,19 @@ func _build_contents() -> void:
 	# ★ 2026-10-10 主界面档案：只说主界面上**真实有效**的东西（音量 / 分辨率），
 	#    ⛔ 别提字号（主界面恒定 100%，这里改不了 —— 见 `PROFILE_MENU`）。
 	var hint := Label.new()
-	var hint_text := "快捷键  空格 暂停/继续 · C 相机复位 · B 棋盘 · R 重开"
+	var hint_text := T.t("SET_HINT_BATTLE",
+				"快捷键  空格 暂停/继续 · C 相机复位 · B 棋盘 · R 重开")
 	if _is_menu():
 		# ⚠️ 「显示」区随平台变：桌面 = 分辨率（即时生效）；移动 = 界面缩放
 		#    （存档值，主界面是固定版面**不参与**放大）⇒ 提示必须跟着平台说，
 		#    ⛔ 别在手机上写「分辨率即时生效」（根本没这一行）。
-		hint_text = "音量与分辨率即时生效；主界面为固定版面，字号沿用战斗设置" \
-				if RESOLUTION_SCRIPT.is_enabled() \
-				else "音量即时生效；界面缩放与字号在战斗中生效（主界面为固定版面）"
+		hint_text = (T.t("SET_HINT_MENU_DESKTOP",
+						"音量与分辨率即时生效；主界面为固定版面，字号沿用战斗设置")
+					if RESOLUTION_SCRIPT.is_enabled()
+					else T.t("SET_HINT_MENU_MOBILE",
+						"音量即时生效；界面缩放与字号在战斗中生效（主界面为固定版面）"))
 	elif not _is_battle():
-		hint_text = "分辨率与字号即时生效；牌桌不参与「界面缩放」"
+		hint_text = T.t("SET_HINT_LOUNGE", "分辨率与字号即时生效；牌桌不参与「界面缩放」")
 	hint.text = hint_text
 	hint.add_theme_color_override("font_color", C_TEXT_FAINT)
 	FONT.fs(hint, 9)
@@ -428,10 +532,47 @@ func _build_contents() -> void:
 ##    分区顺序一眼可读 —— 本文件的分区顺序一直在被调整（见顶注）。
 func _build_display_rows() -> Array:
 	var rows: Array = []
-	rows.append(make_group_header("显示  DISPLAY"))
+	rows.append(make_group_header(T.t("SET_GROUP_DISPLAY", "显示  DISPLAY")))
+
+	# ★ 2026-10-10 i18n：「语言」。
+	# ⏸⏸ **2026-10-11 冻结：英文版现在时机不成熟 ⇒ 这一行整个不建。**
+	#    · 开关是 `EveText.LANGUAGE_ENABLED`（唯一真源，当前 false）。
+	#      改成 true 这一行就回来 —— 代码一直在，不是删掉的。
+	#    · 为什么藏：CSV 的 en 列大量是占位/直译没过审，UI 面也只迁了一半，
+	#      玩家切过去只会得到中英混杂的半成品。
+	#    · ⛔ 解冻前不要对外宣称支持英文。解冻顺序见 `i18n/README.md` 顶部。
+	#    · ⚠️ 藏掉这一行会让窗矮约 28px（内容 ~940 ⇒ ~912），对 `_fit_height`
+	#      的上界守卫（视口 92%）是**更安全**的方向，不会切掉底部「重置」。
+	if T.LANGUAGE_ENABLED:
+		# ⚠️ **刻意压成一行**（标签与按钮同排）：设置窗内容已约 900 高，
+		#   而 `_fit_height` 的上界是视口 92%（1080 屏 = 993）——
+		#    再多一个「标签行 + 按钮行」就可能被上界守卫拒掉，
+		#    表现是窗停在初值、**底部的「重置」被切**（这个坑踩过一次）。
+		var lang_row := _new_row(6)
+		var lang_lab := Label.new()
+		# ⚠️ 标签里带上**当前语言**：这一行的两个按钮不做高亮（窗里没有通用
+		#    「选中态」机制），靠文案表示当前值最省事也最不容易看错。
+		lang_lab.text = T.t("SET_LANG", "语言 LANGUAGE · %s") % T.locale_label()
+		lang_lab.add_theme_color_override("font_color", C_TEXT_DIM)
+		FONT.fs(lang_lab, 10)
+		lang_lab.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		lang_lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		lang_row.add_child(lang_lab)
+		_lang_btns.clear()
+		for i in T.LOCALES.size():
+			var lb := _mk_btn(String(T.LOCALES[i]["name"]))
+			lb.pressed.connect(_pick_language.bind(i))
+			_lang_btns.append(lb)
+			lang_row.add_child(lb)
+		rows.append(lang_row)
 
 	if RESOLUTION_SCRIPT.is_enabled():
-		var items: Array = []
+		# ★ 2026-10-10 「自适应」排在最前（= 视频设置里 "自动/推荐" 的常规位置）。
+		#   它的存档哨兵是 `EveResolution.AUTO`（空串），解析成「按屏幕可用区
+		#   挑能放下的最大 16:9 档」。
+		# ⚠️ ⇒ `_res_btns` 的**下标比 `CHOICES` 大 1**：0 = 自适应，
+		#    1..N = `CHOICES[0..N-1]`。见 `set_resolution` / `_pick_resolution`。
+		var items: Array = [{"name": T.t("RES_AUTO", RESOLUTION_SCRIPT.AUTO_LABEL)}]
 		for i in RESOLUTION_SCRIPT.CHOICES.size():
 			items.append({"name": RESOLUTION_SCRIPT.label_of(i)})
 		var blk := _build_choice_block(items, "name", 2,
@@ -446,7 +587,7 @@ func _build_display_rows() -> Array:
 		#    不解释一下玩家会以为是某种星级。
 		# ⚠️ 这一行**必须短**：窗宽只有 320，「太长 + ⛔禁止 autowrap」会直接被裁掉。
 		var note := Label.new()
-		note.text = "★ = 推荐档（2560 × 1440）"
+		note.text = T.t("SET_RES_NOTE", "★ = 推荐档 · 自适应 = 跟随屏幕")
 		note.add_theme_color_override("font_color", C_TEXT_FAINT)
 		FONT.fs(note, 9)
 		note.autowrap_mode = TextServer.AUTOWRAP_OFF
@@ -454,7 +595,7 @@ func _build_display_rows() -> Array:
 		rows.append(note)
 
 	if UI_SCALE_SCRIPT.is_enabled():
-		var sc := _build_choice_block(UI_SCALE_SCRIPT.CHOICES, "name", 2,
+		var sc := _build_choice_block(_ui_scale_items(), "name", 2,
 				func(i: int): _pick_ui_scale(i))
 		var sc_btns: Array = sc["btns"]
 		for b in sc_btns:
@@ -611,7 +752,8 @@ func _refresh_toggle(key: String) -> void:
 		return
 	var on := bool(st["on"])
 	var b: Button = st["btn"]
-	b.text = "%s %s" % ["[开]" if on else "[关]", String(st["label"])]
+	b.text = "%s %s" % [T.t("TOGGLE_ON", "[开]") if on else T.t("TOGGLE_OFF", "[关]"),
+			String(st["label"])]
 	EveButtonTheme.apply(b, "hud_main" if on else "hud")
 
 
@@ -650,7 +792,11 @@ func _fit_height() -> void:
 	#   表现是窗停在初值、下半截被切掉，而且只报一条 warning。
 	#   ⚠️ 放宽不等于失去保护：原来要防的「未布局就量」现在被两道拦住 ——
 	#     ① `_ready` 里 `await process_frame` 两次才量；② 下面 `need.x <= 0` 的早退。
-	var limit := get_viewport_rect().size.y * 0.85
+	# ★ 2026-10-10 又由 85% 放宽到 92%：再加「重置」区之后，地面档案的内容需求
+	#   实测约 **900**，而 85% 在 1080 屏上只有 918 —— 已经贴在正当高度上了
+	#   （表现：窗停在初值、底部的「重置」按钮被切掉）。92%（= 993）留出余量；
+	#   真正的垃圾值（0 宽折行量出的 800+）本来就被上面那两道先拦掉了。
+	var limit := get_viewport_rect().size.y * 0.92
 	if need.y > limit:
 		push_warning("[设置窗] 内容最小高度 %.0f 超过视口 85%%（%.0f）—— 疑似未布局就量了，本次不改窗高"
 				% [need.y, limit])
@@ -665,6 +811,36 @@ func _fit_height() -> void:
 	if not is_equal_approx(ny, position.y):
 		position.y = ny
 		_base_rect = Rect2(_base_rect.position.x, ny, _base_rect.size.x, _base_rect.size.y)
+
+
+## 切界面语言：**立即生效 + 立即写盘 + 重载当前场景**。
+##
+## ⚠️ 为什么必须重载：本工程的文案是**建 UI 的那一刻**取词的（面板一大半是
+##    自绘 + 常量），没有「统一 retranslate」这条路径。重载是唯一能把整屏
+##    文字都换掉的做法，且不会留下中英混杂的中间态。
+##
+## ⏸⏸ **2026-10-11 冻结**：英文版先不做 ⇒ 这个入口**实际不该被玩家用到**。
+##    （保留代码是为了自检与将来解冻，不是"已经支持英文"。）
+## ⚠️ 战场上重载 = 重新进这一局 ⇒ 先置「继续上一局」（`resume_requested`），
+##    否则 `_ready` 会走 `start_run()` **从第 1 节点重开**。
+##    代价：本节点准备阶段的买/刷新会丢（存档点是 `begin_prep` 末尾）。
+func _pick_language(i: int) -> void:
+	# ⏸ 冻结期双保险：行不建 ⇒ 按钮不存在，但函数还在（自检 / 将来解冻要用）。
+	if not T.LANGUAGE_ENABLED:
+		return
+	if _lang_pick_guard or i < 0 or i >= T.LOCALES.size():
+		return
+	var code := String(T.LOCALES[i]["code"])
+	if code == T.current():
+		return
+	_lang_pick_guard = true
+	T.set_locale(code)
+	T.save_locale(code)
+	language_changed.emit(code)
+	var cs := get_tree().current_scene
+	if cs != null and cs.has_method("start_battle") and RUN_STORE.session_active:
+		RUN_STORE.resume_requested = true
+	get_tree().reload_current_scene()
 
 
 # ------------------------------------------------------------------ 对外
@@ -735,16 +911,24 @@ func set_font_scale(v: float) -> void:
 ## 窗口分辨率档。**本窗自己就把窗口改了**（`EveResolution.apply_index`），
 ## 不再让上层各写一遍尺寸逻辑（战斗场景与牌桌都要它 ⇒ 抄两份必然漂移）。
 ##
-## ⚠️ 写盘写的是 **key 字符串**（`"2560x1440"`），⛔ 不是下标 ——
-##    档位表将来增删时下标会漂移（本工程惯例：写的"位置"先问"这列表会增删吗"）。
+## `i` = **按钮下标**：`0` = 自适应，`i ≥ 1` = `CHOICES[i-1]`（见 `_res_btns` 的说明）。
+##
+## ⚠️ 写盘写的是 **key 字符串**（自适应 = 空串哨兵 `EveResolution.AUTO`），
+##    ⛔ 不是下标 —— 档位表将来增删时下标会漂移
+##    （本工程惯例：写进代码/存档的"位置"先问"这列表会增删吗"）。
 ## ⚠️ 牌桌 / 战场收到 `resolution_changed` 后**只做重铺/重绘**，
 ##    ⛔ 别再改一次窗口尺寸（两次改动之间会闪一帧）。
 func _pick_resolution(i: int) -> void:
-	if i < 0 or i >= RESOLUTION_SCRIPT.CHOICES.size():
-		return
-	STORE.save_one("resolution", String(RESOLUTION_SCRIPT.CHOICES[i]["key"]))
-	RESOLUTION_SCRIPT.apply_index(get_window(), i)
-	resolution_changed.emit(i)
+	var key := RESOLUTION_SCRIPT.AUTO
+	if i > 0:
+		var ci := i - 1
+		if ci >= RESOLUTION_SCRIPT.CHOICES.size():
+			return
+		key = String(RESOLUTION_SCRIPT.CHOICES[ci]["key"])
+	STORE.save_one("resolution", key)
+	var idx := RESOLUTION_SCRIPT.resolve_index(key)
+	RESOLUTION_SCRIPT.apply_index(get_window(), idx)
+	resolution_changed.emit(idx)
 
 
 ## 主控打开窗时回写高亮（**只改外观，不发信号**）。
@@ -755,8 +939,89 @@ func set_resolution(idx: int) -> void:
 		return
 	if idx < 0:
 		idx = RESOLUTION_SCRIPT.current_index()
+	# 按钮 0 = 自适应，1..N = CHOICES[0..N-1] ⇒ 固定档的高亮下标要 +1
+	var pick := 1 + clampi(idx, 0, RESOLUTION_SCRIPT.CHOICES.size() - 1)
 	for i in _res_btns.size():
-		EveButtonTheme.apply(_res_btns[i], "hud_main" if i == idx else "hud")
+		EveButtonTheme.apply(_res_btns[i], "hud_main" if i == pick else "hud")
+
+
+## 高亮「自适应」档（**只改外观，不发信号**）。
+##
+## ⚠️ 单独一个函数、而不是给 `set_resolution` 传个哨兵下标：
+##    `set_resolution()` 的语义是「`CHOICES` 下标 → 高亮那一档」，而自适应
+##    **没有固定下标**（它的下标随屏幕变）—— 两件事分开，读起来才不会有歧义。
+func set_resolution_auto() -> void:
+	if _res_btns.is_empty():
+		return
+	for i in _res_btns.size():
+		EveButtonTheme.apply(_res_btns[i], "hud_main" if i == 0 else "hud")
+
+
+# ------------------------------------------------------------------ 重置
+
+## 「恢复默认设置」—— **全站唯一入口**（按钮与 Ctrl+F11 都走这里）。
+##
+## 三件事，顺序有讲究：
+##   ① **先把默认值写盘**（`EveSettingsStore.DEFAULTS` 是唯一真相源）；
+##   ② 再逐项**立即生效** —— 复用本窗已有的静默回写（`set_volume` / `set_font_scale`
+##      / `set_ui_scale` / …）把外观拨回默认，再发**已有的信号**让各场景跟上
+##      （音量 → 音频层 · 分辨率 → 重铺 · 字号 → HUD）；
+##      ⛔ 不在这里重抄一遍"怎么应用"的逻辑 —— 抄一份必然和原路径漂移；
+##   ③ 给一行确认反馈（说明行换成「✓ 已恢复默认设置」）。
+##
+## ⚠️ 只重置**持久化的偏好**（= `DEFAULTS` 里的项）。雾 / 射程环 / 棋盘是**场上
+##    临时状态**、不进存档（见 `EveSettingsStore` 顶注）⇒ 不在这里动它们。
+## ⚠️ 字号 / 界面缩放的哨兵是 `0`（= 跟随平台出厂默认），分辨率是 `""`
+##    （= 自适应）—— 所以「恢复默认」写回去的是**哨兵值**，不是解析后的具体值。
+func reset_to_defaults() -> void:
+	var d := STORE.DEFAULTS
+	STORE.save_all(d)
+	# ① 音量四条：先把滑杆拨回默认（静默），再发信号让各场景的音频层真的改
+	for item in VOLUME_KINDS:
+		var k: StringName = item["k"]
+		var v := float(d[String(k)])
+		set_volume(k, v)
+		volume_changed.emit(k, v)
+	# ② 静音
+	_set_toggle("mute", bool(d["muted"]))
+	mute_toggled.emit(bool(d["muted"]))
+	# ③ 天空盒 / 氛围（只有战场有控件；发信号让 arena 跟着换）
+	if _is_battle():
+		set_background_id(String(d["background"]))
+		background_changed.emit(String(d["background"]))
+		set_mood(int(d["mood"]))
+		mood_changed.emit(int(d["mood"]))
+	# ④ 字号（哨兵 0 ⇒ 平台出厂默认：桌面 1.10 / 移动 1.20）
+	FONT.set_scale(FONT.default_scale())
+	FONT.reapply(get_tree().root)
+	set_font_scale(0.0)                 # 回写滑杆显示（0.0 ⇒ 按平台默认算）
+	font_scale_changed.emit(FONT.scale)
+	# ⑤ 界面缩放（只有移动端有控件）
+	set_ui_scale(float(d["ui_scale"]))
+	ui_scale_changed.emit(float(d["ui_scale"]))
+	# ⑥ 分辨率（只有桌面端有控件）：哨兵 "" ⇒ 自适应
+	var ri := RESOLUTION_SCRIPT.resolve_index(String(d["resolution"]))
+	RESOLUTION_SCRIPT.apply_index(get_window(), ri)
+	set_resolution_auto()
+	resolution_changed.emit(ri)
+	# ⑦ 反馈 + 窗高可能因文字变化而变 ⇒ 重推一次
+	if _reset_note != null:
+		_reset_note.text = T.t("SET_RESET_DONE", "✓ 已恢复默认")
+		_reset_note.add_theme_color_override("font_color", C_OK)
+	_fit_height()
+
+
+## ★ 2026-10-10  Ctrl + F11 = 恢复默认设置。
+##
+## ⚠️ 挂在**本窗**上（而不是只做按钮）：设置窗在主菜单 / 战场 / 牌桌**三处都建**，
+##    而 `_unhandled_input` **不受 `visible` 影响** ⇒ 窗关着也按得到 ——
+##    这正是「把界面调歪了、窗都点不开」时需要的救命路径。
+func _unhandled_input(event: InputEvent) -> void:
+	if not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	if event.keycode == KEY_F11 and event.ctrl_pressed:
+		reset_to_defaults()
+		get_viewport().set_input_as_handled()
 
 
 ## 音量滑杆。改完立即写盘 —— 音量是「调一次就定型」的典型，
@@ -786,7 +1051,18 @@ func set_state(state: Dictionary) -> void:
 	set_font_scale(float(state.get("font_scale", 1.0)))
 	# ⚠️ 缺省值给 `-1`（= 「上层没说」）⇒ `set_resolution` 自己读盘算当前档，
 	#    而不是把 -1 当成"第一档"高亮（那会让玩家以为默认是 4K）。
-	set_resolution(int(state.get("resolution_index", -1)))
+	# ★ 2026-10-10：自适应与固定档都可能出现在存档里 ⇒ **以存档的原始 key 分派**；
+	#   ⛔ 别只看解析出的下标 —— 自适应解析出的下标会与某个固定档重合，分不出来。
+	var saved_res := String(state.get("resolution_saved",
+			STORE.load_all().get("resolution", RESOLUTION_SCRIPT.AUTO)))
+	if saved_res == RESOLUTION_SCRIPT.AUTO:
+		set_resolution_auto()
+	else:
+		set_resolution(int(state.get("resolution_index", -1)))
+	# 打开窗时把「重置」那行的说明恢复成快捷键提示（上一次点过会留下"已恢复"）
+	if _reset_note != null:
+		_reset_note.text = RESET_NOTE_HINT
+		_reset_note.add_theme_color_override("font_color", C_TEXT_FAINT)
 
 
 func set_background_id(id: String) -> void:
@@ -848,7 +1124,8 @@ func set_paused(on: bool) -> void:
 	_paused = on
 	if _pause_btn == null:
 		return
-	_pause_btn.text = "▶ 继续对局" if on else "‖ 暂停对局"
+	_pause_btn.text = (T.t("SET_PAUSE_RESUME", "▶ 继续对局") if on
+				else T.t("SET_PAUSE_PAUSE", "‖ 暂停对局"))
 	# 暂停态用警示色（橙）：它表示「当前处于非正常状态」，
 	# 而不是「这是一个危险操作」 —— 恢复态才是常规主操作（青）。
 	EveButtonTheme.apply(_pause_btn, "hud_warn" if on else "hud_main")

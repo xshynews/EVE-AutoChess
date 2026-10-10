@@ -44,12 +44,14 @@ const SETTINGS_SCRIPT := preload("res://scripts/ui/panels/eve_settings.gd")
 const AUDIO_SCRIPT := preload("res://scripts/core/eve_audio.gd")
 ## 设置存档（读音量 / 字号 / 分辨率的初值）
 const STORE := preload("res://scripts/core/eve_settings_store.gd")
+## ★ 2026-10-10 i18n：文案取词入口（见 eve_text.gd 顶注）。
+const T := preload("res://scripts/core/eve_text.gd")
 
 ## ★ 牌面贴图白名单（2026-10-07 起；2026-10-08 全量 54 张）。键 = **牌 id**
 ## （唯一真相源；id 除以 4 的余数：0=黑桃 1=红桃 2=方块 3=梅花；rank=3+id/4
 ## ⇒ id 0~51 普通牌、52=小王 53=大王）。值 = 整张牌面贴图（自带角标 / 立绘 / 派系名，
 ## 角标已由 10-08 管线归一放大、圆角已烘 alpha）。
-## 生成链：F:\EVE自走棋\牌面\牌面 → C:\godot\_export\card_face_pipeline.py
+## 生成链：F:\EVE自走棋\牌面\牌面 → tools/pipeline/card_face_pipeline.py
 ## ⛔ 别按「点数」当键 —— 同一点数有 4 张花色。
 const CARD_FACES := {
 	0: preload("res://assets/cards/card_0.png"),
@@ -299,6 +301,8 @@ var _settings: Variant = null
 
 
 func _ready() -> void:
+	# ★ 2026-10-10 i18n：**必须早于任何 UI 构建** —— 文案是建的时候取词的。
+	T.apply_saved()
 	# ★ 2026-10-09：牌面贴图 512×717 要画到 76×108（约 6.7 倍缩小），
 	#   贴图无 mipmap + 节点默认 LINEAR 过滤 ⇒ 缩小采样必然出锯齿。
 	#   这里开 mipmap 过滤，配合 assets/cards/card_*.png.import 的
@@ -373,6 +377,8 @@ func _build_settings() -> void:
 	_settings.resolution_changed.connect(func(_i: int):
 		_place_settings()
 		queue_redraw())
+	# ★ 2026-10-10：标题栏右上角的 ✕ ⇒ 关掉本窗（与 `_toggle_settings()` 的隐藏口径一致）。
+	_settings.closed.connect(func() -> void: _settings.visible = false)
 	_place_settings()
 
 
@@ -427,7 +433,7 @@ func _new_game(seed_value: int = -1, animate_deal := false) -> void:
 	_started = true
 	_dealing = animate_deal
 	_deal_t = 0.0
-	_push("—— 新一局（seed %d）——" % _seed)
+	_push(T.t("DDZ_LOG_NEW_GAME", "—— 新一局（seed %d）——") % _seed)
 	_refresh_status()
 	queue_redraw()
 
@@ -544,10 +550,12 @@ func _ai_step() -> void:
 			# AI 给了一手出不掉的牌 ⇒ 退而过；再失败就把话说明白，
 			# ⛔ 不许静默空转（否则牌局会当场卡死，且没有任何线索）。
 			if not _do_pass(seat):
-				_status = "⚠ AI 出牌失败（座位 %d）—— 见右侧记录" % seat
+				_status = T.t("DDZ_ERR_AI_PLAY",
+						"⚠ AI 出牌失败（座位 %d）—— 见右侧记录") % seat
 	else:
 		if not _do_pass(seat):
-			_status = "⚠ AI 过牌失败（座位 %d）—— 见右侧记录" % seat
+			_status = T.t("DDZ_ERR_AI_PASS",
+					"⚠ AI 过牌失败（座位 %d）—— 见右侧记录") % seat
 
 
 ## ── 三个动作（玩家与 AI **共用**，所以记录与状态只有一份口径）──
@@ -557,7 +565,8 @@ func _do_bid(seat: int, score: int) -> bool:
 	if not bool(res.get("ok", false)):
 		_reject(String(res.get("reason", "")))
 		return false
-	var what := "不叫" if score <= 0 else ("叫 %d 分" % score)
+	var what := (T.t("DDZ_BID_PASS", "不叫") if score <= 0
+			else (T.t("DDZ_BID_N", "叫 %d 分") % score))
 	_push("%s %s" % [_seat_name(seat), what])
 	_bid_text[seat] = what
 	if int(game.phase) == int(G.Phase.PLAY):
@@ -567,7 +576,7 @@ func _do_bid(seat: int, score: int) -> bool:
 		#   平时不需要显示的」⇒ 一进 PLAY 就把**所有叫分文本**清掉，
 		#   桌面上只留出牌动作（不要 / 出牌）。
 		_bid_text = ["", "", ""]
-		_push("★ 地主 = %s · 底牌 %s" % [_seat_name(int(game.landlord)),
+		_push(T.t("DDZ_LOG_LANDLORD", "★ 地主 = %s · 底牌 %s") % [_seat_name(int(game.landlord)),
 				_cards_text(game.bottom)])
 		# ★ 新到的底牌抬起高亮一会儿（用户：「新底牌抬起提示」）
 		if int(game.landlord) == HUMAN_SEAT:
@@ -586,13 +595,17 @@ func _do_play(seat: int, cards: Array) -> bool:
 	_shown[seat] = (cards as Array).duplicate()
 	_passed[seat] = false
 	_bid_text[seat] = ""        # 资料惯例：出牌阶段首次落牌 ⇒ 清掉叫分遗留文本
-	_push("%s 出 %s（%s）" % [_seat_name(seat), _cards_text(cards),
+	_push(T.t("DDZ_LOG_PLAY", "%s 出 %s（%s）") % [_seat_name(seat),
+			_cards_text(cards),
 			R.type_name(int(R.classify(cards).get("type", 0)))])
 	_sel = []
 	_hint_i = -1
 	if game.is_over():
-		_push("★ %s 胜 —— %s" % ["地主" if game.landlord_won() else "农民",
-				"你赢了" if _human_won() else "你输了"])
+		_push(T.t("DDZ_LOG_WIN", "★ %s 胜 —— %s") % [
+				(T.t("DDZ_ROLE_LANDLORD", "地主") if game.landlord_won()
+						else T.t("DDZ_ROLE_FARMER", "农民")),
+				(T.t("DDZ_WIN", "你赢了") if _human_won()
+						else T.t("DDZ_LOSE", "你输了"))])
 	_timer = STEP_SECONDS
 	_refresh_status()
 	return true
@@ -605,14 +618,14 @@ func _do_pass(seat: int) -> bool:
 		return false
 	_shown[seat] = {}
 	_passed[seat] = true
-	_push("%s 不要" % _seat_name(seat))
+	_push(T.t("DDZ_LOG_PASS", "%s 不要") % _seat_name(seat))
 	if game.last_play.is_empty():
 		# 其余两家都过 ⇒ 新的一轮。桌面必须清空，否则上一轮的牌会一直挂着，
 		# 玩家会以为「这手还没结束」。
 		for s in 3:
 			_shown[s] = {}
 			_passed[s] = false
-		_push("—— 新一轮，%s 先出" % _seat_name(int(game.turn)))
+		_push(T.t("DDZ_LOG_NEW_ROUND", "—— 新一轮，%s 先出") % _seat_name(int(game.turn)))
 	_sel = []
 	_hint_i = -1
 	_timer = STEP_SECONDS
@@ -623,30 +636,37 @@ func _do_pass(seat: int) -> bool:
 func _refresh_status() -> void:
 	if game == null:
 		# ★「还没开始」也要有话说 —— 空桌 + 一句话告诉玩家该干什么（⛔ 别留一片死寂）
-		_status = "点「开始游戏」发牌 —— 一副牌，三个人，你打一家"
+		_status = T.t("DDZ_STATUS_IDLE",
+				"点「开始游戏」发牌 —— 一副牌，三个人，你打一家")
 		return
 	if _dealing:
-		_status = "发牌中…"
+		_status = T.t("DDZ_STATUS_DEALING", "发牌中…")
 		return
 	if game.is_over():
-		_status = "%s 胜 · %s" % ["地主" if game.landlord_won() else "农民",
-				"你赢了" if _human_won() else "你输了"]
+		_status = T.t("DDZ_STATUS_OVER", "%s 胜 · %s") % [
+				(T.t("DDZ_ROLE_LANDLORD", "地主") if game.landlord_won()
+						else T.t("DDZ_ROLE_FARMER", "农民")),
+				(T.t("DDZ_WIN", "你赢了") if _human_won()
+						else T.t("DDZ_LOSE", "你输了"))]
 		return
 	if int(game.phase) == int(G.Phase.BID):
-		_status = "叫分中 —— " + ("轮到你了（不叫 / 1~3 分）"
-				if _is_human_turn() else "%s 思考中…" % _seat_name(int(game.turn)))
+		# ⚠️ 整句带 %s（⛔ 别用「前缀 + 后半句」拼接 —— 英文语序不一样，拼出来是病句）
+		_status = T.t("DDZ_STATUS_BIDDING", "叫分中 —— %s") % (
+					T.t("DDZ_STATUS_BID_YOU", "轮到你了（不叫 / 1~3 分）")
+					if _is_human_turn()
+					else T.t("DDZ_STATUS_THINKING", "%s 思考中…") % _seat_name(int(game.turn)))
 		return
 	var seat: int = int(game.turn)
 	var n: int = (game.hand_of(seat) as Array).size()
 	if seat == HUMAN_SEAT and not _auto:
 		if game.last_play.is_empty() or int(game.last_play["seat"]) == HUMAN_SEAT:
-			_status = "轮到你了 —— 新一轮，你随意出"
+			_status = T.t("DDZ_STATUS_LEAD", "轮到你了 —— 新一轮，你随意出")
 		else:
-			_status = "轮到你了 —— 要压过 %s 的 %s" % [
+			_status = T.t("DDZ_STATUS_FOLLOW", "轮到你了 —— 要压过 %s 的 %s") % [
 					_seat_name(int(game.last_play["seat"])),
 					_cards_text(game.last_play["cards"])]
 	else:
-		_status = "%s 思考中…（还剩 %d 张）" % [_seat_name(seat), n]
+		_status = T.t("DDZ_STATUS_THINKING_N", "%s 思考中…（还剩 %d 张）") % [_seat_name(seat), n]
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -817,7 +837,8 @@ func _on_button(id: String) -> void:
 			_auto = not _auto
 			_sel = []
 			_refresh_status()
-			_push("托管%s" % ("已开 —— 你的座位交给电脑" if _auto else "已关"))
+			_push(T.t("DDZ_AUTO", "托管%s") % (T.t("DDZ_AUTO_ON", "已开 —— 你的座位交给电脑") if _auto
+						else T.t("DDZ_AUTO_OFF", "已关")))
 		"start", "again":
 			# ★「再来一局」走同一条路 ⇒ **重发一次牌**（真实牌局每局都有发牌过程）
 			_start_game()
@@ -836,34 +857,35 @@ func _on_button(id: String) -> void:
 
 func _try_bid(score: int) -> void:
 	if not _is_human_turn() or int(game.phase) != int(G.Phase.BID):
-		_reject("现在不是你的叫分回合")
+		_reject(T.t("DDZ_TOAST_NOT_BID", "现在不是你的叫分回合"))
 		return
 	if score != 0 and score <= int(game.bid_best):
-		_reject("叫分要高于当前最高分（现在是 %d 分）" % int(game.bid_best))
+		_reject(T.t("DDZ_TOAST_BID_LOW", "叫分要高于当前最高分（现在是 %d 分）") % int(game.bid_best))
 		return
 	_do_bid(HUMAN_SEAT, score)
 
 
 func _try_play() -> void:
 	if not _is_human_turn() or int(game.phase) != int(G.Phase.PLAY):
-		_reject("还没轮到你出牌")
+		_reject(T.t("DDZ_TOAST_NOT_PLAY", "还没轮到你出牌"))
 		return
 	if _sel.is_empty():
-		_reject("先点手牌选牌 —— 不知道出什么就按「提示」")
+		_reject(T.t("DDZ_TOAST_NO_SEL",
+					"先点手牌选牌 —— 不知道出什么就按「提示」"))
 		return
 	if R.classify(_sel).is_empty():
-		_reject("这几张凑不成合法牌型")
+		_reject(T.t("DDZ_TOAST_BAD_TYPE", "这几张凑不成合法牌型"))
 		return
 	_do_play(HUMAN_SEAT, _sel)
 
 
 func _try_pass() -> void:
 	if not _is_human_turn() or int(game.phase) != int(G.Phase.PLAY):
-		_reject("还没轮到你")
+		_reject(T.t("DDZ_TOAST_NOT_PASS", "还没轮到你"))
 		return
 	if game.last_play.is_empty():
 		# ⛔ 不能静默什么都不干：玩家必须知道「新一轮必须出牌」这条规则。
-		_reject("新一轮由你先出，不能不要")
+		_reject(T.t("DDZ_TOAST_MUST_PLAY", "新一轮由你先出，不能不要"))
 		return
 	_do_pass(HUMAN_SEAT)
 
@@ -874,11 +896,11 @@ func _try_pass() -> void:
 ##    玩家要从这里看出「原来这几张能压」，也顺便能发现规则判错。
 func _hint() -> void:
 	if not _is_human_turn() or int(game.phase) != int(G.Phase.PLAY):
-		_reject("现在不是你的出牌回合")
+		_reject(T.t("DDZ_TOAST_NOT_HINT", "现在不是你的出牌回合"))
 		return
 	var cands: Array = game.legal_now(HUMAN_SEAT)
 	if cands.is_empty():
-		_reject("没有能压过的牌 —— 只能「不要」")
+		_reject(T.t("DDZ_TOAST_NO_BEAT", "没有能压过的牌 —— 只能「不要」"))
 		return
 	# 按「张数少的、点数小的」排，提示顺序更好读
 	cands.sort_custom(func(a, b): return _hint_key(a) < _hint_key(b))
@@ -886,7 +908,7 @@ func _hint() -> void:
 	_sel = []
 	for c in cands[_hint_i]:
 		_sel.append(int(c))
-	_toast = "提示 %d/%d" % [_hint_i + 1, cands.size()]
+	_toast = T.t("DDZ_HINT_N", "提示 %d/%d") % [_hint_i + 1, cands.size()]
 	_toast_t = TOAST_SECONDS
 
 
@@ -919,26 +941,27 @@ func _buttons() -> Array:
 	var w := BASE.x
 	var h := BASE.y
 	out.append({"id": "back", "rect": Rect2(w - 112.0, 8.0, 88.0, 28.0),
-			"label": "← 返回", "on": true})
+			"label": T.t("DDZ_BTN_BACK", "← 返回"), "on": true})
 	out.append({"id": "auto", "rect": Rect2(w - 224.0, 8.0, 104.0, 28.0),
-			"label": "托管：开" if _auto else "托管：关", "on": true})
+			"label": (T.t("DDZ_BTN_AUTO_ON", "托管：开") if _auto
+						else T.t("DDZ_BTN_AUTO_OFF", "托管：关")), "on": true})
 	# ★ 设置（2026-10-07）。放「随时可用但不常用」那一簇的最左（右上角），
 	#   与「返回 / 托管」同一排 —— 不跟桌面的主动作抢注意力。
 	#   设置窗一开，`_process` 就停推 AI（见那里的守卫）。
 	out.append({"id": "settings", "rect": Rect2(w - 328.0, 8.0, 88.0, 28.0),
-			"label": "设置", "on": true})
+			"label": T.t("DDZ_BTN_SETTINGS", "设置"), "on": true})
 	if game == null:
 		# ★ 进牌桌**不自动开局** ⇒ 空桌正中一个大按钮（用户：「还需要点击一下开始游戏」）。
 		#   位置放**桌面圆心** —— 参考录像里「开始游戏」就浮在桌面上，而不是挤在按钮栏。
 		out.append({"id": "start",
 				"rect": Rect2(w * 0.5 - 108.0, h * TABLE_CY - 27.0, 216.0, 54.0),
-				"label": "开始游戏", "on": true, "primary": true})
+				"label": T.t("DDZ_BTN_START", "开始游戏"), "on": true, "primary": true})
 		return out
 	if game.is_over():
 		# ⚠️ 挪到**底部操作栏**的位置：原来在 h*0.6+100 会跟正下方的**玩家块**撞上
 		#    （玩家块现在就在正下、手牌正上方）。
 		out.append({"id": "again", "rect": Rect2(w * 0.5 - 90.0, h - 126.0, 180.0, 46.0),
-				"label": "再来一局", "on": true, "primary": true})
+				"label": T.t("DDZ_BTN_AGAIN", "再来一局"), "on": true, "primary": true})
 		return out
 	var bar_y := h - 122.0
 	# ★★ 发牌动画期间 **一个叫分按钮都不摆**。
@@ -952,7 +975,9 @@ func _buttons() -> Array:
 		return out
 	if int(game.phase) == int(G.Phase.BID):
 		if _is_human_turn():
-			var labels := ["不叫", "1 分", "2 分", "3 分"]
+			var labels := [T.t("DDZ_BID_PASS", "不叫"),
+					T.t("DDZ_BID_1", "1 分"), T.t("DDZ_BID_2", "2 分"),
+					T.t("DDZ_BID_3", "3 分")]
 			for i in 4:
 				out.append({"id": "bid%d" % i,
 						"rect": Rect2(w * 0.5 - 176.0 + i * 92.0, bar_y, 84.0, 40.0),
@@ -960,11 +985,13 @@ func _buttons() -> Array:
 		return out
 	if _is_human_turn():
 		out.append({"id": "play", "rect": Rect2(w * 0.5 - 196.0, bar_y, 140.0, 40.0),
-				"label": "出牌", "on": not _sel.is_empty(), "primary": true})
+				"label": T.t("DDZ_BTN_PLAY", "出牌"),
+					"on": not _sel.is_empty(), "primary": true})
 		out.append({"id": "pass", "rect": Rect2(w * 0.5 - 40.0, bar_y, 110.0, 40.0),
-				"label": "不要", "on": not game.last_play.is_empty()})
+				"label": T.t("DDZ_PASS", "不要"),
+					"on": not game.last_play.is_empty()})
 		out.append({"id": "hint", "rect": Rect2(w * 0.5 + 86.0, bar_y, 110.0, 40.0),
-				"label": "提示", "on": true})
+				"label": T.t("DDZ_BTN_HINT", "提示"), "on": true})
 	return out
 
 
@@ -1188,11 +1215,14 @@ func _corner_marks(r: Rect2, ln: float, col: Color, lw: float) -> void:
 func _draw_top_bar(w: float) -> void:
 	draw_rect(Rect2(0, 0, w, 44), C_BAR)
 	draw_rect(Rect2(0, 43, w, 1), C_PANEL_EDGE)
-	_draw_text(Vector2(28, 29), "斗地主 · 单机（你 + 两个 AI）", 17, C_HI)
+	_draw_text(Vector2(28, 29),
+			T.t("DDZ_TOP_TITLE", "斗地主 · 单机（你 + 两个 AI）"), 17, C_HI)
 	if game == null:
 		return
-	var ll := "未定" if game.landlord < 0 else _seat_name(int(game.landlord))
-	_draw_text(Vector2(300, 29), "底分 ×%d    ·    地主 %s" % [int(game.base_score), ll],
+	var ll := (T.t("DDZ_TBD", "未定") if game.landlord < 0
+			else _seat_name(int(game.landlord)))
+	_draw_text(Vector2(300, 29),
+			T.t("DDZ_TOP_BASE", "底分 ×%d    ·    地主 %s") % [int(game.base_score), ll],
 			14, C_TEXT)
 	# ⛔ 这里原来有一行「记牌」提示（外面还有 2×N 王×N）。
 	#   用户 2026-10-06 定：「记牌器等等附属功能，就先别出了」⇒ **整行删掉**。
@@ -1214,7 +1244,10 @@ func _draw_bottom_cards(w: float) -> void:
 	var total := cw * 3.0 + gap * 2.0
 	var x0 := w * 0.5 - total * 0.5
 	var bidding := int(game.phase) == int(G.Phase.BID)
-	_draw_text(Vector2(x0, 66), "底牌" + ("（叫完才亮）" if bidding else ""), 12, C_DIM)
+	_draw_text(Vector2(x0, 66),
+			T.t("DDZ_BOTTOM", "底牌")
+					+ (T.t("DDZ_BOTTOM_HIDDEN", "（叫完才亮）") if bidding else ""),
+			12, C_DIM)
 	for i in 3:
 		var id: int = int((game.bottom as Array)[i])
 		var pos := Vector2(x0 + i * (cw + gap), 74)
@@ -1289,11 +1322,13 @@ func _draw_seat(seat: int) -> void:
 		var badge := Rect2(tx, r.position.y + 44.0, 52.0, 20.0)
 		_round_rect(badge, C_GOLD if is_ll else C_ACCENT, 4.0)
 		_draw_text(Vector2(badge.position.x + 10.0, badge.position.y + 15.0),
-				"地主" if is_ll else "农民", 12, C_BG)
+				(T.t("DDZ_ROLE_LANDLORD", "地主") if is_ll
+						else T.t("DDZ_ROLE_FARMER", "农民")), 12, C_BG)
 	else:
 		# ⚠️ 叫分阶段地主还没定 ⇒ ⛔ 不能随便标一个身份（那是**没有依据的**）
 		_round_rect(Rect2(tx, r.position.y + 44.0, 52.0, 20.0), C_BTN, 4.0)
-		_draw_text(Vector2(tx + 10.0, r.position.y + 59.0), "待定", 12, C_DIM)
+		_draw_text(Vector2(tx + 10.0, r.position.y + 59.0),
+				T.t("DDZ_ROLE_TBD", "待定"), 12, C_DIM)
 	# ★★ 代币位（预留）：参考图里每个座位都把金币数挂在这里。
 	#    等棋牌室代币定了，这一行就是 `_draw_text(..., "❖ %d" % coin, 13, C_GOLD)`。
 	#    ⛔ 现在**不画假数字** —— 没有数据来源的读数比空着更糟。
@@ -1301,10 +1336,11 @@ func _draw_seat(seat: int) -> void:
 	# 剩余张数（大号，右对齐；小号「张」跟在后面）
 	var f := _font()
 	var num_t := str(n)
-	var zh_w := f.get_string_size("张", HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+	var zh_t := T.t("DDZ_UNIT_CARD", "张")
+	var zh_w := f.get_string_size(zh_t, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
 	var num_w := f.get_string_size(num_t, HORIZONTAL_ALIGNMENT_LEFT, -1, 26).x
 	var right := r.position.x + SEAT_W - 16.0
-	_draw_text(Vector2(right - zh_w, r.position.y + 64.0), "张", 12, C_DIM)
+	_draw_text(Vector2(right - zh_w, r.position.y + 64.0), zh_t, 12, C_DIM)
 	_draw_text(Vector2(right - zh_w - 6.0 - num_w, r.position.y + 64.0), num_t, 26, C_HI)
 	# 进度条
 	var bar := Rect2(r.position.x + 12.0, r.position.y + SEAT_H - 18.0, SEAT_W - 24.0, 6.0)
@@ -1335,17 +1371,19 @@ func _draw_me() -> void:
 	_round_rect(box, edge, 10.0, false, 2.0 if mine else 1.0)
 	_draw_avatar(Vector2(p.x + 12.0, p.y + 22.0), AVATAR, HUMAN_SEAT)
 	var tx := p.x + 12.0 + AVATAR + 12.0
-	_draw_text(Vector2(tx, p.y + 34.0), "你", 15, C_HI)
+	_draw_text(Vector2(tx, p.y + 34.0), T.t("DDZ_SEAT_0", "你"), 15, C_HI)
 	if game.landlord >= 0:
 		var is_ll := int(game.landlord) == HUMAN_SEAT
 		_round_rect(Rect2(tx, p.y + 44.0, 52.0, 20.0), C_GOLD if is_ll else C_ACCENT, 4.0)
-		_draw_text(Vector2(tx + 10.0, p.y + 59.0), "地主" if is_ll else "农民", 12, C_BG)
+		_draw_text(Vector2(tx + 10.0, p.y + 59.0), (T.t("DDZ_ROLE_LANDLORD", "地主") if is_ll
+				else T.t("DDZ_ROLE_FARMER", "农民")), 12, C_BG)
 	else:
 		_round_rect(Rect2(tx, p.y + 44.0, 52.0, 20.0), C_BTN, 4.0)
-		_draw_text(Vector2(tx + 10.0, p.y + 59.0), "待定", 12, C_DIM)
+		_draw_text(Vector2(tx + 10.0, p.y + 59.0),
+				T.t("DDZ_ROLE_TBD", "待定"), 12, C_DIM)
 	# ★ 娱乐币（用户 2026-10-06 定名）—— 方案 A：**纯记分**，余额可以为负
 	_draw_text(Vector2(tx, p.y + 84.0),
-			"娱乐币 %s" % COIN.fmt(int(COIN.coin)), 13, C_GOLD)
+			T.t("DDZ_COIN", "娱乐币 %s") % COIN.fmt(int(COIN.coin)), 13, C_GOLD)
 
 
 ## 出牌区：**各家在自己方位的桌面上摊牌**。
@@ -1366,12 +1404,13 @@ func _draw_shown(seat: int) -> void:
 	_draw_center_text(c + Vector2(0.0, -PLAY_CARD_H * 0.5 - 24.0), _seat_name(seat), 13,
 			C_GOLD if is_last else C_DIM)
 	# 行动大字
+	var pass_t := T.t("DDZ_PASS", "不要")
 	var note := String(_bid_text[seat])
 	if note == "" and _passed[seat]:
-		note = "不要"
+		note = pass_t
 	if note != "" and not over:
 		_draw_center_text(c + Vector2(0.0, PLAY_CARD_H * 0.5 + 36.0), note, 30,
-				C_GOLD if note == "不要" else C_TEXT)
+				C_GOLD if note == pass_t else C_TEXT)
 	if over and seat != HUMAN_SEAT:
 		_show_leftover(seat, c)
 	elif (_shown[seat] is Array) and not (_shown[seat] as Array).is_empty():
@@ -1384,7 +1423,7 @@ func _draw_shown(seat: int) -> void:
 func _show_leftover(seat: int, c: Vector2) -> void:
 	var left: Array = game.hand_of(seat)
 	if left.is_empty():
-		_draw_center_text(c, "已出完", 22, C_HI)
+		_draw_center_text(c, T.t("DDZ_ALL_OUT", "已出完"), 22, C_HI)
 		return
 	var n := left.size()
 	var ov := minf(22.0, (PLAY_ROW_MAX * 0.72 - 46.0) / maxf(1.0, float(n - 1)))
@@ -1402,18 +1441,20 @@ func _draw_hand() -> void:
 	var hp := _hand_pos(n)
 	var is_ll := int(game.landlord) == HUMAN_SEAT
 	# ⚠️ 叫分阶段地主还没定 ⇒ ⛔ 不能显示「农民」—— 那是一个**没有依据的身份**
-	var role := "身份未定" if int(game.landlord) < 0 else ("地主" if is_ll else "农民")
+	var role := (T.t("DDZ_ROLE_NONE", "身份未定") if int(game.landlord) < 0
+			else (T.t("DDZ_ROLE_LANDLORD", "地主") if is_ll
+				else T.t("DDZ_ROLE_FARMER", "农民")))
 	# ★ 新底牌抬起期间标题也点一句 —— 否则玩家不知道那 3 张为什么跳出来
-	var hint: String = "　★ 底牌已加入（抬起的 3 张）" \
+	var hint: String = T.t("DDZ_NEW_BOTTOM", "　★ 底牌已加入（抬起的 3 张）") \
 			if _new_t > 0.0 and not _new_ids.is_empty() else ""
 	# ⚠️ 发牌期间**必须报「已到手的张数」** —— ⛔ 不能报 17：
 	#    牌还没发完却写着「17 张」，是最容易被当成 bug 的那类不一致。
 	if _dealing:
 		_draw_text(Vector2(hp.x, hp.y - 14.0),
-				"你的手牌 · %d / %d 张　发牌中…" % [int(_deal_progress()), n], 14, C_HI)
+				T.t("DDZ_HAND_DEALING", "你的手牌 · %d / %d 张　发牌中…") % [int(_deal_progress()), n], 14, C_HI)
 	else:
 		_draw_text(Vector2(hp.x, hp.y - 14.0),
-				"你的手牌 · %d 张 · %s%s" % [n, role, hint], 14, C_HI)
+				T.t("DDZ_HAND_TITLE", "你的手牌 · %d 张 · %s%s") % [n, role, hint], 14, C_HI)
 	var prog := _deal_progress()
 	for i in n:
 		# ★ 发牌期间只画「已经到手」的（正在飞的那张由 `_deal_fly_pos` 插值到中途）
@@ -1428,7 +1469,8 @@ func _draw_hand() -> void:
 	# 已选牌 + 牌型判断（左对齐在手牌左端，与手牌同宽）
 	# ⚠️ 发牌期间换一句话：那句「看完这手牌再决定：不叫 / 1 分…」在牌没发完时毫无意义。
 	_draw_text(Vector2(hp.x, hp.y + HAND_CARD_H + 22.0),
-			"发牌中 —— 发完才轮到你叫地主" if _dealing else _sel_text(),
+			T.t("DDZ_HAND_DEAL_HINT", "发牌中 —— 发完才轮到你叫地主")
+					if _dealing else _sel_text(),
 			14, C_DIM if _dealing else _sel_color())
 
 
@@ -1521,18 +1563,21 @@ func _draw_buttons() -> void:
 ##   亮牌在 `_draw_shown()`（对手剩余手牌摊出来）；飘字在 `_draw_floaters()`。
 func _draw_over(w: float, h: float) -> void:
 	var win := _human_won()
-	var who := "地主" if game.landlord_won() else "农民"
+	var who := (T.t("DDZ_ROLE_LANDLORD", "地主") if game.landlord_won()
+			else T.t("DDZ_ROLE_FARMER", "农民"))
 	var cx := w * 0.5
 	# 放圆桌偏上：中央偏下要留给「自己」的摊牌位
 	var cy := h * TABLE_CY - h * TABLE_RY * 0.60
-	_draw_center_text(Vector2(cx, cy), "你赢了" if win else "你输了", 56,
+	_draw_center_text(Vector2(cx, cy),
+			T.t("DDZ_WIN", "你赢了") if win else T.t("DDZ_LOSE", "你输了"), 56,
 			C_GOLD if win else C_WARN)
 	_draw_center_text(Vector2(cx, cy + 44.0),
-			"%s 胜 · 本局娱乐币 %+d" % [who, _my_delta], 20, C_TEXT)
+			T.t("DDZ_OVER_DELTA", "%s 胜 · 本局娱乐币 %+d") % [who, _my_delta],
+			20, C_TEXT)
 	# 方案 A = 纯记分 ⇒ 这里只有累计，没有底金/破产（字段已按 B/C 留好）
 	_draw_center_text(Vector2(cx, cy + 74.0),
-			"累计 %s · %d 胜 / %d 局" % [COIN.fmt(int(COIN.net)), int(COIN.wins),
-					int(COIN.games)], 15, C_DIM)
+			T.t("DDZ_OVER_TOTAL", "累计 %s · %d 胜 / %d 局") % [COIN.fmt(int(COIN.net)), int(COIN.wins),
+						int(COIN.games)], 15, C_DIM)
 
 
 ## 结算飘字：每家方位上飘一个 ±N（参考图 7/8：每个座位头顶飘金币增减）。
@@ -1741,14 +1786,17 @@ func _sel_text() -> String:
 	#    （别让玩家盯着「未选牌 —— 点手牌选择」发呆，那时候点了也不算数）
 	if game != null and int(game.phase) == int(G.Phase.BID):
 		if _is_human_turn():
-			return "看完这手牌再决定：不叫 / 1 分 / 2 分 / 3 分（分数越高底分越大）"
-		return "等别家叫分…"
+			return T.t("DDZ_SEL_BID",
+					"看完这手牌再决定：不叫 / 1 分 / 2 分 / 3 分（分数越高底分越大）")
+		return T.t("DDZ_SEL_WAIT", "等别家叫分…")
 	if _sel.is_empty():
-		return "未选牌 —— 点手牌选择（右键清空，「提示」帮你想）"
+		return T.t("DDZ_SEL_NONE",
+				"未选牌 —— 点手牌选择（右键清空，「提示」帮你想）")
 	var info := R.classify(_sel)
 	if info.is_empty():
-		return "已选 %s —— 不是合法牌型" % _cards_text(_sel)
-	return "已选 %s（%s）" % [_cards_text(_sel), R.type_name(int(info["type"]))]
+		return T.t("DDZ_SEL_BAD", "已选 %s —— 不是合法牌型") % _cards_text(_sel)
+	return T.t("DDZ_SEL_OK", "已选 %s（%s）") % [_cards_text(_sel),
+			R.type_name(int(info["type"]))]
 
 
 func _sel_color() -> Color:
@@ -1768,9 +1816,11 @@ func _seat_name(seat: int) -> String:
 	# ⚠️ 座位 1 在**你之后**出牌 ⇒ 下家（2026-10-07 起在**右**）；座位 2 在**你之前**
 	#    出牌 ⇒ 上家（在**左**）。方位由 `SEAT_DIR` 定，这里只写名字。
 	#   ⛔ 上一版两个名字正好写反了（用户 2026-10-06 指出）。
-	var who: String = ["你", "下家", "上家"][seat]
+	var who: String = [T.t("DDZ_SEAT_0", "你"), T.t("DDZ_SEAT_1", "下家"),
+			T.t("DDZ_SEAT_2", "上家")][seat]
 	if game != null and game.landlord >= 0:
-		who += "（地主）" if seat == int(game.landlord) else "（农民）"
+		who += (T.t("DDZ_SEAT_LL", "（地主）") if seat == int(game.landlord)
+				else T.t("DDZ_SEAT_FA", "（农民）"))
 	return who
 
 

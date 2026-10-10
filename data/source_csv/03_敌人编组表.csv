@@ -1,0 +1,11 @@
+﻿编组ID,显示名,站位模板,艘数,编成,设计意图
+boss_pirate_lord,边境海盗王,ESCORT,6,abaddon(★1) / myrmidon(★1) / drake(★1) / caracal(★1) / scythe(★1) / thorax(★1),节点 15，通关战。2026-09-16：地狱天使由 ★2 降回 ★1。原 ★2 走 ×1.8 后是 1080 结构 / 126 攻，单艘输出就压过玩家「3 艘 1★ 战列 + 5 杂兵」的整队，且引擎不集火 → 实测 30 局里「前 14 节点零失误」成了唯一通路（信标 100 的 15 局全胜，其余 45 局只赢 1 局）。新手关不该是一道只对无损玩家开放的门。现编组 = 6 艘全 1★：地狱天使（cost5 甲 619）打底 + 3 输出 + 1 后勤（scythe，ESCORT 模板放 row 0）。
+elite_phalanx,重装方阵,SPREAD,6,incursus(★1) / tristan(★1) / algos(★1) / catalyst(★1) / thorax(★1) / vexor(★1),节点 13 用，BOSS 前最后压力测试。6 艘全盖伦特 → 势力 4 触发 + 甲抗叠加（+300 armor + 每秒回血）。教学点：要打穿回复必须集火，不能雨露均沾。
+elite_sniper,远程狙击组,BACK,3,drake(★1) / ferox(★1) / caracal(★1),节点 9 用，Act II 心跳。射程压制课：drake / ferox 两艘 cost4 战巡 range 3 站 row 0 不动，玩家必须顶着隔离带碎石冲进去（§4.6.2 射程上限只能到 3 的由来）。三艘全卡拉迪 → 盾抗 3 触发。
+elite_vanguard,精锐先锋,WEDGE,4,dragoon(★1) / coercer(★1) / incursus(★1) / catalyst(★1),节点 5 用，Act I 精英 / 第一个心跳。艾玛 2 + 盖伦特 2，甲抗 4 触发。第一次让玩家感到「不凑 2 星打不过」。
+pirate_battlegroup,海盗战群,SPREAD,4,moa(★1) / thorax(★1) / omen(★1) / rupture(★1),节点 12 用。全 cost3，四种武器各一艘、四个势力各一艘 —— 两套羁绊都不触发，纯靠基础数值施压。进入后期强度的门槛。
+pirate_convoy,海盗护航队,ESCORT,4,osprey(★1) / stabber(★1) / coercer(★1) / talwar(★1),节点 11 用。教学点：后勤舰的威胁 —— 不切掉 row 0 的 osprey，前排永远打不死。ESCORT 模板把 osprey 单独放最后排。
+pirate_pack,突击狼群,FRONT,4,slasher(★1) / rifter(★1) / thrasher(★1) / talwar(★1),节点 8 用。全米玛塔尔 → 势力 4 羁绊触发速度 ×1.2。教学点：敌人比你快，你会被追着绕（配合环绕战斗才完整成立）。
+pirate_raider,劫掠小队,SPREAD,3,kestrel(★1) / thrasher(★1) / punisher(★1),节点 3/6 用。第一次 3 艘。三系武器混编，让玩家第一次注意到武器特效差异（射程已在 §4.6.1 统一，差异只剩特效）。
+pirate_scout,游荡掠夺者,FRONT,2,slasher(★1) / incursus(★1),节点 1/2 用。最弱的一张脸：2 艘 cost1。节点 1 白送建立信心，节点 2 同配方 scale 1.25 让玩家自己得出「该升级了」。
+pirate_wing,掠袭联队,FRONT,4,catalyst(★1) / talwar(★1) / coercer(★1) / corax(★1),节点 7 用。第一次 4 艘编队。四舰全压 row 2，是全表最激进的一张脸。

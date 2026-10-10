@@ -50,7 +50,8 @@ func _ready() -> void:
 	_t_user_dir()
 	_restore_settings()
 	print("═══ RESULT passed=%d failed=%d ═══" % [_pass, _fail])
-	get_tree().quit()
+	# ★ 2026-10-10（审查 R07）：失败 ⇒ 非零退出码
+	get_tree().quit(1 if _fail > 0 else 0)
 
 
 func _snapshot_settings() -> void:
@@ -212,9 +213,13 @@ func _t_settings_profile() -> void:
 
 	_ok(battle.profile == SETTINGS.PROFILE_BATTLE, "战场档案是 default（%s）" % battle.profile)
 	_ok(battle.get("_pause_btn") != null, "★ 战场有「暂停」大按钮")
-	_ok(battle.get("_res_btns").size() == (14 if RES.is_enabled() else 0),
-			"战场分辨率按钮 %d 个（桌面 14 / 非桌面 0）实际 %d"
-			% [(14 if RES.is_enabled() else 0), battle.get("_res_btns").size()])
+	# ★ 2026-10-10 分辨率块多了「自适应」一颗（按钮 0）⇒ 桌面端 15 个
+	_ok(battle.get("_res_btns").size() == (15 if RES.is_enabled() else 0),
+			"战场分辨率按钮 %d 个（桌面 15 = 自适应 + 14 档 / 非桌面 0）实际 %d"
+			% [(15 if RES.is_enabled() else 0), battle.get("_res_btns").size()])
+	_ok(RES.AUTO_LABEL != "", "★ 有「自适应」档的显示名（%s）" % RES.AUTO_LABEL)
+	_ok(RES.resolve_index(RES.AUTO) == RES.default_index(),
+			"★ 自适应（哨兵 \"\"）解析成 default_index()（%d）" % RES.default_index())
 	_ok(battle.get("_font_slider").size() > 0, "战场有「字号」滑杆")
 
 	_ok(lounge.profile == SETTINGS.PROFILE_LOUNGE, "牌桌档案设得上（%s）" % lounge.profile)
@@ -236,15 +241,16 @@ func _t_settings_profile() -> void:
 	if rbtns.is_empty():
 		print("    （无头下没有分辨率按钮，「高亮唯一」那条跳过）")
 	else:
+		# ★ 2026-10-10：按钮 0 = 自适应，1..N = CHOICES[0..N-1] ⇒ 固定档下标要 +1
 		lounge.call("set_resolution", 3)
-		var ref: Color = (rbtns[3] as Button).get_theme_stylebox("normal").bg_color
+		var ref: Color = (rbtns[4] as Button).get_theme_stylebox("normal").bg_color
 		var same := 0
 		for b in rbtns:
 			if ((b as Button).get_theme_stylebox("normal").bg_color as Color).is_equal_approx(ref):
 				same += 1
-		_ok(same == 1, "★ 分辨率高亮唯一（当前档 3，同色按钮 %d 个）" % same)
+		_ok(same == 1, "★ 分辨率高亮唯一（CHOICES 档 3 → 按钮 4，同色按钮 %d 个）" % same)
 		lounge.call("set_resolution", -1)
-		var ref2: Color = (rbtns[RES.default_index()] as Button) \
+		var ref2: Color = (rbtns[1 + RES.default_index()] as Button) \
 				.get_theme_stylebox("normal").bg_color
 		var same2 := 0
 		for b in rbtns:
@@ -252,6 +258,26 @@ func _t_settings_profile() -> void:
 				same2 += 1
 		_ok(same2 == 1, "★ 传 -1 ⇒ 回落「实际生效档」（下标 %d）且唯一高亮"
 				% RES.default_index())
+		# ★ 2026-10-10 新增：「自适应」高亮（按钮 0）且唯一
+		lounge.call("set_resolution_auto")
+		var ref3: Color = (rbtns[0] as Button).get_theme_stylebox("normal").bg_color
+		var same3 := 0
+		for b in rbtns:
+			if ((b as Button).get_theme_stylebox("normal").bg_color as Color).is_equal_approx(ref3):
+				same3 += 1
+		_ok(same3 == 1, "★ 「自适应」档高亮唯一（同色按钮 %d 个）" % same3)
+	# ★ 2026-10-10 「自适应」按钮 → 存档写**哨兵空串**（⛔ 不是默认那一档的 key）。
+	#    ⚠️ 放在 `if rbtns.is_empty()` **之外**：`_pick_resolution` 不依赖按钮，
+	#    无头下同样跑得到（无头下按钮不建，但这条语义照验）。
+	lounge.call("_pick_resolution", 0)
+	_ok(String(RES.STORE.load_all().get("resolution", "?")) == RES.AUTO,
+			"★ 点「自适应」⇒ 存档写哨兵 \"\"（实际 \"%s\"）"
+			% String(RES.STORE.load_all().get("resolution", "?")))
+	lounge.call("_pick_resolution", 1)
+	_ok(String(RES.STORE.load_all().get("resolution", "?")) == String(RES.CHOICES[0]["key"]),
+			"★ 点第 1 档 ⇒ 存档写 key（%s，实际 \"%s\"）"
+			% [String(RES.CHOICES[0]["key"]),
+			   String(RES.STORE.load_all().get("resolution", "?"))])
 	_ok(lounge.size.y < battle.size.y,
 			"牌桌窗更矮（%d < %d）—— 少掉战场的分区" % [int(lounge.size.y), int(battle.size.y)])
 	# ★ 整扇窗必须在屏内（加完分辨率块之后战场窗实测 866 高）

@@ -12,7 +12,6 @@ class_name EveBattleSimulator
 ##   - 锁定流程（锁定时间由扫描分辨率与信号半径决定）
 ##   - 开火判定（角速度驱动命中率）
 ##   - 电容管理（激光炮耗电，干涸后停修理）
-##   - 电子战（网子减速 / 扰断静默 / ECM 打断）
 ##   - 战斗日志输出（供 HUD 消费）
 
 signal unit_destroyed(ship: EveShip)
@@ -21,6 +20,8 @@ signal battle_finished(winner_team: int)
 
 const TICK_RATE := 30.0
 const FIXED_STEP := 1.0 / TICK_RATE
+## ★ 2026-10-10（审查 2#5）：战斗语义 id + `_extra` 键名常量（见 `EveCombatIds`）。
+const CIDS := preload("res://scripts/core/eve_combat_ids.gd")
 const MAX_TICKS := 30 * 180   ## 最长 180 秒，超时判平
 ##
 ## 为什么是 180 秒而不是 120 秒：
@@ -116,7 +117,7 @@ func damage_multiplier() -> float:
 ## 战斗日志（HUD 消费）
 class LogEntry:
 	var time: float
-	var category: StringName   ## fire / damage / break / ewar / system / economy
+	var category: StringName   ## fire / damage / break / system / economy
 	var text: String
 	func _init(p_time: float, p_cat: StringName, p_text: String) -> void:
 		time = p_time
@@ -132,6 +133,26 @@ var log_entries: Array[LogEntry] = []
 var _next_target_refresh: float = 0.0
 var _ship_by_id: Dictionary = {}
 
+## ★★ 2026-10-10（审查 #4）：**战斗随机数由模拟器自持**。
+##   ⛔ 旧实现用全局 `randf()` —— 它受全局状态 / `randomize()` 影响，
+##   同一个种子打不出同一场战斗（`eve_run_state` 与斗地主都用带种子的 RNG，
+##   代码注释里也强调"回归要能复现"，唯独命中判定不能复现）。
+##   ⇒ 命中判定一律走 `rng.randf()`；`set_seed()` 注入种子即可**完整复现**。
+##   ⚠️ 默认**不**在 `setup()` 里 randomize —— 无头自检需要确定性；
+##      正式游玩由主控显式调 `randomize_seed()`（见 `eve_battle_scene` 建局处）。
+var rng := RandomNumberGenerator.new()
+
+## 时间累加器（秒）—— ★ 2026-10-10（审查 2#1）：**固定步长必须真固定**。
+##   旧 `step(dt)` 把 `dt` 切成块、**把切剩的零头当成一个更短的 tick** 直接喂给物理
+##   ⇒ 帧率或 `time_scale` 一变，战斗结果就变，无法复现。
+##   现在：时间先进累加器，只按整 `FIXED_STEP` 出 tick，零头留到下一次。
+var _accum: float = 0.0
+
+## 单次 `step()` 最多补的 tick 数 —— 防"死亡螺旋"（卡一帧后每帧补几十 tick，
+## 越补越卡）。超出部分**丢弃**：宁可战斗慢一点，也不要卡成雪球。
+const MAX_TICKS_PER_STEP := 8
+const _STEP_EPS := 1e-6
+
 ## 索敌/开火的分频调度（借鉴参考实现：不同系统跑不同频率）
 const TARGET_REFRESH_INTERVAL := 5.0 / TICK_RATE   ## 每 5 tick
 const LOCK_REFRESH_INTERVAL := 5.0 / TICK_RATE
@@ -143,6 +164,7 @@ func setup(own_ships: Array[EveShip], enemy_ships: Array[EveShip]) -> void:
 	log_entries.clear()
 	elapsed = 0.0
 	tick = 0
+	_accum = 0.0
 	finished = false
 	winner_team = -1
 	# 时限回到默认（180s），由调用方决定是否用 set_time_limit() 收窄。
@@ -160,17 +182,50 @@ func setup(own_ships: Array[EveShip], enemy_ships: Array[EveShip]) -> void:
 	_log(&"system", "战斗开始：%d v %d" % [own_ships.size(), enemy_ships.size()])
 
 
-## 推进一帧
-func step(dt: float = FIXED_STEP) -> void:
-	if finished:
-		return
+## 注入战斗随机种子 ⇒ 同一 `setup()` + 同种子 + 同调用序列 = **逐 tick 同结果**。
+## 用于回归、战斗回放与将来的联机同步（只需同步"种子 + 输入"）。
+func set_seed(s: int) -> void:
+	rng.seed = s
 
-	# 按固定步长推进（避免变帧率影响物理）
-	var remaining := dt
-	while remaining > 0.0 and not finished:
-		var step_dt: float = minf(FIXED_STEP, remaining)
-		_advance_one_tick(step_dt)
-		remaining -= step_dt
+
+## 让本场战斗随机（正式游玩的默认路径；无头自检**不要**调它）。
+func randomize_seed() -> void:
+	rng.randomize()
+
+
+## 推进一帧（**按真实时间**）：时间进累加器，只出整 tick。
+##
+## ★ 2026-10-10（审查 2#1）：旧实现 `remaining = dt` 再 `minf(FIXED_STEP, remaining)`
+##   —— 零头会变成一个更短的 tick 直接进物理 ⇒ 结果随帧率/时间倍率漂移。
+##   现在零头留在 `_accum` 里等下一帧凑够，**每次 tick 的 dt 恒等于 `FIXED_STEP`**。
+## ⚠️ 单帧 tick 数有上限（`MAX_TICKS_PER_STEP`），超出**丢弃**积压。
+func step(dt: float = FIXED_STEP) -> void:
+	if finished or dt <= 0.0:
+		return
+	_accum += dt
+	var n := 0
+	while _accum + _STEP_EPS >= FIXED_STEP and not finished:
+		_advance_one_tick(FIXED_STEP)
+		_accum -= FIXED_STEP
+		n += 1
+		if n >= MAX_TICKS_PER_STEP:
+			_accum = 0.0        # 丢弃积压：防"卡一帧 ⇒ 每帧补几十 tick"的死亡螺旋
+			break
+	if _accum < 0.0:
+		_accum = 0.0
+
+
+## 明确「跑满这段时间」—— **无单帧上限**，仅供无头验收 / 快进使用。
+##
+## ⚠️ 与 `step()` 的区别只有上限：`step()` 是"每帧最多补 8 tick 跟住真实时间"，
+##    本函数是"把这段时间全部跑完"。⛔ 别接到 UI 的每帧循环上。
+func run_seconds(seconds: float) -> void:
+	if finished or seconds <= 0.0:
+		return
+	_accum += seconds
+	while _accum + _STEP_EPS >= FIXED_STEP and not finished:
+		_advance_one_tick(FIXED_STEP)
+		_accum -= FIXED_STEP
 
 
 func _advance_one_tick(dt: float) -> void:
@@ -243,9 +298,6 @@ func _refresh_targets() -> void:
 	for ship in ships:
 		if not ship.alive:
 			continue
-		# ECM 期间火控链路中断，无法重新索敌
-		if ship.is_jammed(elapsed):
-			continue
 		var best: EveShip = null
 		var best_score := -INF
 		var cur_score := -INF
@@ -283,9 +335,19 @@ func _refresh_targets() -> void:
 		var cur_reach := cur != null and cur.alive and _in_reach(ship, cur)
 		var must_switch := cur == null or not cur.alive or cur_score <= -INF \
 				or (best_reach and not cur_reach)
+		# ★ 2026-10-10（审查 #5）：裕度必须按 **|cur_score|** 算。
+		#   旧式 `cur_score * (1 + MARGIN) + 1` 在**负分**时（目标不在射程内，
+		#   分数主要由 `-dist` 决定 ⇒ 很常见）会把阈值**拉低** ⇒ 反而更容易换目标，
+		#   甚至换到一个**更差**的候选上 —— 防抖在负分场景完全失效。
+		#   正分时 `cur + |cur|·M + 1` ≡ `cur·(1+M) + 1`，**行为逐位不变**。
+		#   ⚠️ `cur_score` 可能是 -INF（本轮未参与评分）⇒ 不能对它取 abs（会 NaN）；
+		#      那种情况由 `must_switch` 兜住，这里给个 INF 阈值即可。
+		var threshold := INF
+		if cur_score > -INF:
+			threshold = cur_score + absf(cur_score) * SWITCH_MARGIN + 1.0
 		if best != null and best.id != ship.target_id \
 				and (must_switch or best.id == -1 \
-				or best_score > cur_score * (1.0 + SWITCH_MARGIN) + 1.0):
+				or best_score > threshold):
 			ship.target_id = best.id
 			ship.locked = false
 			ship.lock_elapsed = 0.0
@@ -389,7 +451,7 @@ func _score_target(ship: EveShip, other: EveShip, dist: float) -> float:
 	score += W_THREAT * (1.0 - hp_ratio) * 0.5
 
 	# 3. 好打程度：目标信号半径越大越容易被炮塔命中
-	score += W_SQUISHY * float(other._extra.get("signature", 40.0))
+	score += W_SQUISHY * float(other._extra.get(CIDS.X_SIGNATURE, 40.0))
 
 	# 4. 粘性：轻微偏好当前目标。
 	#    ⚠️ 46 轮结论：**防抖不能靠这里**（实测把它从 5 万提到 2000 万仍然逐帧翻
@@ -406,7 +468,7 @@ func _score_target(ship: EveShip, other: EveShip, dist: float) -> float:
 ## 目标是否合法（基础筛选，避免极端不合理的追猎）
 func _is_valid_target(_other: EveShip) -> bool:
 	# 目前不做额外限制：即使够不着也先锁定并前往，否则会站着不动
-	# 未来可加：ECM 舰优先、旗舰优先、保护己方残血等规则
+	# 未来可加：旗舰优先、保护己方残血等规则
 	return true
 
 
@@ -431,20 +493,23 @@ func _try_fire(ship: EveShip, dt: float) -> void:
 		ship.locked = false
 		return
 
-	# ECM 会打断已有的锁定
-	if ship.is_jammed(elapsed):
-		ship.locked = false
-		return
-
 	# 电容不足无法开火
 	if ship.cap_max > 0.0 and ship.cap_dry:
 		return
 
 	# 武器循环
+	#
+	# ⚠️⚠️ 循环内必须**每发都重新确认目标还活着**（2026-10-10 代码审查 · bug#3）：
+	#    `_fire_once()` 击杀目标后**不会**改 `ship.target_id`，而 while 在
+	#    「射速高 / 掉帧补 tick」时会连发多次 ⇒ 同一具尸体被反复"击杀"，
+	#    `kills` 重复 +1、`unit_destroyed` 重复发（残骸与结算都跟着重复）。
+	#    正常一帧一发时几乎不触发，只有补 tick 或高射速才暴露 —— 所以必须挡。
 	ship.weapon_timer -= dt
 	while ship.weapon_timer <= 0.0:
 		ship.weapon_timer += maxf(0.1, ship.weapon_cycle)
 		_fire_once(ship, target)
+		if not target.alive:
+			break
 
 
 func _fire_once(ship: EveShip, target: EveShip) -> void:
@@ -459,13 +524,13 @@ func _fire_once(ship: EveShip, target: EveShip) -> void:
 	var hit := false
 	var quality := EveCombatCore.HitQuality.MISS
 
-	var weapon_type := String(ship._extra.get("weapon_type", ""))
-
-	if weapon_type == "导弹":
+	# ★ 2026-10-10（审查 2#5）：判据走 `ship.weapon_id`（稳定 id），
+	#   不再拿 `_extra` 里的中文比 —— 拼错一个字不会报错，只会静默变成炮塔逻辑。
+	if ship.weapon_id == CIDS.W_MISSILE:
 		# 导弹必中，但伤害受爆炸半径/速度与目标信号/速度衰减
 		var dmg_factor := EveCombatCore.missile_application(
-			float(ship._extra.get("explosion_radius", 50.0)),
-			float(ship._extra.get("explosion_velocity", 3000.0)),
+			float(ship._extra.get(CIDS.X_EXPLOSION_RADIUS, 50.0)),
+			float(ship._extra.get(CIDS.X_EXPLOSION_VELOCITY, 3000.0)),
 			1.0,
 			_effective_signature(target),
 			target.body.velocity.length()
@@ -483,7 +548,7 @@ func _fire_once(ship: EveShip, target: EveShip) -> void:
 			ship.signature_resolution, _effective_signature(target),
 			distance, angular
 		)
-		var roll := randf()
+		var roll := rng.randf()
 		var result := EveCombatCore.turret_hit_quality(float(app["chance"]), roll)
 		hit = result["hit"]
 		quality = result["quality"]
@@ -524,11 +589,9 @@ func _fire_once(ship: EveShip, target: EveShip) -> void:
 		unit_destroyed.emit(target)
 
 
-## 目标有效信号半径（被网子缠住会变小 → 更容易被打中）
+## 目标有效信号半径
 func _effective_signature(target: EveShip) -> float:
-	var sig := float(target._extra.get("signature", 40.0))
-	if target.webbed_until > elapsed:
-		sig *= 0.4
+	var sig := float(target._extra.get(CIDS.X_SIGNATURE, 40.0))
 	return maxf(1.0, sig)
 
 
@@ -576,9 +639,9 @@ func _update_capacitor(ship: EveShip, dt: float) -> void:
 	ship.cap_dry = bool(result["cap_dry"])
 	if ship.cap_dry != was_dry:
 		if ship.cap_dry:
-			_log(&"ewar", "%s 电容干涸，主动修理停止" % ship.ship_name)
+			_log(&"system", "%s 电容干涸，主动修理停止" % ship.ship_name)
 		else:
-			_log(&"ewar", "%s 电容已恢复" % ship.ship_name)
+			_log(&"system", "%s 电容已恢复" % ship.ship_name)
 
 
 # ------------------------------------------------------------------ ★ 后勤

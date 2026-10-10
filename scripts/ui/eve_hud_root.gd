@@ -6,6 +6,8 @@ class_name EveHudRoot
 ## ⚠️ 子类（`extends eve_window.gd` 的那 9 个）靠**继承**拿到这个常量，
 ##    它们自己再写一个会撞名（基类已有同名成员 ⇒ 子类编译失败，本工程踩过）。
 const FONT := preload("res://scripts/ui/eve_font.gd")
+## ★ 2026-10-11（i18n）：文案取词（见 `eve_text.gd` 顶注）。
+const T := preload("res://scripts/core/eve_text.gd")
 ## ★ 非 16:9 分辨率下的**内容居中偏移**（`origin()`）+ 设计空间唯一真相源。
 ## ⚠️ 桌面端原本「布局是死坐标、与视口无关」；有了分辨率档之后这句话不再成立 ——
 ##    1920×1200 这类档会让设计空间比基准大，内容必须整体居中（见 EveLayout 顶注）。
@@ -275,7 +277,7 @@ func _build_layout() -> void:
 	synergy_window = SYNERGY_SCRIPT.new()
 	synergy_window.name = "FleetSynergy"
 	add_child(synergy_window)
-	synergy_window.set_status("羁绊")
+	synergy_window.set_status(T.t("HUD_TRAITS", "羁绊"))
 
 	# ④ 左下：装备栏位
 	equipment_window = EQUIPMENT_SCRIPT.new()
@@ -355,7 +357,11 @@ func _build_layout() -> void:
 	settings_window.volume_changed.connect(func(kind: StringName, v: float):
 			settings_volume_changed.emit(kind, v))
 	settings_window.mute_toggled.connect(func(on: bool): settings_mute_toggled.emit(on))
-	settings_window.closed.connect(func(): settings_closed.emit())
+	# ★ 2026-10-10：设置窗标题栏的 ✕ 按下也会发 `closed` ⇒ 这里统一收口成
+	#   「隐藏 + 转发」。hide_settings() 是唯一入口（三场景共用）。
+	settings_window.closed.connect(func():
+			hide_settings()
+			settings_closed.emit())
 	# ★ 缩放档：HUD 自己消化（见 `_on_ui_scale_picked` 的说明）
 	settings_window.ui_scale_changed.connect(_on_ui_scale_picked)
 	# ★ 字号变了 ⇒ 底部两条要按新字高重新上抬（字体本身由设置窗 reapply）
@@ -917,7 +923,7 @@ func _build_pause_veil() -> Control:
 	center.add_child(box)
 
 	var big := Label.new()
-	big.text = "‖ 已暂停"
+	big.text = T.t("HUD_PAUSED", "‖ 已暂停")
 	FONT.fs(big, 34)
 	big.add_theme_color_override("font_color", Color(0.55, 0.78, 0.82))
 	big.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -925,7 +931,7 @@ func _build_pause_veil() -> Control:
 	box.add_child(big)
 
 	var small := Label.new()
-	small.text = "对局已冻结 · 操作已锁定"
+	small.text = T.t("HUD_PAUSED_SUB", "对局已冻结 · 操作已锁定")
 	FONT.fs(small, 13)
 	small.add_theme_color_override("font_color", Color(0.44, 0.55, 0.59))
 	small.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -933,7 +939,7 @@ func _build_pause_veil() -> Control:
 	box.add_child(small)
 
 	var resume := Button.new()
-	resume.text = "▶ 继续对局"
+	resume.text = T.t("HUD_RESUME", "▶ 继续对局")
 	resume.custom_minimum_size = Vector2(180, 34)
 	EveButtonTheme.apply(resume, "hud_main")
 	FONT.fs(resume, 14)

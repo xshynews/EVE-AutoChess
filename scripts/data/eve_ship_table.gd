@@ -4,7 +4,7 @@ class_name EveShipTable
 ## EVE 自走棋 —— 舰船权威数值表（设计侧数据，逐行直录）
 ##
 ## ⚠️ 本文件是【唯一真源】。任何一行的数值都不许在别处二次定义。
-##    数据来源：F:\eve-chess\重启交接-2026-09-17\附件\01_舰船数值全表.csv
+##    数据来源：data/source_csv/01_舰船数值全表.csv
 ##    共 52 艘 = 4 派系 × 13 艘（护卫 3 / 驱逐 2 / 巡洋 3 / 战巡 2 / 战列 3）
 ##
 ## ── 列序与 CSV 完全一致，方便逐列对照 ──────────────────────────────
@@ -39,6 +39,9 @@ class_name EveShipTable
 ##     这样既不会「擅自改数值」，也不会让战斗因为 10 秒一炮而慢到看不出效果。
 
 ## CSV 的列序（供解析 / 导表用）
+## ★ 2026-10-10（审查 2#5）：武器/防御/定位的取值白名单与 id 映射的唯一来源。
+const CIDS := preload("res://scripts/core/eve_combat_ids.gd")
+
 const COLUMNS: PackedStringArray = [
 	"id", "name", "faction", "weapon", "defense", "cost", "role",
 	"shield", "armor_struct", "attack", "range_cells", "speed_cells",
@@ -174,12 +177,10 @@ static func validate() -> PackedStringArray:
 		seen[id] = true
 		if not FACTION_INDEX.has(String(row[2])):
 			problems.append("%s 未知势力：%s" % [tag, row[2]])
-		if not ["激光炮", "混合炮", "射弹炮", "导弹"].has(String(row[3])):
-			problems.append("%s 未知武器：%s" % [tag, row[3]])
-		if not ["盾抗", "甲抗"].has(String(row[4])):
-			problems.append("%s 未知防御：%s" % [tag, row[4]])
-		if not ["攻击型", "防御型", "后勤"].has(String(row[6])):
-			problems.append("%s 未知定位：%s" % [tag, row[6]])
+		# ★ 2026-10-10（审查 2#5）：武器/防御/定位的白名单**由 `EveCombatIds` 统一持有**
+		#   —— 原来这里又硬编码了一份中文列表，和 id 映射表两处必然分叉。
+		for u in CIDS.unknown_values_of_row(row):
+			problems.append("%s 未知%s" % [tag, u])
 		if int(row[5]) < 1 or int(row[5]) > 5:
 			problems.append("%s 费用越界：%s" % [tag, row[5]])
 	return problems

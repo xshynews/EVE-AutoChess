@@ -959,18 +959,22 @@ func _t_event_apply() -> void:
 	_expect(st3.apply_event(&"beacon_repair").is_empty(), "同一条不能二次选取")
 	_expect(st3.apply_event(&"__nope__").is_empty(), "不存在的 id 落地被拒")
 
-	# ⑤ 黑市情报：免费高级刷新 + **保底 1 艘 cost ≥ 3**
+	# ⑤ 黑市情报：免费高级刷新 —— ★ 保底在**下一节点**落地（审查 R05）
 	#    ⚠️ 故意把等级压到 1 —— 那一档 100% 只出 1 费，保底不生效就必然抓得到。
+	#    ★ 2026-10-10：事件不再当场刷新（会被 `advance()` 的普通 roll 覆盖）
+	#      ⇒ 必须 `advance()` 之后再检查货架。
 	var st4 := _new_run(80)
 	st4.level = 1
 	st4.overtier = 0
+	st4.set_phase(EveRunState.Phase.RESOLVE)
 	var o4 := st4.apply_event(&"black_market")
 	_expect(not o4.is_empty(), "黑市情报落地")
+	st4.advance()
 	var has_hi := false
 	for d in st4.offers:
 		if int((d as Dictionary).get("cost", 1)) >= 3:
 			has_hi = true
-	_expect(has_hi, "★ 黑市保底：5 槽至少 1 艘 cost ≥ 3（1 级商店原本 100% 是 1 费）")
+	_expect(has_hi, "★ 黑市保底：下一节点 5 槽至少 1 艘 cost ≥ 3（1 级商店原本 100% 是 1 费）")
 
 	# ⑥ 星币：选完事件**钱包不能变**（反向注入：不给星币）
 	var st5 := _new_run(81)
@@ -1792,7 +1796,7 @@ func _t_salvage_tier() -> void:
 	var st2 := _new_run(92)
 	st2.resolve_battle(0, [dear.duplicate(true)],
 			[{"star": 1, "atk_base": 35.0, "def_base": 230.0,
-			  "shot": 35.0 * 1.8, "m": 1.8}], 1.8)
+			  "shot": 35.0 * 1.8, "m": 1.8, "team": 1}], 1.8)
 	var i3 := st2.salvage_info()
 	_expect(not first_base_exact.call(i3),
 			"★ scale 1.8 的节点 ⇒ base_exact = false（框上不许假装是原版裸值）")
@@ -3015,8 +3019,12 @@ func _step_d_settings() -> void:
 	var want := chrome + float(sw_content.get_combined_minimum_size().y)
 	_expect(absf(float(sw.get("size").y) - want) <= 4.0,
 			"窗高贴合内容（窗高 %.0f vs 需求 %.0f）" % [float(sw.get("size").y), want])
-	_expect(float(sw.get("size").y) <= 700.0,
-			"窗高没有失控（%.0f ≤ 700）" % float(sw.get("size").y))
+	# ★ 2026-10-10 上限由 700 放宽到 780：新增的「重置 RESET」区（分隔线 + 标题 +
+	#    按钮 + 说明行）让无头下的窗高从 661 长到 740。语义没变 ——
+	#    这条防的是「未布局就量」把窗撑到 900+（见上面 `_fit_height` 的说明），
+	#    780 仍远低于那个量级。
+	_expect(float(sw.get("size").y) <= 780.0,
+			"窗高没有失控（%.0f ≤ 780）" % float(sw.get("size").y))
 	WINDOW_STORE.save_window(layout_key, saved_layout)   # 原样写回玩家存档
 
 	# ④ 再点一次 ≡ 应当收起（同一个按钮负责开关）
@@ -3028,6 +3036,68 @@ func _step_d_settings() -> void:
 		bar.emit_signal("settings_requested")
 	_expect(bool(hud.call("settings_is_open")), "重新打开供截图")
 	_expect(hud.get("settings_window").visible, "设置窗在台上（下一步截图）")
+
+	# ⑧ ★ 2026-10-10 「恢复默认设置」（按钮 + Ctrl+F11 救命键）
+	#
+	# ⚠️ 判据打在**后端**（EveAudio 的字段 + 存档文件），⛔ 不打在按钮皮肤上 ——
+	#    「按钮看着换了、设置没回默认」是这类控件最经典的假实现。
+	var dflt: Dictionary = SETTINGS_SCRIPT.STORE.DEFAULTS
+	# 先把音效拧歪（并落盘），制造一个"非默认"的局面
+	sfx_slider.value = 0.20
+	_expect(absf(float(audio.get("volume_sfx")) - 0.20) < 0.001,
+			"前置：音效被调离默认（0.20）")
+	# ① 按钮存在（按文案找 —— 位置会随分区调整而变）
+	var reset_btn: Button = null
+	for n in sw.get("content").find_children("*", "Button", true, false):
+		if (n as Button).text == "恢复默认设置":
+			reset_btn = n as Button
+			break
+	_expect(reset_btn != null, "★ 设置窗有「恢复默认设置」按钮")
+	# ② 点它 ⇒ 后端真的回默认（音量）+ 存档回**哨兵值**
+	if reset_btn != null:
+		reset_btn.emit_signal("pressed")
+	_expect(absf(float(audio.get("volume_sfx")) - float(dflt["sfx"])) < 0.001,
+			"★★ 点「恢复默认设置」⇒ 音效回默认 %.2f（实际 %.2f）"
+			% [float(dflt["sfx"]), float(audio.get("volume_sfx"))])
+	_expect(absf(float(store.load_all().get("font_scale", -1.0)) - float(dflt["font_scale"])) < 0.001,
+			"★★ 字号存档也回默认哨兵（%.1f）" % float(dflt["font_scale"]))
+	_expect(String(store.load_all().get("resolution", "?")) == String(dflt["resolution"]),
+			"★★ 分辨率存档回自适应哨兵（\"%s\"）" % String(dflt["resolution"]))
+	# ③ Ctrl+F11 —— **窗关着也生效**（合成一个按键事件直接喂给它的 `_unhandled_input`）
+	sfx_slider.value = 0.20
+	var f11 := InputEventKey.new()
+	f11.keycode = KEY_F11
+	f11.ctrl_pressed = true
+	f11.pressed = true
+	sw.call("_unhandled_input", f11)
+	_expect(absf(float(audio.get("volume_sfx")) - float(dflt["sfx"])) < 0.001,
+			"★★ Ctrl+F11 ⇒ 同样回默认（实际 %.2f）" % float(audio.get("volume_sfx")))
+
+	# ⑨ ★ 2026-10-10：标题栏右上角的 ✕（在折叠按钮**右边**）—— 点下去窗真的关掉。
+	#
+	# ⚠️ 放在**本步最后**：点完这枚按钮窗就关了，后面的步骤没窗可用。
+	# ⚠️ 红线 9：新面板必须验「点下去有反应」—— 不能只断言按钮存在。
+	var close_btn: Control = sw.get("_close_btn")
+	_expect(close_btn != null, "★ 设置窗标题栏有 ✕ 关闭按钮")
+	if close_btn != null:
+		var hdr: Control = sw.get("header")
+		var col_btn: Control = sw.get("_collapse_btn")
+		_expect(col_btn != null, "设置窗有折叠按钮（✕ 要在它右边）")
+		if hdr != null:
+			_expect(close_btn.get_index() == hdr.get_child_count() - 1,
+					"★ ✕ 在标题栏最右端（下标 %d / 共 %d）"
+					% [close_btn.get_index(), hdr.get_child_count()])
+		if col_btn != null:
+			_expect(close_btn.get_index() == col_btn.get_index() + 1,
+					"★★ ✕ 紧跟在折叠按钮右边（✕ %d / 折叠 %d）"
+					% [close_btn.get_index(), col_btn.get_index()])
+		var cb_ev := InputEventMouseButton.new()
+		cb_ev.button_index = MOUSE_BUTTON_LEFT
+		cb_ev.pressed = true
+		cb_ev.position = close_btn.size * 0.5
+		close_btn.gui_input.emit(cb_ev)
+		_expect(not bool(hud.call("settings_is_open")),
+				"★★ 点 ✕ ⇒ 设置窗关闭（走 HUD.hide_settings 收口）")
 
 	# 收尾：把玩家的设置原样写回 —— 验收不该改变玩家的设置
 	for k in saved_before.keys():

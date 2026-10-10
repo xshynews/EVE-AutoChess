@@ -64,7 +64,8 @@ func _ready() -> void:
 	_t_font()
 	_restore_settings()
 	print("═══ RESULT passed=%d failed=%d ═══" % [_pass, _fail])
-	get_tree().quit()
+	# ★ 2026-10-10（审查 R07）：失败 ⇒ 非零退出码
+	get_tree().quit(1 if _fail > 0 else 0)
 
 
 # ---------------------------------------------------------------- 夹具

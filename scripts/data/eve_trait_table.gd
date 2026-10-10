@@ -6,7 +6,7 @@ class_name EveTraitTable
 ## ══════════════════════════════════════════════════════════════════
 ##  数据来源（唯一真源）
 ## ══════════════════════════════════════════════════════════════════
-##  `F:\eve-chess\重启交接-2026-09-17\附件\02_羁绊系统表.csv`
+##  `data/source_csv/02_羁绊系统表.csv`
 ##  12 行逐条直录：阈值与效果文本一字不改。
 ##
 ##  羁绊的三条线全部来自权威数值表的三列，没有额外发明：
@@ -36,6 +36,13 @@ class_name EveTraitTable
 ##  CSV 没写范围，这是一次明确的工程选择；若设计要「全队受益」，
 ##  改 EveRunState.apply_synergies_to() 里的 _affected() 一处即可。
 
+## ★ 2026-10-10（i18n）：术语取词（见 `eve_terms.gd` 顶注）。
+##
+## ⛔⛔ **`name` 是逻辑键、`label` 才是显示名**。`EFFECTS` 按 `name` 查表、
+##   `count()` 按 `name` 计数、`ship_has()` 按 `name` 比较 ——
+##   把 `name` 翻成英文 = 羁绊静默失效（凑齐了不加属性、一条报错都没有）。
+const TERMS := preload("res://scripts/core/eve_terms.gd")
+
 ## 分组顺序 = 舰队构成窗的显示顺序。tiers 来自 CSV 的「一档阈值 / 二档阈值」。
 const GROUPS: Array = [
 	{"key": &"faction", "label": "势力 FACTION", "tiers": [2, 4]},
@@ -50,22 +57,22 @@ static func members(group: StringName) -> Array[Dictionary]:
 	match group:
 		&"faction":
 			return [
-				{"name": "艾玛",     "color": EveWindow.C_FACTION_AMARR},
-				{"name": "加达里",   "color": EveWindow.C_FACTION_CALDARI},
-				{"name": "盖伦特",   "color": EveWindow.C_FACTION_GALLENTE},
-				{"name": "米玛塔尔", "color": EveWindow.C_FACTION_MINMATAR},
+				{"name": "艾玛",     "label": TERMS.trait_member(&"faction", "艾玛"),     "color": EveWindow.C_FACTION_AMARR},
+				{"name": "加达里",   "label": TERMS.trait_member(&"faction", "加达里"),   "color": EveWindow.C_FACTION_CALDARI},
+				{"name": "盖伦特",   "label": TERMS.trait_member(&"faction", "盖伦特"),   "color": EveWindow.C_FACTION_GALLENTE},
+				{"name": "米玛塔尔", "label": TERMS.trait_member(&"faction", "米玛塔尔"), "color": EveWindow.C_FACTION_MINMATAR},
 			]
 		&"weapon":
 			return [
-				{"name": "激光炮", "color": EveWindow.C_WEAPON},
-				{"name": "混合炮", "color": EveWindow.C_WEAPON},
-				{"name": "射弹炮", "color": EveWindow.C_WEAPON},
-				{"name": "导弹",   "color": EveWindow.C_WEAPON},
+				{"name": "激光炮", "label": TERMS.trait_member(&"weapon", "激光炮"), "color": EveWindow.C_WEAPON},
+				{"name": "混合炮", "label": TERMS.trait_member(&"weapon", "混合炮"), "color": EveWindow.C_WEAPON},
+				{"name": "射弹炮", "label": TERMS.trait_member(&"weapon", "射弹炮"), "color": EveWindow.C_WEAPON},
+				{"name": "导弹",   "label": TERMS.trait_member(&"weapon", "导弹"),   "color": EveWindow.C_WEAPON},
 			]
 		&"defense":
 			return [
-				{"name": "甲抗", "color": EveWindow.C_DEFENSE},
-				{"name": "盾抗", "color": EveWindow.C_DEFENSE},
+				{"name": "甲抗", "label": TERMS.trait_member(&"defense", "甲抗"), "color": EveWindow.C_DEFENSE},
+				{"name": "盾抗", "label": TERMS.trait_member(&"defense", "盾抗"), "color": EveWindow.C_DEFENSE},
 			]
 	return []
 
@@ -256,7 +263,9 @@ static func tooltip_for(group: StringName, member: String, count: int) -> String
 static func group_label(group: StringName) -> String:
 	for g in GROUPS:
 		if g["key"] == group:
-			return String(g["label"])
+			# ★ 2026-10-10（i18n）：显示名走取词（`TRAITGROUP.*` 是**本作自己的**
+			#   UI 文案，不是 EVE 术语 ⇒ 手写在 strings.csv 里，不归生成器管）。
+			return TERMS.trait_group(group, String(g["label"]))
 	return ""
 
 

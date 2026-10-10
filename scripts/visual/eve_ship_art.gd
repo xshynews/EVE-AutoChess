@@ -7,7 +7,7 @@ class_name EveShipArt
 ##   images.evetech.net/types/<typeID>/render?size=1024   ← 官方 1024px 渲染图
 ##   → isnet-general-use 语义分割抠像 + 最大连通域清理
 ##   → 面积归一化（前景占画布 22%）+ 512×512 居中画布
-##   脚本：C:\godot\_export\fetch_official.py / off_cut_all.py / cut_models.py
+##   脚本：tools/pipeline/fetch_official.py / off_cut_all.py / cut_models.py
 ##
 ## ⚠️ 文件名 = EveShipTable 的 id 列（condor / punisher / apocalypse …），
 ##    与本文件的 [member DIR] 拼起来就是资源路径。**不要按中文名找文件。**

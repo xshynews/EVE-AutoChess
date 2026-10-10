@@ -132,7 +132,8 @@ func _ready() -> void:
 		print("═══ 全部通过（失败项 0）═══")
 	else:
 		print("═══ 有 %d 项失败 ═══" % _fail)
-	get_tree().quit()
+	# ★ 2026-10-10（审查 R07）：失败 ⇒ 非零退出码
+	get_tree().quit(1 if _fail > 0 else 0)
 
 
 func _report(title: String, problems: PackedStringArray) -> void:

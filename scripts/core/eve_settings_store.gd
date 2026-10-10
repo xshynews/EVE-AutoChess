@@ -1,5 +1,8 @@
 extends RefCounted
 class_name EveSettingsStore
+## 存档格式版本号工具（⛔ 用 preload 常量，别裸写 class_name —— 无头跑没有类缓存）。
+const SAVE_SCHEMA := preload("res://scripts/core/eve_save_schema.gd")
+
 
 ## EVE 自走棋 —— 设置持久化（`user://settings.cfg`）
 ##
@@ -29,6 +32,11 @@ class_name EveSettingsStore
 const PATH := "user://settings.cfg"
 const SECTION := "game"
 
+## ★ 2026-10-10（审查 2#3）：本存档的**格式版本**。改字段语义/结构时 +1。
+##   读盘会按它决定是否跑 `_migrate()`；写盘永远盖上（见 `EveSaveSchema` 顶注四条规则）。
+##   1 = 引入版本号机制本身（各项键名/含义与历史一致 ⇒ 0→1 无实际迁移）。
+const SCHEMA_VERSION := 1
+
 ## 默认值表 = 唯一真相源。
 ##
 ## ⚠️ 加新设置项**先在这里加一行**：缺项回落、首次写盘、类型校验都读它，
@@ -43,6 +51,10 @@ const DEFAULTS := {
 	"music": 0.32,
 	"muted": false,
 	"background": "caldari_c07",
+	# ★ 2026-10-10 i18n：界面语言。`""` = 没设过 ⇒ 用 `EveText.DEFAULT_LOCALE`（简中）。
+	#   ⚠️ 暂不「跟随系统」—— 英文文案还没铺完，跟随系统会让英文 OS 的玩家
+	#      看到一个中英混杂的界面。等英文补齐后再改这一条口径。
+	"language": "",
 	"mood": 0,
 	# ★ 2026-10-07 UI 缩放档。`0.0` = 「自动」（跟随平台：
 	#   移动端 1.35 / 桌面 1.0）。取值域与解析见 `EveUiScale`。
@@ -71,6 +83,9 @@ static func load_all() -> Dictionary:
 	if err != OK:
 		# 首次启动就是这条路径，不是错误 —— 别报 warning 刷屏
 		return out
+	# ★ 2026-10-10（审查 2#3）：按版本号决定要不要迁移（0 = 老档，同样能读）。
+	if SAVE_SCHEMA.needs_migration(PATH, SAVE_SCHEMA.version(cf), SCHEMA_VERSION):
+		_migrate(cf, SAVE_SCHEMA.version(cf))
 	for k in out.keys():
 		if not cf.has_section_key(SECTION, k):
 			continue
@@ -90,9 +105,20 @@ static func save_all(d: Dictionary) -> void:
 	var cf := ConfigFile.new()
 	for k in DEFAULTS.keys():
 		cf.set_value(SECTION, k, d.get(k, DEFAULTS[k]))
+	SAVE_SCHEMA.stamp(cf, SCHEMA_VERSION)          # ★ 写盘永远盖版本号
 	var err := cf.save(PATH)
 	if err != OK:
 		push_warning("[EveSettingsStore] 写盘失败（%s）：%d" % [PATH, err])
+
+
+## 旧版本存档 → 当前版本的**就地迁移**。
+##
+## ⚠️ 只改传进来的 `cf`，**不写盘**（`load_all()` 必须保持"只读"语义 ——
+##    自检会调它，写盘就污染玩家存档了）。下一次 `save_all()` 自然带上新版本号。
+## ⚠️ 必须**幂等**：写盘失败后可能被重跑。
+## 0 → 1：仅引入版本号机制，键名与含义都没变 ⇒ 无事可做。
+static func _migrate(_cf: ConfigFile, _from_v: int) -> void:
+	pass
 
 
 ## 改一项：读 → 改 → 全量写回。

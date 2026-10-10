@@ -26,6 +26,13 @@ enum Faction { AMARR, CALDARI, GALLENTE, MINMATAR }
 ##      CLASS_NAMES / default_stance_for_class / default_engage_ratio
 enum Class { FRIGATE, DESTROYER, CRUISER, BATTLE_CRUISER, BATTLESHIP }
 
+## ★ 2026-10-10（审查 2#5）：武器/防御/定位的稳定 id（逻辑只认 id、不认中文）。
+## ⚠️ 用 preload 常量引用（无头跑没有全局类缓存）。
+const CIDS := preload("res://scripts/core/eve_combat_ids.gd")
+
+## ★ 2026-10-10（i18n）：术语取词（见 `eve_terms.gd` 顶注）。
+const TERMS := preload("res://scripts/core/eve_terms.gd")
+
 const FACTION_NAMES := {
 	Faction.AMARR: "艾玛",
 	Faction.CALDARI: "加达里",
@@ -76,10 +83,15 @@ var traits: PackedStringArray = []   ## 羁绊标签
 #    原值用于 HUD 展示与羁绊统计，派生值用于 3D 战斗解算。
 #    想让 HUD 显示别的口径，改的是展示层，不是这里。
 var ship_key: StringName = &""       ## 主键：condor / punisher / apocalypse …
-var weapon_type: StringName = &""    ## 激光炮 / 混合炮 / 射弹炮 / 导弹
-var defense_type: StringName = &""   ## 盾抗 / 甲抗
-var role: StringName = &""           ## 攻击型 / 防御型 / 后勤
+var weapon_type: StringName = &""    ## 激光炮 / 混合炮 / 射弹炮 / 导弹（**显示用**）
+var defense_type: StringName = &""   ## 盾抗 / 甲抗（**显示用**）
+var role: StringName = &""           ## 攻击型 / 防御型 / 后勤（**显示用**）
 var is_logistics: bool = false       ## 权威表「后勤」列
+## ★ 2026-10-10（审查 2#5）：**逻辑用**的稳定 ASCII id（见 `EveCombatIds`）。
+## ⛔ 判断分支一律比这三个，**别比上面那三个中文**（拼错不报错 + 文案一改逻辑就崩）。
+var weapon_id: StringName = &""      ## laser / hybrid / proj / missile
+var defense_id: StringName = &""     ## shield / armor
+var role_id: StringName = &""        ## attack / defense / logi
 var attack: float = 0.0              ## 权威表「攻击」原值
 var range_cells: int = 2             ## 权威表「射程」，单位【格】
 var speed_cells: float = 0.1         ## 权威表「移速」，单位【格/秒】
@@ -134,13 +146,6 @@ var optimal_range: float = 0.0
 var falloff: float = 0.0
 var tracking: float = 0.0
 var signature_resolution: float = 0.0
-
-# --- 电子战 ---
-var is_ewar: bool = false              ## 是否携带电子战模块
-var ewar_type: StringName = &""        ## web / disrupt / scram / ecm
-var jammed_until: float = 0.0
-var scrammed_until: float = 0.0
-var webbed_until: float = 0.0
 
 # --- 行为 ---
 var stance: int = EveCombatCore.Stance.KEEP
@@ -220,6 +225,10 @@ func apply_stats(stats: Dictionary) -> void:
 	weapon_type = StringName(stats.get("weapon_type", ""))
 	defense_type = StringName(stats.get("defense_type", ""))
 	role = StringName(stats.get("role", ""))
+	# ★ 逻辑 id（可能来自派生字典，也可能没有 ⇒ 兜底现算一次，别留空）
+	weapon_id = StringName(stats.get("weapon_id", CIDS.weapon_id_of(String(weapon_type))))
+	defense_id = StringName(stats.get("defense_id", CIDS.defense_id_of(String(defense_type))))
+	role_id = StringName(stats.get("role_id", CIDS.role_id_of(String(role))))
 	is_logistics = bool(stats.get("is_logistics", false))
 	attack = float(stats.get("attack", weapon_damage))
 	range_cells = int(stats.get("range_cells", 2))
@@ -428,17 +437,35 @@ func speed_scale(m: float) -> void:
 		body.max_speed = maxf(1.0, body.max_speed * m)
 
 
-## 是否被 ECM 打断火控链路
-func is_jammed(now: float) -> bool:
-	return is_ewar and jammed_until > now
-
-
+## ★ 2026-10-10（i18n）：以下三个是**显示名**，走 `EveTerms` 取词
+##   （英文 = EVE 官方原名，中文 = 官方译名）。
+##
+## ⛔⛔ **`FACTION_NAMES` / `CLASS_NAMES` 这两张表本身不许翻**，上面那三个
+##   `weapon_type` / `defense_type` / `role` 字段同理 —— 它们是
+##   `EveTraitTable.EFFECTS` 与 `count()` 的**逻辑键**（中文查表）。
+##   把它们换成英文 = 羁绊静默失效（凑齐了却不加属性、一条报错都没有）。
 func faction_name() -> String:
-	return FACTION_NAMES.get(faction, "未知")
+	var cn := String(FACTION_NAMES.get(faction, ""))
+	return TERMS.faction(cn) if cn != "" else "未知"
 
 
 func class_name_cn() -> String:
-	return CLASS_NAMES.get(ship_class, "未知")
+	# key = 费用档（`CLASS.<cost>`），中文兜底取自 `CLASS_NAMES`。
+	var cn := String(CLASS_NAMES.get(ship_class, ""))
+	return TERMS.ship_class(cost, cn) if cn != "" else "未知"
+
+
+## 武器显示名（激光炮 / 混合炮 …）。⚠️ 不是 `weapon_type` —— 那个是逻辑键。
+func weapon_label() -> String:
+	return TERMS.weapon(weapon_id)
+
+
+func defense_label() -> String:
+	return TERMS.defense(defense_id)
+
+
+func role_label() -> String:
+	return TERMS.role(role_id)
 
 
 func faction_color() -> Color:

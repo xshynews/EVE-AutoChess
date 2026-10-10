@@ -69,4 +69,6 @@ func _ready() -> void:
 				str(sh.is_logistics), sh.attack_interval])
 
 	print("═══ 自检结束 ═══")
-	get_tree().quit()
+	# ★ 2026-10-10（审查 R07）：表结构有问题或实例化失败 ⇒ 非零退出码。
+	#   （本脚本是"打印对照"型，没有统一断言计数 ⇒ 用这两个确定信号当判据。）
+	get_tree().quit(1 if (not problems.is_empty() or sh == null) else 0)

@@ -31,8 +31,10 @@ func _ready() -> void:
 	_t_click_channels()
 	_t_height_sync()
 	_t_persist()
+	_t_closable()
 	print("═══ RESULT passed=%d failed=%d ═══" % [_pass, _fail])
-	get_tree().quit()
+	# ★ 2026-10-10（审查 R07）：失败 ⇒ 非零退出码
+	get_tree().quit(1 if _fail > 0 else 0)
 
 
 func _mk_win(title: String, persist := false) -> Control:
@@ -44,6 +46,57 @@ func _mk_win(title: String, persist := false) -> Control:
 	w.set("persist_layout", persist)
 	host.add_child(w)
 	return w
+
+
+## 同上，但能**在 `add_child` 之前**设好 `closable` / `collapsible`。
+## ⚠️ 必须提前设：`_build()`（在 `_ready`）读它们决定建不建按钮 —— 建完再改没用。
+func _mk_win_cfg(title: String, closable: bool, collapsible: bool = true) -> Control:
+	var host := Control.new()
+	host.size = Vector2(1920, 1080)
+	add_child(host)
+	var w: Control = W.new()
+	w.set("window_title", title)
+	w.set("persist_layout", false)
+	w.set("closable", closable)
+	w.set("collapsible", collapsible)
+	host.add_child(w)
+	return w
+
+
+# ---------------------------------------------------------------- 关闭按钮
+## 标题栏 ✕（在折叠按钮右边）：默认不建 / 开了就在最右 / **点下去真的发信号**。
+## ⚠️ 红线 9：新面板必须验「点下去有反应」—— 不能只断言按钮存在。
+func _t_closable() -> void:
+	print("[6] 关闭按钮（closable）")
+	var w0 := _mk_win("无关闭")
+	_ok(not bool(w0.get("closable")), "默认 `closable == false`（常驻面板不该挂假 ✕）")
+	_ok(w0.get("_close_btn") == null, "★ 默认不建 ✕ —— 避免「看着能点、点了没反应」")
+
+	var w := _mk_win_cfg("有关闭", true)
+	var cb: Control = w.get("_close_btn")
+	var hdr: Control = w.get("header")
+	var col: Control = w.get("_collapse_btn")
+	_ok(cb != null, "★ `closable=true` ⇒ 建出 ✕（%s）" % (cb.name if cb != null else "—"))
+	_ok(hdr != null and cb != null and cb.get_index() == hdr.get_child_count() - 1,
+			"★ ✕ 在标题栏**最右端**（下标 %d / 共 %d）"
+			% [(cb.get_index() if cb != null else -1), (hdr.get_child_count() if hdr != null else -1)])
+	_ok(col != null and cb != null and cb.get_index() == col.get_index() + 1,
+			"★★ ✕ 紧跟在折叠按钮**右边**（✕ %d / 折叠 %d）"
+			% [(cb.get_index() if cb != null else -1), (col.get_index() if col != null else -1)])
+	# 点下去真的发信号（不是假按钮）
+	var fired := [false]
+	w.connect("close_requested", func() -> void: fired[0] = true)
+	if cb != null:
+		_click(cb)
+	_ok(fired[0], "★★ 点 ✕ ⇒ 发出 close_requested（按钮真的接上了）")
+
+	# 没有折叠按钮时 ✕ 仍居最右（两者相互独立）
+	var w2 := _mk_win_cfg("无折叠有关闭", true, false)
+	var cb2: Control = w2.get("_close_btn")
+	var hdr2: Control = w2.get("header")
+	_ok(w2.get("_collapse_btn") == null, "collapsible=false ⇒ 不建折叠按钮")
+	_ok(cb2 != null and hdr2 != null and cb2.get_index() == hdr2.get_child_count() - 1,
+			"★ 无折叠按钮时 ✕ 仍在最右")
 
 
 # ---------------------------------------------------------------- 基本
@@ -145,6 +198,11 @@ func _t_height_sync() -> void:
 # ---------------------------------------------------------------- 布局记忆
 func _t_persist() -> void:
 	print("[5] 布局记忆：拖动/缩放/收起态 都要记下来")
+	# ⚠️⚠️ 2026-10-10（同 verify_run 的窗高假失败，一个病根）：
+	#   本节要**真的写盘**才能验证"记不住"这个病，但 `clear_all()` 会把玩家
+	#   真实的 `user://window_layout.cfg` **整个清掉**（游戏里的浮窗位置就没了）。
+	#    ⇒ 先存原始字节，结束时**原样写回**；验收不该改变玩家的存档。
+	var snap := _read_raw(LAYOUT_STORE.PATH)
 	LAYOUT_STORE.persist = true
 	LAYOUT_STORE.clear_all()
 	var a := _mk_win("记忆窗", true)
@@ -195,6 +253,29 @@ func _t_persist() -> void:
 	_ok(LAYOUT_STORE.load_window("不写盘窗").is_empty(),
 			"★ `persist_layout = false` ⇒ 不写盘（验收/特殊窗用）")
 	LAYOUT_STORE.persist = false
+	_restore_raw(LAYOUT_STORE.PATH, snap)      # ★ 原样写回玩家存档
+	# ★ 隔离自证：跑完这一节，玩家的档必须**一字节都没变**（防以后又改回来）
+	_ok(_read_raw(LAYOUT_STORE.PATH) == snap,
+			"★ 自检未污染玩家的窗口布局档（原样写回）")
+
+
+# ---------------------------------------------------------------- 存档隔离辅助
+func _read_raw(p: String) -> PackedByteArray:
+	if not FileAccess.file_exists(p):
+		return PackedByteArray()
+	var f := FileAccess.open(p, FileAccess.READ)
+	return f.get_buffer(f.get_length()) if f != null else PackedByteArray()
+
+
+func _restore_raw(p: String, b: PackedByteArray) -> void:
+	if b.is_empty():
+		# 原本就没有这个文件 ⇒ 还原成"没有"，别留一个空档
+		if FileAccess.file_exists(p):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
+		return
+	var f := FileAccess.open(p, FileAccess.WRITE)
+	if f != null:
+		f.store_buffer(b)
 
 
 # ---------------------------------------------------------------- 输入辅助

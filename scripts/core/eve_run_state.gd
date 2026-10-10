@@ -258,6 +258,13 @@ var offers: Array = []
 ##    这样改表里的数值只需改一处，存档里的旧 id 也不会带着过期的数值。
 var event_picks: Array[StringName] = []
 
+## ★ 待应用的事件效果（2026-10-10，审查 R05）。
+##
+## 事件「黑市情报」承诺的「下一节点保底 1 艘 cost ≥ 3」**不能当场刷新** ——
+## 事件选完同一帧就会 `advance()` 推进节点，货架会被普通 `roll_shop()` 覆盖
+## （见 `free_advanced_roll()` 顶注）。⇒ 登记成计数，等货架定型后统一落地。
+var _pending_advanced_roll: int = 0
+
 ## ★★ 2026-10-04 打捞改为**多选列表**（用户定案）。
 ##
 ## 原来这里是**单个** `wreck: Dictionary`（且 `_set_wreck_from()` 只挑「费用最高」
@@ -298,6 +305,11 @@ var salvage_slots: Array[int] = []
 
 var rng := RandomNumberGenerator.new()
 
+## ★ 2026-10-10（审查 #4）：本局的种子（0 = 随机局）。
+##   战斗模拟器的种子由它派生（见 `battle_seed()`）⇒ 固定种子的一局**全链路可复现**
+##   （商店 / 事件 / 战斗命中判定都不再受全局随机影响）。
+var run_seed: int = 0
+
 var _pools: Dictionary = {}                ## cost → Array[Dictionary]（52 艘派生一次就够）
 
 
@@ -311,6 +323,7 @@ func start_run(p_seed: int = 0) -> void:
 		rng.randomize()
 	else:
 		rng.seed = p_seed
+	run_seed = p_seed
 
 	coin = START_GOLD
 	level = 1
@@ -322,6 +335,17 @@ func start_run(p_seed: int = 0) -> void:
 	lose_streak = 0
 	shop_locked = false
 	ending = Ending.NONE
+	# ★★ 2026-10-10（审查 R01）：**局内状态必须整体归零**，别逐个补。
+	#    `restart_run()` 复用同一个 run 对象 ⇒ 这里漏一个字段，它就会带着
+	#    上一局的值进新局。已踩过的两个：
+	#      · `event_picks` 未清 ⇒ 上一局选过的事件仍算"已获取"，事件禁重复选，
+	#        新局到事件节点可能**一个选项都没有**（无法继续）。
+	#      · `last_won` / `boss_attempts` 未清 ⇒ 第 15 节点的重打判定被污染。
+	#    ⇒ 新增局内字段时，**同时**加到这里（把这里当成"新局的完整初始态"）。
+	event_picks.clear()
+	last_won = true
+	boss_attempts = 0
+	_pending_advanced_roll = 0
 	bench.clear()
 	field.clear()
 	offers.clear()
@@ -345,6 +369,128 @@ func _build_pools() -> void:
 		return
 	for c in range(1, 6):
 		_pools[c] = EveShipDatabase.by_cost(c)
+
+
+## ★ 2026-10-10（审查 #4）：本节点战斗的随机种子。
+##
+## 由「局种子 + 节点号」**纯函数派生** —— ⚠️ 不许去动 `rng`（rng 的消费顺序
+## 决定了商店/事件序列，顺手摇一下就会把整条链子错位）。
+## 返回 0 = 本局是随机局 ⇒ 主控应改调 `sim.randomize_seed()`。
+func battle_seed() -> int:
+	if run_seed == 0:
+		return 0
+	return absi(run_seed * 1000003 + node_index * 7919) + 1
+
+
+# ══════════════════════════════════════════════════════════════════
+#  对局存档（审查 2#2）
+# ══════════════════════════════════════════════════════════════════
+#
+#  一局 15 个节点、动辄半小时，而本对象**只活在内存里** ⇒ 关掉游戏就没了。
+#  这里给它一对 `to_dict()` / `from_dict()`，由 `eve_battle_scene` 在
+#  每次进入新准备阶段前存一次（磁盘交互全在 `EveRunStore`，本文件不碰 IO）。
+#
+#  ⚠️ 两条口径：
+#    ① 序列化**只做类型搬运**，⛔ 不重算任何数值（不重摇商店、不重算羁绊、
+#       不重推残骸星级）—— 存的必须和存之前一模一样；
+#    ② `StringName` 一律降级成 `String`（ConfigFile 存不住 StringName，读回来
+#       会退化成 String ⇒ typed Array 赋值会炸）。好在全工程读这两类键都走了
+#       `String(...)` / 用 String 字面量（`buffs` 的 `armor_pct` 等），所以
+#       降级后语义完全一致。
+
+## 本局**全部**存活状态 → 可 `ConfigFile` 化的 Dictionary。
+func to_dict() -> Dictionary:
+	return {
+		"run_seed": run_seed,
+		"phase": phase,
+		"ending": ending,
+		"coin": coin, "level": level, "xp": xp, "beacon": beacon,
+		"node_index": node_index, "overtier": overtier,
+		"win_streak": win_streak, "lose_streak": lose_streak,
+		"shop_locked": shop_locked,
+		"last_won": last_won, "boss_attempts": boss_attempts,
+		"pending_advanced_roll": _pending_advanced_roll,
+		"event_picks": _plain(event_picks),
+		"bench": _plain(bench),
+		"field": _plain(field),
+		"offers": _plain(offers),
+		"repair_queue": _plain(repair_queue),
+		"salvage_slots": _plain(salvage_slots),
+		"wrecks": _plain(wrecks),
+		"wrecks_display": _plain(wrecks_display),
+		"wreck_evt": wreck_evt,
+	}
+
+
+## 还原一局。返回 false = 数据不可用（调用方应改走 `start_run()`）。
+## ⚠️ 只赋值 + `_build_pools()`（派生缓存），⛔ 不发 log、不 roll 商店 ——
+##    否则"继续上一局"会平白多出几条日志、甚至换掉刚存下来的货架。
+func from_dict(d: Dictionary) -> bool:
+	if d.is_empty():
+		return false
+	run_seed = int(d.get("run_seed", 0))
+	phase = int(d.get("phase", Phase.PREP))
+	ending = int(d.get("ending", Ending.NONE))
+	coin = int(d.get("coin", START_GOLD))
+	level = clampi(int(d.get("level", 1)), 1, MAX_LEVEL)
+	xp = maxi(0, int(d.get("xp", 0)))
+	beacon = maxi(0, int(d.get("beacon", START_BEACON)))
+	node_index = clampi(int(d.get("node_index", 1)), 1, EveNodeTable.TOTAL)
+	overtier = clampi(int(d.get("overtier", 0)), 0, MAX_TIER - MAX_LEVEL)
+	win_streak = maxi(0, int(d.get("win_streak", 0)))
+	lose_streak = maxi(0, int(d.get("lose_streak", 0)))
+	shop_locked = bool(d.get("shop_locked", false))
+	last_won = bool(d.get("last_won", true))
+	boss_attempts = maxi(0, int(d.get("boss_attempts", 0)))
+	_pending_advanced_roll = maxi(0, int(d.get("pending_advanced_roll", 0)))
+
+	event_picks.clear()
+	for id in _as_array(d.get("event_picks", [])):
+		event_picks.append(StringName(id))
+
+	bench = _entries_in(d.get("bench", []))
+	field = _entries_in(d.get("field", []))
+	offers = _as_array(d.get("offers", []))
+	repair_queue = _entries_in(d.get("repair_queue", []))
+	salvage_slots.clear()
+	for i in _as_array(d.get("salvage_slots", [])):
+		salvage_slots.append(int(i))
+	wrecks = _entries_in(d.get("wrecks", []))
+	wrecks_display = _entries_in(d.get("wrecks_display", []))
+	wreck_evt = maxi(0, int(d.get("wreck_evt", 0)))
+
+	_build_pools()
+	changed.emit()
+	return true
+
+
+## 递归降级：`StringName` → `String`；其余原样（含 `Vector2i`，ConfigFile 支持）。
+static func _plain(v: Variant) -> Variant:
+	if v is StringName:
+		return String(v)
+	if v is Array:
+		var out: Array = []
+		for x in v:
+			out.append(_plain(x))
+		return out
+	if v is Dictionary:
+		var o: Dictionary = {}
+		for k in (v as Dictionary).keys():
+			o[String(k)] = _plain((v as Dictionary)[k])
+		return o
+	return v
+
+
+static func _as_array(v: Variant) -> Array:
+	return v if v is Array else []
+
+
+static func _entries_in(v: Variant) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for e in _as_array(v):
+		if e is Dictionary:
+			out.append((e as Dictionary).duplicate(true))
+	return out
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -662,9 +808,17 @@ func salvage_order(idxs: Array = []) -> Dictionary:
 	#    事后再算「本批需多少」得到 0 —— 提示文案变成「需 0 ◆」，
 	#    玩家完全看不懂哪里错了。
 	var picked_total := salvage_cost_of_picks(picked)
+	# ★★ 2026-10-10（审查 R02）：上限必须按「**本节点已预订 + 本次成交**」判，
+	#    ⛔ 不能只看本次批次的 `bought.size()`。UI 是「每点一艘调一次
+	#    `salvage_order([idx])`」⇒ 每次计数都从 0 开始，第 6 艘照样收钱，
+	#    到账时却只有 5 个货位 ⇒ 第六艘**扣了费却消失**（不退不排队）。
+	#    `repair_queue` 正是「本节点已下单未到账」的权威计数（`advance()` 到账后清空）。
+	var already := repair_queue.size()
+	var cap_blocked := 0
 	for i in picked:
-		if bought.size() >= SALVAGE_MAX_PICK:
-			skipped.append(i)          # 货位满了 ⇒ 超出部分买不了
+		if already + bought.size() >= SALVAGE_MAX_PICK:
+			skipped.append(i)          # 货位满了 ⇒ 超出部分买不了（含已预订的）
+			cap_blocked += 1
 			continue
 		var c := salvage_cost_of(i)
 		if c > coin:
@@ -696,7 +850,7 @@ func salvage_order(idxs: Array = []) -> Dictionary:
 
 	if bought.is_empty():
 		return {
-			"ok": false, "reason": _short_of_msg(picked, skipped, picked_total),
+			"ok": false, "reason": _short_of_msg(picked, skipped, picked_total, cap_blocked),
 			"bought": bought, "skipped": skipped, "paid": 0,
 			"names": [] as Array[String], "data": [] as Array[Dictionary],
 		}
@@ -722,9 +876,14 @@ func salvage_order(idxs: Array = []) -> Dictionary:
 ##
 ## ⚠️ `need` 必须由调用方**在删列表之前**算好传进来：那时列表里的船已经被
 ##    移走了，现算会得到 0（实测踩过：「本批需 0 ◆，现有 0 ◆」）。
-func _short_of_msg(picked: Array[int], skipped: Array[int], need: int) -> String:
+## ⚠️ `cap_blocked` = 被「货位已订满」挡下的数量（≠ 钱不够）——
+##    两种拒绝**必须给不同方向**的话：货位满了攒钱也没用，报「星币不足」是骗人。
+func _short_of_msg(picked: Array[int], skipped: Array[int], need: int,
+		cap_blocked: int = 0) -> String:
 	if picked.is_empty():
 		return "没有勾选任何残骸"
+	if cap_blocked >= picked.size() and cap_blocked > 0:
+		return "本节点货位已订满（最多 %d 艘）—— 已预约的下回合到账" % SALVAGE_MAX_PICK
 	if picked.size() > SALVAGE_MAX_PICK:
 		return "最多只能打捞 %d 艘（商店货位数）" % SALVAGE_MAX_PICK
 	return "星币不足：本批需 %d ◆，现有 %d ◆" % [need, coin]
@@ -774,6 +933,8 @@ func salvage_info() -> Dictionary:
 			"items": items,
 			"total": wrecks.size(),
 			"max_pick": SALVAGE_MAX_PICK,
+			# ★ 本节点还能再订几艘（= 上限 − 已预约）。UI 用它显示剩余货位。
+			"remaining": maxi(0, SALVAGE_MAX_PICK - repair_queue.size()),
 			"coin": coin,
 			"evt": wreck_evt,
 			# ★ 已下单未到账的（在途）—— 结算页打捞区的「修复队列（下回合到账）」行读它。
@@ -883,19 +1044,30 @@ func _set_wreck_from(destroyed: Array, sources: Array = [],
 	for r in rows:
 		var d: Dictionary = (r["ship"] as Dictionary).duplicate()
 		var src: Dictionary = r["src"]
+		var team := int(r["team"])
 		# ── 证据：优先权威表裸值（sources 为空时现查一次表，口径同一份）──
 		var dbase := EveShipDatabase.by_id(String(d.get("ship_key", "")))
 		var atk_base := float(src.get("atk_base", dbase.get("attack", 1.0)))
 		var def_base := float(src.get("def_base", dbase.get("armor_struct", 1.0)))
-		var shot := float(src.get("shot", atk_base * m))
-		var tier := derive_wreck_tier(shot, m, atk_base, def_base)
-		var star := int(tier["star"])
+		var star := 1
+		var mm := m
+		if team == 0:
+			# ★★ 2026-10-10（审查 R03）：我方残骸**直接取编制/快照里的真实星级**。
+			#    ⛔ 不能把敌方关卡倍率 `m` 喂给 `derive_wreck_tier()` ——
+			#    我方舰船根本没被放大，而该函数在 m > 1.12 时一律判 1★
+			#    （复现：同一艘我方二星船，m=1.0 → 2★，m=1.25 → 1★）。
+			#    我方数值本就是原版裸值 ⇒ `mm` 固定 1.0，让 `base_exact` 成立。
+			star = clampi(int(src.get("star", 1)), 1, MAX_STAR)
+			mm = 1.0
+		else:
+			var shot := float(src.get("shot", atk_base * m))
+			star = int(derive_wreck_tier(shot, m, atk_base, def_base)["star"])
 		d["star"] = star
-		d["team"] = int(r["team"])
+		d["team"] = team
 		wrecks.append(d)
 		wrecks_display.append({
 			"star": star, "atk_base": atk_base, "def_base": def_base,
-			"m": m, "team": int(r["team"]), "evt": wreck_evt,
+			"m": mm, "team": team, "evt": wreck_evt,
 		})
 
 	# ── ③ 一行汇总日志（逐艘打日志会把战斗日志刷爆）──
@@ -913,15 +1085,28 @@ func _deliver_repairs() -> void:
 	if repair_queue.is_empty():
 		return
 	salvage_slots.clear()
+	var delivered := 0
 	for i in repair_queue.size():
 		if i >= SHOP_SLOTS:
 			break
 		offers[i] = repair_queue[i]
 		salvage_slots.append(i)
-	for it in repair_queue:
+		delivered += 1
+	for i in delivered:
+		var it: Dictionary = repair_queue[i]
 		log_event.emit("修复完成：%s ★%d 已占货位（本节点刷新刷不掉）"
 				% [String(it.get("name", "?")), int(it.get("star", 1))], &"salvage")
-	repair_queue.clear()
+	# ★ 2026-10-10（审查 R02）：**只移除真正交付的**。
+	#    ⛔ 旧代码「先只写前 5 个，再把整个队列 clear()」—— 溢出（理论上
+	#    已由下单上限堵住）时会**凭空吞掉玩家已付费的货**。这里保留溢出项，
+	#    下个节点继续到账，绝不静默丢弃。
+	if delivered >= repair_queue.size():
+		repair_queue.clear()
+	else:
+		var rest: Array[Dictionary] = []
+		for i in range(delivered, repair_queue.size()):
+			rest.append(repair_queue[i])
+		repair_queue = rest
 	offers_changed.emit()
 
 
@@ -1105,6 +1290,22 @@ func _merge_once() -> bool:
 	else:
 		inherited = bench[take_bench[0]].get("cell", Vector2i(-1, -1))
 
+	# ★★ 2026-10-10（审查 R04）：**合成必须继承永久事件强化**（`buffs`）。
+	#
+	#   旧实现用 `_make_entry()` 造新条目、只继承 `cell` ⇒ 三张材料上的
+	#   `buffs`（武器调校 attack_pct / 结构加固 def_pct …）全部丢失，而对应
+	#   事件仍记「已获取」 ⇒ 玩家白白损失一次事件机会，且再也补不回来。
+	#
+	#   规则：把三张材料的 buffs **按 key 合并去重（取最大值）**。
+	#   ⚠️ 事件在本局不可重复选 ⇒ 同一 key 只可能来自一条事件，「取 max」=
+	#      正确继承，同时天然防止「同一强化被三张材料重复叠乘」。
+	#   📌 将来若引入可重复来源，应把 buffs 改成「带来源 id 的效果集合」再合并。
+	var merged_buffs: Dictionary = {}
+	for i in take_field:
+		_merge_buffs_into(merged_buffs, field[i].get("buffs", {}))
+	for i in take_bench:
+		_merge_buffs_into(merged_buffs, bench[i].get("buffs", {}))
+
 	# 倒序删除（先删大下标，免得前面的下标失效）
 	var drop_field: Array[int] = take_field.duplicate()
 	drop_field.sort()
@@ -1119,6 +1320,8 @@ func _merge_once() -> bool:
 
 	var merged := _make_entry(key, star + 1)
 	merged["cell"] = inherited
+	if not merged_buffs.is_empty():
+		merged["buffs"] = merged_buffs
 	if keep_in_field:
 		field.append(merged)
 	else:
@@ -1134,6 +1337,14 @@ func _merge_once() -> bool:
 
 static func _is_same(e: Dictionary, key: StringName, star: int) -> bool:
 	return StringName(e.get("ship_key", &"")) == key and int(e.get("star", 1)) == star
+
+
+## 把一条 entry 的 `buffs` 合并进 `dst` —— **按 key 取最大值**（去重，防重复叠乘）。
+static func _merge_buffs_into(dst: Dictionary, src) -> void:
+	if not (src is Dictionary):
+		return
+	for k in (src as Dictionary).keys():
+		dst[k] = maxf(float(dst.get(k, 0.0)), float((src as Dictionary)[k]))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1359,7 +1570,7 @@ func active_synergies() -> Array[Dictionary]:
 ##    CSV 没写范围，这是工程侧的一次明确选择；要改成全队受益，
 ##    把下面 `EveTraitTable.ship_has(...)` 那个判断去掉即可。
 ##
-## ⚠️ 数值叠加顺序（在 EveBattleScene._build_own_fleet 里）：
+## ⚠️ 数值叠加顺序（在 EveFleetFactory.build_own 里）：
 ##      base → star(×1.8^Δ) → **synergy**（本函数）
 ##    星级在前、羁绊在后：羁绊的固定值加成（结构 +150）不会被星级放大，
 ##    这与「星级放大的是船本身的底子」这条口径一致。
@@ -1528,8 +1739,8 @@ func picked_event_info() -> Array[Dictionary]:
 ## 增益直接写在**那条 entry 上** —— 条目是跨节点持久的，所以"永久"天然成立，
 ## 不需要另开一张表去维护"哪艘船带什么"。Dictionary 是引用类型 ⇒ 就地改即可，
 ## 上场 ↔ 备战席之间换位也跟着走。
-## ⚠️ 三连合成时 buffs 会丢（合成造的是新条目）—— 已知取舍：
-##    另两条路（buff 跟着合进去 / 给合并加一层映射）都比"丢了"复杂得多。
+## ★ 2026-10-10（审查 R04）：三连合成**不再丢 buffs** —— `_merge_once()`
+##    会按 key 合并三张材料的强化（见 `_merge_buffs_into`）。
 func _bump_entry_buff(e: Dictionary, add: Dictionary) -> void:
 	if add.is_empty() or e.is_empty():
 		return
@@ -1564,34 +1775,50 @@ func apply_field_buffs_to(fleet: Array, idx_map: Array[int]) -> void:
 
 ## 事件「黑市情报」：**免费**高级刷新，且 5 个槽位至少 1 艘 cost ≥ 3。
 ##
-## ⚠️ 用**事后替换**而不是「重摇到满足为止」——
-##    商店 1 级时 cost ≥ 3 的概率是 0，重摇会变成没有上界的死循环
-##    （交接文档 §7.2 原文）。
+## ⚠️⚠️ 2026-10-10（审查 R05）：**登记为「一次性待应用效果」，不当场刷新**。
+##
+##   旧实现直接 `roll_shop()` + 替换 —— 但事件选完**同一帧**主控就调
+##   `advance()` 推进节点，`advance()` 又会普通 `roll_shop()` 一次 ⇒
+##   刚保底的货架被立刻覆盖，玩家看不到（复现：节点 4 事件生效
+##   [4,2,1,1,1] → 推进后 [1,2,1,2,2]，保底消失，事件已被消耗）。
+##   ⇒ 正确口径：记成待应用效果，等下一节点货架**定型之后**再落地
+##     （见 `advance()` 末尾的 `_apply_advanced_roll_guarantee()`）。
+##   ⛔ 不靠永久改 `shop_locked` 修补 —— 那会改掉玩家原本的锁店意图。
+func free_advanced_roll() -> void:
+	_pending_advanced_roll += 1
+	log_event.emit("黑市情报：已预约高级刷新（下一节点保底 1 艘 cost ≥ 3）", &"economy")
+	changed.emit()
+
+
+## 把「保底 1 艘 cost ≥ 3」落到**当前**货架上（占最左的非打捞槽位）。
+##
+## ⚠️ 用**事后替换**而不是「重摇到满足为止」：商店 1 级时 cost ≥ 3 的概率是 0，
+##    重摇会变成没有上界的死循环（交接文档 §7.2）。
 ## ⚠️ 替换位置固定为**最左**那个非打捞槽位（玩家视线落点，也是断言与截图的确定位置）。
 ## ⚠️ 对挂着的打捞船**豁免**：它是一次事件奖励，玩家并没有主动点「刷新」这个按钮，
-##    「拿了个奖励，却赔掉一艘刚到手的东西」这个观感不成立（交接文档 §7.2 原文）。
-func free_advanced_roll() -> void:
-	roll_shop()
+##    「拿了个奖励，却赔掉一艘刚到手的东西」这个观感不成立。
+## 由 `advance()` 在货架定型后调用。返回是否真的动了货架。
+func _apply_advanced_roll_guarantee() -> bool:
 	var target := -1
 	for i in offers.size():
 		if not salvage_slots.has(i):
 			target = i
 			break
 	if target < 0:
-		return
-	var cur: Dictionary = offers[target]
-	if int(cur.get("cost", 1)) >= 3:
-		return                                    # 已经满足保底，不动它
+		return false
+	var cur = offers[target]
+	var cur_cost := int((cur as Dictionary).get("cost", 1)) if cur is Dictionary else 0
+	if cur_cost >= 3:
+		return false                                  # 已经满足保底，不动它
 	var cand: Array = []
 	for c in range(3, 6):
 		cand.append_array(_pools.get(c, []))
 	if cand.is_empty():
-		push_warning("[事件] 黑市刷新找不到 cost ≥ 3 的船（船表为空？）")
-		return
+		push_warning("[事件] 黑市保底找不到 cost ≥ 3 的船（船表为空？）")
+		return false
 	offers[target] = cand[rng.randi_range(0, cand.size() - 1)]
-	log_event.emit("黑市情报：免费高级刷新（保底 1 艘 cost ≥ 3）", &"economy")
-	offers_changed.emit()
-	changed.emit()
+	log_event.emit("黑市情报：高级刷新落地（保底 1 艘 cost ≥ 3）", &"economy")
+	return true
 
 
 ## 事件带来的「每节点收入」增量
@@ -1622,7 +1849,7 @@ func beacon_max() -> int:
 ##    而事件增益是**全队**的（面板文案写的是「全队」）。
 ##    两个函数都复用 `_apply_synergy` 那套键，所以数值口径（乘法叠加）一致。
 ##
-## 叠加顺序（在 `EveBattleScene._build_own_fleet` 里）：
+## 叠加顺序（在 `EveFleetFactory.build_own` 里）：
 ##      base → star(×1.8^Δ) → 羁绊 → **事件增益**
 ##    事件放在最后：它是玩家用「事件机会」换来的，不该被星级反算进去。
 func apply_events_to(fleet: Array) -> Array[Dictionary]:
@@ -1849,6 +2076,13 @@ func advance() -> void:
 	else:
 		roll_shop()
 	_deliver_repairs()
+	# ★ 2026-10-10（审查 R05）：黑市预约的「保底 cost ≥ 3」必须在货架**定型之后**
+	#   才落地 —— 也就是 `roll_shop()`（本节点重摇）与 `_deliver_repairs()`
+	#   （到账占位）都做完之后。早一步都会被覆盖或顶掉。
+	if _pending_advanced_roll > 0:
+		_pending_advanced_roll = 0
+		if _apply_advanced_roll_guarantee():
+			offers_changed.emit()
 	log_event.emit("节点 %d／%d · %s · %s"
 			% [node_index, EveNodeTable.TOTAL, stage_label(), entry_line()], &"hint")
 

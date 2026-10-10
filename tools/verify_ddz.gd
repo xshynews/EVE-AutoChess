@@ -42,7 +42,9 @@ func _ready() -> void:
 		print("⚠️ 有失败项")
 	# ★ 跑完就退：所有步骤都是**同步**跑完的，⛔ 别靠 `--quit-after` 收尾 ——
 	#   之前挂 30000 帧空转 ⇒ 实测整套 4 秒的活在进程里耗掉 212 秒。
-	get_tree().quit()
+	# ★ 2026-10-10（审查 R07）：**失败必须用非零退出码** —— 否则 CI/批处理
+	#   会把断言失败当成成功（旧代码无条件 quit()）。
+	get_tree().quit(1 if _fail > 0 else 0)
 
 
 ## 跑一步并打印耗时（定位「哪一步把整套自检拖慢了」的第一入口）
@@ -431,7 +433,24 @@ func _t_table() -> void:
 				"★★ 轮到玩家后**你不动它就不推进**（记录保持 %d 条）" % ln_before)
 		_ok(_btn_ids(t).has("hint"), "玩家回合里操作按钮可用")
 
-	# ── ⑩ 收尾：把测试用的牌桌摘掉（它的 `_process` 还会继续跑）──
+	# ── ⑩ 设置窗 ✕（2026-10-10）：牌桌**自己** new 了一扇设置窗（PROFILE_LOUNGE）
+	#    ⇒ 它的 ✕ 必须真的接到「关窗」，不能只建个按钮（红线 9）。
+	var sw: Variant = t.get("_settings")
+	_ok(sw != null, "牌桌有设置窗实例")
+	if sw != null:
+		t.call("_toggle_settings")
+		_ok(bool(sw.get("visible")), "点设置 → 牌桌设置窗打开")
+		var cb: Control = sw.get("_close_btn")
+		_ok(cb != null, "★ 设置窗有 ✕（在折叠按钮右边）")
+		if cb != null:
+			var ev := InputEventMouseButton.new()
+			ev.button_index = MOUSE_BUTTON_LEFT
+			ev.pressed = true
+			ev.position = cb.size * 0.5
+			cb.gui_input.emit(ev)
+		_ok(not bool(sw.get("visible")), "★★ 点 ✕ ⇒ 牌桌设置窗关闭")
+
+	# ── ⑪ 收尾：把测试用的牌桌摘掉（它的 `_process` 还会继续跑）──
 	t.queue_free()
 	print("  牌桌交互检查完成（点击全走 _gui_input 真实通道）")
 

@@ -1,5 +1,8 @@
 extends RefCounted
 class_name EveProgressStore
+## 存档格式版本号工具（⛔ 用 preload 常量，别裸写 class_name —— 无头跑没有类缓存）。
+const SAVE_SCHEMA := preload("res://scripts/core/eve_save_schema.gd")
+
 
 ## 跨局进度存档（`user://progress.cfg`）
 ##
@@ -15,6 +18,10 @@ class_name EveProgressStore
 
 const PATH := "user://progress.cfg"
 const SECTION := "progress"
+
+## ★ 2026-10-10（审查 2#3）：格式版本（详见 `EveSaveSchema` 顶注四条规则）。
+## 1 = 引入版本号机制本身（0 → 1：无实际迁移）。
+const SCHEMA_VERSION := 1
 
 const DEFAULTS := {
 	## 「守卫边境」的开场剧情是否已看过。看过 ⇒ 下次直接进对局，不再拦人。
@@ -32,6 +39,9 @@ static func load_all() -> Dictionary:
 	if err != OK:
 		push_warning("[进度存档] 读取失败（%d），使用默认值" % err)
 		return out
+	# ★ 2026-10-10（审查 2#3）：按版本号决定要不要迁移（0 = 老档，同样能读）。
+	if SAVE_SCHEMA.needs_migration(PATH, SAVE_SCHEMA.version(cfg), SCHEMA_VERSION):
+		_migrate(cfg, SAVE_SCHEMA.version(cfg))
 	for key in DEFAULTS.keys():
 		if not cfg.has_section_key(SECTION, key):
 			continue
@@ -49,9 +59,16 @@ static func save_all(d: Dictionary) -> void:
 	cfg.load(PATH)                                   # 不存在也无所谓，save 会建
 	for key in DEFAULTS.keys():
 		cfg.set_value(SECTION, key, d.get(key, DEFAULTS[key]))
+	SAVE_SCHEMA.stamp(cfg, SCHEMA_VERSION)         # ★ 写盘永远盖版本号
 	var err := cfg.save(PATH)
 	if err != OK:
 		push_warning("[进度存档] 写入失败（%d）" % err)
+
+
+## 旧版本存档 → 当前版本的**就地迁移**（只改 `cfg`，⛔ 不写盘；必须**幂等**）。
+## 0 → 1：仅引入版本号机制，键名与含义都没变 ⇒ 无事可做。
+static func _migrate(_cfg: ConfigFile, _from_v: int) -> void:
+	pass
 
 
 ## 读 → 改一个键 → 全量写回。不动其它键。

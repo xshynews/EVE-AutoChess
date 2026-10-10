@@ -17,10 +17,13 @@ var _root: Control = null
 func _ready() -> void:
 	# 1. SubViewport 装一个"伪屏幕"
 	#
-	# ⚠️ 360×560 是**改后**设置窗的尺寸（320 宽 + 左右各 20 留白）；
-	#    窗高由它自己按内容反推（`_fit_height`），这里给足即可。
+	# ⚠️ 360 宽 = 窗宽 320 + 左右各 20 留白。
+	# ⚠️⚠️ 高度必须**给足**：窗口 `_fit_height()` 有一条 85% 视口的守卫
+	#    （内容超过就**不**设窗高），而地面档案（含分辨率块 + 重置区）实测约 936
+	#    ⇒ 视口至少要 1052 才过得去。这里直接给 1080（= 真实屏幕高）。
+	#    ⛔ 别再用早先的 560 —— 那会让窗被裁掉、而且窗高根本不生效。
 	_vp = SubViewport.new()
-	_vp.size = Vector2i(360, 560)
+	_vp.size = Vector2i(360, 1080)
 	_vp.transparent_bg = false
 	# own_world_2d 是只读、不需要显式设（默认 true 即可让 Control 用独立 2D 空间）
 	_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS

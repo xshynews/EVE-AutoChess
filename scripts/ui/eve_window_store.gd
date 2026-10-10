@@ -1,5 +1,8 @@
 extends RefCounted
 class_name EveWindowStore
+## 存档格式版本号工具（⛔ 用 preload 常量，别裸写 class_name —— 无头跑没有类缓存）。
+const SAVE_SCHEMA := preload("res://scripts/core/eve_save_schema.gd")
+
 
 ## 浮窗**布局**存档（`user://window_layout.cfg`）
 ##
@@ -15,6 +18,11 @@ class_name EveWindowStore
 
 const PATH := "user://window_layout.cfg"
 const SECTION := "windows"
+
+## ★ 2026-10-10（审查 2#3）：格式版本（详见 `EveSaveSchema` 顶注四条规则）。
+## ⚠️ 本档的键是**动态的**（有几扇窗就有几条）⇒ 迁移只可能是"改名/改结构"，
+##    将来真需要时在 `load_window()` 里按版本分支即可。
+const SCHEMA_VERSION := 1
 
 ## 是否写盘。验收里置 false（⛔ 别忘——写盘会污染玩家的真实布局）。
 static var persist := true
@@ -55,6 +63,7 @@ static func save_window(key: String, d: Dictionary) -> void:
 	# ⚠️ 什么都没改就**别写盘** —— 否则一次「重置全部窗口」会把一个
 	#    0 字节的 cfg 落到玩家目录里（无害但很脏，而且下次 load 会失败）。
 	if touched:
+		SAVE_SCHEMA.stamp(cfg, SCHEMA_VERSION)     # ★ 写盘永远盖版本号
 		cfg.save(PATH)
 
 
@@ -65,4 +74,5 @@ static func clear_all() -> void:
 	var cfg := ConfigFile.new()
 	cfg.load(PATH)
 	cfg.erase_section(SECTION)
+	SAVE_SCHEMA.stamp(cfg, SCHEMA_VERSION)
 	cfg.save(PATH)

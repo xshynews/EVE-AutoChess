@@ -38,6 +38,14 @@ class_name EveShipDatabase
 ## ══════════════════════════════════════════════════════════════════
 
 # ── 换算常数 ──────────────────────────────────────────────────────
+## ★ 2026-10-10（审查 2#5）：武器/防御/定位的稳定 id（逻辑只认 id，不认中文）。
+## ⚠️ 用 preload 常量引用（无头跑没有全局类缓存）。
+const CIDS := preload("res://scripts/core/eve_combat_ids.gd")
+
+## ★ 2026-10-10（i18n）：术语取词。舰船名**必须用 EVE 官方译名**
+##（英文 = 官方英文原名，中文 = 官方简中译名）—— 见 `eve_terms.gd` 顶注。
+const TERMS := preload("res://scripts/core/eve_terms.gd")
+
 const CELL_METERS := 6000.0
 const ARMOR_SHARE := 0.65
 const ATTACK_CYCLE_SECONDS := 1.0
@@ -105,10 +113,10 @@ static var WEAPON_PROFILE := {
 
 ## 武器 → 失准距离（米）。导弹必中，没有 falloff（它的「射程」是硬截止）。
 const WEAPON_FALLOFF := {
-	"激光炮": 3000.0,
-	"混合炮": 4000.0,
-	"射弹炮": 6000.0,
-	"导弹": 0.0,
+	CIDS.W_LASER: 3000.0,
+	CIDS.W_HYBRID: 4000.0,
+	CIDS.W_PROJECTILE: 6000.0,
+	CIDS.W_MISSILE: 0.0,
 }
 
 ## 武器 → 追踪速度基准（护卫舰水平，再按吨位衰减）
@@ -134,10 +142,10 @@ const WEAPON_FALLOFF := {
 ##      按"要 50% ⇒ tracking = angular / 0.858" 再取一档，×3.3 倍。
 ##      ⚠️ 这仍是**要调的旋钮**（战斗手感），不是定论。
 const WEAPON_TRACKING := {
-	"激光炮": 0.300,
-	"混合炮": 0.330,
-	"射弹炮": 0.520,
-	"导弹": 999.0,
+	CIDS.W_LASER: 0.300,
+	CIDS.W_HYBRID: 0.330,
+	CIDS.W_PROJECTILE: 0.520,
+	CIDS.W_MISSILE: 999.0,
 }
 
 ## 费用（吨位）→ 体型/机动档位。这些是「渲染与解算尺度」，不是平衡数值。
@@ -200,6 +208,10 @@ static func derive(row: Dictionary) -> Dictionary:
 	var cls := int(EveShip.CLASS_BY_COST.get(cost, EveShip.Class.FRIGATE))
 	var weapon := String(row["weapon"])
 	var defense := String(row["defense"])
+	# ★ 2026-10-10（审查 2#5）：中文原值是**设计侧真值**（保持逐字不改），
+	#   逻辑一律用稳定 ASCII id —— 映射只有 `EveCombatIds` 一处。
+	var weapon_id := CIDS.weapon_id_of(weapon)
+	var defense_id := CIDS.defense_id_of(defense)
 
 	# --- ① 装甲 / 结构 拆分（见文件头规则 ②）---
 	var armor_struct := float(row["armor_struct"])
@@ -208,7 +220,9 @@ static func derive(row: Dictionary) -> Dictionary:
 	var shield := float(row["shield"])
 
 	# --- ② 抗性档位 ---
-	var shield_tank := (defense == "盾抗")
+	# ⚠️ 判据用 **id**（不是在比中文）：拼错字会在 `EveCombatIds.unknown_values`
+	#    那一关被拦下，而不是在这里静默走"甲抗"分支。
+	var shield_tank := (defense_id == CIDS.D_SHIELD)
 	var s_res := SHIELD_TANK_SHIELD_RESISTS if shield_tank else ARMOR_TANK_SHIELD_RESISTS
 	var a_res := SHIELD_TANK_ARMOR_RESISTS if shield_tank else ARMOR_TANK_ARMOR_RESISTS
 
@@ -237,13 +251,18 @@ static func derive(row: Dictionary) -> Dictionary:
 	#    里会显示成「茶隼级 修哪一层 = 护盾」—— 明明是防御型。踩过一次。
 	# ⛔ 层别按派系名硬编码：表里 4 派系 × 2 防御是 13/13 严格对齐，
 	#    但那是**数据的巧合**，真正该信的是 `defense` 这一列本身。
-	var logi_layer := (&"shield" if defense == "盾抗" else &"armor") if is_logi else &""
+	var logi_layer := (&"shield" if defense_id == CIDS.D_SHIELD else &"armor") if is_logi else &""
 	var logi_repair := float(LOGISTICS_REPAIR.get(cost, LOGISTICS_REPAIR[1])) if is_logi else 0.0
 
 	return {
 		# ── 身份 ──
 		"ship_key": StringName(row["id"]),
-		"name": String(row["name"]),
+		# ★ 2026-10-10（i18n）：**显示名走取词**（英文 = EVE 官方原名，中文 = 官方译名）。
+		#   ⚠️ 权威表 `EveShipTable.ROWS` 里那一列**保持中文原值不动** ——
+		#     它是设计侧真值（`verify_data_source` 在逐列对拍）。
+		#     默认 locale 是 zh_CN ⇒ 取词原样返回中文 ⇒ 既有断言/截图全不变。
+		"name": TERMS.ship(StringName(row["id"]), String(row["name"])),
+		"name_cn": String(row["name"]),
 		"en": String(row["id"]).capitalize(),
 		"faction": int(EveShipTable.FACTION_INDEX.get(String(row["faction"]), 0)),
 		"faction_cn": String(row["faction"]),
@@ -256,6 +275,10 @@ static func derive(row: Dictionary) -> Dictionary:
 		"weapon_type": StringName(weapon),
 		"defense_type": StringName(defense),
 		"role": StringName(row["role"]),
+		# ★ 逻辑用的稳定 id（见 `EveCombatIds` 顶注）。⛔ 显示仍走上面那三个中文原值。
+		"weapon_id": weapon_id,
+		"defense_id": defense_id,
+		"role_id": CIDS.role_id_of(String(row["role"])),
 		"is_logistics": bool(row["logistics"]),
 		"attack": float(row["attack"]),
 		"range_cells": range_cells,
@@ -283,8 +306,8 @@ static func derive(row: Dictionary) -> Dictionary:
 		"weapon_cycle": ATTACK_CYCLE_SECONDS,
 		"weapon_profile": WEAPON_PROFILE.get(StringName(weapon), PROFILE_MISSILE),
 		"optimal_range": optimal,
-		"falloff": float(WEAPON_FALLOFF.get(weapon, 0.0)),
-		"tracking": float(WEAPON_TRACKING.get(weapon, 0.1)) / decay,
+		"falloff": float(WEAPON_FALLOFF.get(weapon_id, 0.0)),
+		"tracking": float(WEAPON_TRACKING.get(weapon_id, 0.1)) / decay,
 		"signature_resolution": float(cp["sig_res"]),
 
 		# ── 派生：物理 ──

@@ -72,6 +72,13 @@ const GRIP := 14.0          ## 右下缩放把手边长（11 → 14：11 太小�
 #    class EveWindow）⇒ 连带 HUD / 战斗场景 / verify_run / verify_camera 全挂。
 #    ⇒ **给基类加成员之前，先 grep 一遍所有子类有没有同名的。**
 const LAYOUT_STORE := preload("res://scripts/ui/eve_window_store.gd")
+## ★ 2026-10-10 i18n：HUD 文案取词入口（见 eve_text.gd 顶注）。
+## ⚠️⛔ **这里必须叫 `TEXT` 而不是 `T`** —— 子类 `eve_settings.gd` 自己也声明了
+##    `const T`，成员同名会让**基类**直接编译失败：
+##    `Parse Error: The member "T" already exists in parent class EveWindow`
+##    （实测踩过，连带 HUD / 战斗场景 / 三套 verify 全挂）。
+##    这正是本工程那条红线：「给基类加成员前先 grep 一遍所有子类」。
+const TEXT := preload("res://scripts/core/eve_text.gd")
 ## 拖拽/缩放后至少留在视口内的像素（保证还够得着）
 const MIN_VISIBLE := 60.0
 
@@ -97,6 +104,18 @@ const MIN_VISIBLE := 60.0
 ## ★ 2026-10-07 「像 EVE 一样能收起来」：收起后只剩标题栏（roll-up）。
 ##   ⚠️ 自带收起逻辑的窗（如舰船档案）要设 false，否则两套收起会打架。
 @export var collapsible: bool = true
+
+## 标题栏 ✕ 被按下。是否真的关闭由**持有者**决定（见 `closable`）。
+signal close_requested
+
+## ★ 2026-10-10：标题栏右上角建一枚 ✕（在折叠按钮**右边**）。
+##
+## ⚠️ 默认 false —— 只有「需要玩家显式关掉」的窗（设置窗）才开。其余窗是常驻面板，
+##    给它们一个 ✕ 只会得到「看着能点、点了没反应」的假按钮（红线 9）。
+##
+## ⚠️ 本窗**不负责隐藏自己** —— 按下只发 `close_requested`，由持有它的场景决定
+##    去处（设置窗 → `EveHudRoot.hide_settings()`；三场景可共用同一枚按钮）。
+@export var closable: bool = false
 ## 记住玩家拖到的位置 / 拉成的尺寸 / 收起态（写 `user://window_layout.cfg`）。
 @export var persist_layout: bool = true
 ## 布局存档键。留空 ⇒ 用 `window_title`（各窗标题互不相同，见下面注释）。
@@ -144,6 +163,8 @@ var _user_rect := Rect2()
 var _height_owned := false
 var _collapse_btn: Control = null
 var _collapse_hot := false
+var _close_btn: Control = null
+var _close_hot := false
 var _grip_hot := false
 var _resize_from: Vector2 = Vector2.ZERO
 
@@ -261,6 +282,11 @@ func _build_header(root: VBoxContainer) -> void:
 	# ★ 收起按钮放在标题栏**最右端**（EVE 也在标题栏右侧放窗口控制）
 	if collapsible:
 		_build_collapse_btn(header)
+	# ★✕ 关闭按钮再往右一格 —— 与收起按钮同排、居最右（用户 2026-10-10 要求）。
+	#   顺序不能反：HBoxContainer 按 add_child 先后从左到右排，
+	#   所以「先收起、后关闭」才是「关闭在收起右边」。
+	if closable:
+		_build_close_btn(header)
 
 	root.add_child(_header_panel)
 
@@ -362,7 +388,7 @@ func _build_collapse_btn(header_row: HBoxContainer) -> void:
 	_collapse_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_collapse_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	_collapse_btn.mouse_filter = Control.MOUSE_FILTER_STOP
-	_collapse_btn.tooltip_text = "收起 / 展开（也可以双击标题栏）"
+	_collapse_btn.tooltip_text = TEXT.t(&"WINDOW_COLLAPSE_TIP", "收起 / 展开（也可以双击标题栏）")
 	_collapse_btn.draw.connect(_draw_collapse_btn)
 	_collapse_btn.gui_input.connect(_on_collapse_input)
 	_collapse_btn.mouse_entered.connect(func() -> void:
@@ -381,6 +407,49 @@ func _on_collapse_input(event: InputEvent) -> void:
 			and event.button_index == MOUSE_BUTTON_LEFT:
 		toggle_collapse()
 		accept_event()          # ⛔ 必须消费掉：否则标题栏会同时开始拖窗
+
+
+## 关闭按钮：与收起按钮同款自绘（⛔ 别用文字 Button —— 那个皮肤带边框，
+## 塞进标题栏会得到一个难看的方框，见 `_draw_collapse_btn` 的说明）。
+## 图形就是一个 ✕（红线 3：HUD 图标只许几何字符 / 自绘线条）。
+func _draw_close_btn() -> void:
+	if _close_btn == null:
+		return
+	var c := _close_btn.size * 0.5
+	# 常态偏冷灰（融进标题栏），悬停转暖红 —— 关闭是**破坏性**动作，颜色给出预兆。
+	var col := Color(1.00, 0.70, 0.66, 0.98) if _close_hot \
+			else Color(0.62, 0.71, 0.75, 0.82)
+	var r := 3.6
+	_close_btn.draw_line(c + Vector2(-r, -r), c + Vector2(r, r), col, 1.6)
+	_close_btn.draw_line(c + Vector2(r, -r), c + Vector2(-r, r), col, 1.6)
+
+
+func _build_close_btn(header_row: HBoxContainer) -> void:
+	_close_btn = Control.new()
+	_close_btn.name = "CloseBtn"
+	_close_btn.custom_minimum_size = Vector2(20, 18)
+	_close_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_close_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_close_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	_close_btn.tooltip_text = TEXT.t(&"WINDOW_CLOSE", "关闭")
+	_close_btn.draw.connect(_draw_close_btn)
+	_close_btn.gui_input.connect(_on_close_input)
+	_close_btn.mouse_entered.connect(func() -> void:
+		_close_hot = true
+		if _close_btn != null:
+			_close_btn.queue_redraw())
+	_close_btn.mouse_exited.connect(func() -> void:
+		_close_hot = false
+		if _close_btn != null:
+			_close_btn.queue_redraw())
+	header_row.add_child(_close_btn)
+
+
+func _on_close_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed \
+			and event.button_index == MOUSE_BUTTON_LEFT:
+		close_requested.emit()
+		accept_event()          # ⛔ 同上：别让标题栏同时开始拖窗
 
 
 # ------------------------------------------------------------------ 交互

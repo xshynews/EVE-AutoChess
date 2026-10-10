@@ -1,4 +1,10 @@
 extends RefCounted
+
+## ★ 2026-10-11（i18n）：文案取词（见 `eve_text.gd` 顶注）。
+## ⚠️ 本文件仍是**纯逻辑**（无 UI / 无时间 / 无随机）—— 取词只是把显示名过一遍
+##    `T.t()`，不引入任何状态。⛔ 别在这里读存档 / 读文件。
+const T := preload("res://scripts/core/eve_text.gd")
+
 ## 斗地主 · 规则内核（**纯函数，无 UI / 无全局状态 / 无随机**）。
 ##
 ## ★ 2026-10-06 立项。设计约束（P2P 路线要求的，即使现在只做单机也照办）：
@@ -40,6 +46,14 @@ const MIN_STRAIGHT := 5        ## 顺子最少 5 张
 const MIN_STRAIGHT_PAIR := 3   ## 连对最少 3 对
 const MIN_PLANE := 2           ## 飞机最少 2 组
 
+## 牌型 id —— ⛔ 与 `Type` 枚举**顺序严格对齐**（改枚举必须同步改这里）。
+## 用途只有一个：拼 i18n 的 key（`CARD_TYPE_SINGLE` …），⛔ 别拿中文当 key。
+const TYPE_IDS: Array[String] = [
+	"INVALID", "SINGLE", "PAIR", "TRIPLE", "TRIPLE_ONE", "TRIPLE_TWO",
+	"STRAIGHT", "STRAIGHT_PAIR", "PLANE", "PLANE_ONE", "PLANE_TWO",
+	"FOUR_TWO_SINGLE", "FOUR_TWO_PAIR", "BOMB", "ROCKET",
+]
+
 
 # ══════════════════════════════════════════════════════════════════
 #  牌 id ↔ 点数
@@ -80,7 +94,10 @@ static func label_of(id: int) -> String:
 static func type_name(t: int) -> String:
 	var names := ["非法", "单", "对", "三张", "三带一", "三带二", "顺子", "连对",
 			"飞机", "飞机带单", "飞机带对", "四带二", "四带两对", "炸弹", "王炸"]
-	return names[t] if t >= 0 and t < names.size() else "?"
+	var cn: String = names[t] if t >= 0 and t < names.size() else "?"
+	# ★ i18n：按**枚举 id** 拼 key（⛔ 别拿中文当 key）。中文版逐字不变。
+	var id := TYPE_IDS[t] if t >= 0 and t < TYPE_IDS.size() else "UNKNOWN"
+	return T.t("CARD_TYPE_%s" % id, cn)
 
 
 ## 一副完整的 54 张（顺序固定；洗牌由 `ddz_game` 用 seed 负责）

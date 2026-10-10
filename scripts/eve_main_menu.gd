@@ -73,6 +73,10 @@ const PROGRESS := preload("res://scripts/core/eve_progress_store.gd")
 const AUDIO_SCRIPT := preload("res://scripts/core/eve_audio.gd")
 ## 设置存档（读音量初值 —— 让玩家在设置窗里调的音乐音量**在主界面照样生效**）
 const STORE := preload("res://scripts/core/eve_settings_store.gd")
+## ★ 2026-10-10 i18n：文案取词入口（见 eve_text.gd 顶注）。
+const T := preload("res://scripts/core/eve_text.gd")
+## 对局存档（`user://run.cfg`）—— 「继续上局」入口靠它判断有没有档。
+const RUN_STORE := preload("res://scripts/core/eve_run_store.gd")
 ## ★ 2026-10-10 主界面「设置」窗 —— 与战场 / 牌桌**共用同一个类**，只是换档案。
 ##   用 `PROFILE_MENU`（音频 + 分辨率；⛔ 无字号、无返回主界面，理由见该类顶注）。
 const SETTINGS_SCRIPT := preload("res://scripts/ui/panels/eve_settings.gd")
@@ -231,9 +235,13 @@ var _credits_panel: PanelContainer = null
 var _settings: Variant = null
 ## 右上角「设置」按钮（开 / 关同一扇窗）。
 var _settings_btn: Button = null
+## 「继续上局」（有对局存档时才 `visible`；见 `_build_sys`）。
+var _continue_btn: Button = null
 
 
 func _ready() -> void:
+	# ★ 2026-10-10 i18n：**必须早于任何 UI 构建** —— 文案是建的时候取词的。
+	T.apply_saved()
 	# ★★ 第一件事：把**旧项目名**下的存档搬过来（2026-10-07 改显示名的一次性收尾）。
 	#    ⚠️ 必须排在所有 `user://` 读写**之前** —— 下面 `RESOLUTION.apply_from_settings()`
 	#       就要读 `settings.cfg`，晚了会读到"空设置"再用默认值覆盖回去，
@@ -351,6 +359,8 @@ func _build_settings() -> void:
 	_settings.resolution_changed.connect(func(_i: int):
 		_place_settings()
 		_layout_content())
+	# ★ 2026-10-10：标题栏右上角的 ✕ ⇒ 关掉本窗（与 `_toggle_settings()` 的隐藏口径一致）。
+	_settings.closed.connect(func() -> void: _settings.visible = false)
 	_place_settings()
 
 
@@ -391,7 +401,8 @@ func _toggle_settings() -> void:
 ## 模式表 = 任务关卡（难度来自表）+ 两个无分级的模式
 func _build_mode_table() -> Array:
 	var first: Dictionary = TIERS.ROWS[0]
-	var meta := "%d 回合 · 共 %d 个难度" % [int(first["rounds"]), TIERS.ROWS.size()]
+	var meta := T.t("MODE_CAMPAIGN_META", "%d 回合 · 共 %d 个难度") \
+			% [int(first["rounds"]), TIERS.ROWS.size()]
 	var out: Array = []
 	out.append({"id": "campaign", "name": "任务关卡", "meta": meta, "locked": false,
 			"cards": TIERS.ROWS})
@@ -408,6 +419,86 @@ func _build_mode_table() -> Array:
 
 func _cards_of(idx: int) -> Array:
 	return _modes[idx]["cards"]
+
+
+# ------------------------------------------------------------ 文案取词（i18n）
+#
+# ★★ 设计口径：**数据表里仍是中文源文** —— `EveCampaignTiers.ROWS` 与
+#    `EXTRA_MODES` 都保持 `const`（⛔ 别为了塞 `T.t()` 把它们改成函数：
+#    const 初始化器里调不了函数，改成函数又会牵动 `verify_menu` 的读法）。
+#    中文在这里既是**兜底**也是**活文档**；**渲染时**才过一遍 `T.t()`。
+#    ⇒ 加语言不用改数据表，改数据表也不用碰 i18n。
+# ⚠️ 默认 locale = zh_CN ⇒ 取词原样返回中文 ⇒ 既有行为/断言/截图逐字不变。
+
+## ★ 下面四个都是 `static` —— 不碰任何实例状态，**自检可以静态调用**
+##   （`verify_i18n` 的 ⑤ 就是静态跑的，⛔ 别改成实例方法）。
+
+## 模式名 / 副标题（按模式 **id** 取 key：`MODE_CAMPAIGN_NAME` …）。
+## ⚠️ `field` 一律 `to_upper()` —— 调用点写的是小写 `"name"`，不转就拼出
+##    `MODE_CAMPAIGN_name` 这种对不上 CSV 的 key（英文**静默回落中文**，10-10 踩到）。
+static func _mode_key(m: Dictionary, field: String) -> String:
+	return "MODE_%s_%s" % [String(m["id"]).to_upper(), field.to_upper()]
+
+
+static func _mode_txt(m: Dictionary, field: String) -> String:
+	return T.t(_mode_key(m, field), String(m[field]))
+
+
+## 卡片的 key 前缀：任务关卡用 `id`（`guard_border`…），娱乐总汇的卡用 `code`
+## （`DOUDIZHU`…）—— 两边都取 ASCII 稳定标识，⛔ 别用中文当 key。
+static func _card_key(card: Dictionary) -> String:
+	var id := String(card.get("id", ""))
+	if id == "":
+		id = String(card.get("code", ""))
+	return id.to_upper()
+
+
+static func _card_txt(card: Dictionary, field: String) -> String:
+	return T.t("CARD_%s_%s" % [_card_key(card), field.to_upper()],
+			String(card.get(field, "")))
+
+
+## `stats` 行的**键与值**取词表（中文源文 → key）。
+## ⛔ 只用于显示；⛔ 别拿这些中文去分支（工程红线：逻辑只认 id）。
+## ⚠️ 表里的中文必须与 CSV 的 `zh_CN` 列**逐字一致**（`verify_i18n` 会对拍）。
+## ⚠️ 没登记进这张表的取值 ⇒ 原样返回中文（英文版会露中文，但不会崩、不会空）。
+const STAT_KEYS: Dictionary = {
+	"玩法": &"CARD_K_PLAY",
+	"对手": &"CARD_K_OPP",
+	"状态": &"CARD_K_STATUS",
+	"终点": &"CARD_K_END",
+	"纪录": &"CARD_K_RECORD",
+	"前置": &"CARD_K_REQ",
+	"回合数": &"CARD_K_ROUNDS",
+	"解锁": &"CARD_K_UNLOCK",
+	# ── 值 ──────────────────────────────────────────────────────
+	"电脑 · 3 人": &"CARD_V_CPU3",
+	"电脑舰队 · 4 派系": &"CARD_V_FLEET4",
+	"电脑舰队 · 成建制": &"CARD_V_FLEET_FORMAL",
+	"电脑舰队 · 无限波次": &"CARD_V_FLEET_WAVES",
+	"其他玩家 · 8 人": &"CARD_V_PLAYERS8",
+	"待定": &"CARD_V_TBD",
+	"可进入": &"CARD_V_OPEN",
+	"开发中": &"CARD_V_WIP",
+	"尚未开放": &"CARD_V_CLOSED",
+	"默认开放": &"CARD_V_UNLOCK_DEFAULT",
+	"无 · 直到全灭": &"CARD_V_NO_END",
+	"最后存活者获胜": &"CARD_V_LAST_ALIVE",
+	"需要联网与服务器": &"CARD_V_NEED_NET",
+	"斗地主": &"CARD_V_PLAY_DDZ",
+	"四川麻将": &"CARD_V_PLAY_SICHUAN",
+	"立直麻将": &"CARD_V_PLAY_RIICHI",
+	"升级": &"CARD_V_PLAY_SHENGJI",
+	"15 回合": &"CARD_V_ROUNDS15",
+	"25 回合": &"CARD_V_ROUNDS25",
+	"通关第 1 难度": &"CARD_V_UNLOCK_T1",
+	"通关第 2 难度": &"CARD_V_UNLOCK_T2",
+}
+
+
+static func _stat_txt(s: String) -> String:
+	var k := String(STAT_KEYS.get(s, ""))
+	return T.t(k, s) if k != "" else s
 
 
 # ------------------------------------------------------------------ 构建
@@ -433,7 +524,7 @@ func _build_brand() -> void:
 	box.position = BRAND_POS
 	box.add_theme_constant_override("separation", 8)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var h := _label("EVE 自走棋", 26, C_TEXT_HI)
+	var h := _label(T.t("MENU_BRAND", "EVE 自走棋"), 26, C_TEXT_HI)
 	h.add_theme_constant_override("letter_spacing", 0)
 	var s := _label("NEW EDEN AUTO CHESS", 9, Color(0.69, 0.80, 0.84, 0.80))
 	box.add_child(h)
@@ -447,9 +538,11 @@ func _build_sys() -> void:
 	box.alignment = BoxContainer.ALIGNMENT_END
 	box.add_theme_constant_override("separation", 10)
 	box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	# ⚠️ 宽度要够放三个按钮（设置 / 回看片头 / 退出游戏，各 84 + 两道 18 间隔
-	#    = 288）⇒ 留 300。原来 220 只够两个，加「设置」后第三个会被挤出去。
-	box.offset_left = -(SYS_MARGIN_R + 300.0)
+	# ⚠️ 宽度要够放**四**个按钮（继续上局 / 设置 / 回看片头 / 退出游戏，
+	#    各 84 + 三道 18 间隔 = 390）⇒ 留 400。原来 220 只够两个。
+	#    「继续上局」无档时 `visible=false`（HBox 会把它从布局里摘掉），
+	#    所以三个按钮时也不会留空。
+	box.offset_left = -(SYS_MARGIN_R + 400.0)
 	box.offset_right = -SYS_MARGIN_R
 	box.offset_top = SYS_TOP
 	box.offset_bottom = SYS_TOP + 70.0
@@ -457,6 +550,22 @@ func _build_sys() -> void:
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_END
 	row.add_theme_constant_override("separation", 18)
+	# ★ 2026-10-10（审查 2#2）：「继续上局」—— 有对局存档时才可见。
+	#
+	#   ⚠️ **始终建出来**、只切 `visible`：① 无档时 HBox 自动把它摘出布局，
+	#     不会留空；② 节点结构恒定 ⇒ 任何"数按钮"的验收不受存档影响。
+	#   ⛔ 不做成"没档时也显示但点了没反应"（红线 9）。
+	var cont_btn := Button.new()
+	cont_btn.name = "ContinueRunBtn"
+	cont_btn.text = T.t("MENU_CONTINUE", "继续上局")
+	BTN_THEME.apply(cont_btn, "hud_main")
+	FONT.fs(cont_btn, 12)
+	cont_btn.custom_minimum_size = Vector2(84, 26)
+	cont_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+	cont_btn.visible = RUN_STORE.has_run()
+	cont_btn.pressed.connect(_on_continue_run)
+	row.add_child(cont_btn)
+	_continue_btn = cont_btn
 	# ★ 2026-10-10 补上「设置」（用户要求：主界面右上角要有设置，主要设置都放进去）。
 	#   此前缺它的唯一理由是「菜单没有音频宿主 ⇒ 音量滑杆是死旋钮」（红线 9）；
 	#   `_build_audio()` 之后菜单**已经有** `_audio` 宿主了 ⇒ 那个理由不再成立。
@@ -464,7 +573,7 @@ func _build_sys() -> void:
 	#      无「返回主界面」（我们就在主界面）。
 	var set_btn := Button.new()
 	set_btn.name = "SettingsBtn"
-	set_btn.text = "设置"
+	set_btn.text = T.t("MENU_SETTINGS", "设置")
 	BTN_THEME.apply(set_btn, "plain")
 	FONT.fs(set_btn, 12)
 	set_btn.custom_minimum_size = Vector2(84, 26)
@@ -477,7 +586,7 @@ func _build_sys() -> void:
 	# 所以必须留一个显式的回看入口 —— **跳过不可以是不可逆的**。
 	var replay_btn := Button.new()
 	replay_btn.name = "ReplayIntroBtn"
-	replay_btn.text = "回看片头"
+	replay_btn.text = T.t("MENU_REPLAY_INTRO", "回看片头")
 	BTN_THEME.apply(replay_btn, "plain")
 	FONT.fs(replay_btn, 12)
 	replay_btn.custom_minimum_size = Vector2(84, 26)
@@ -487,7 +596,7 @@ func _build_sys() -> void:
 
 	var quit_btn := Button.new()
 	quit_btn.name = "QuitBtn"
-	quit_btn.text = "退出游戏"
+	quit_btn.text = T.t("MENU_QUIT", "退出游戏")
 	BTN_THEME.apply(quit_btn, "plain")
 	FONT.fs(quit_btn, 12)
 	quit_btn.custom_minimum_size = Vector2(84, 26)
@@ -515,7 +624,7 @@ func _build_version_tag() -> void:
 	var ver := str(ProjectSettings.get_setting("application/config/version", "0.0.0"))
 	# ⚠️ **不加暗底**（用户 2026-10-10 明确要求）⇒ 必须用**深色字**：底图右下角是
 	#    亮星云（实测 RGB≈160,180,192），浅色字根本读不出来；深色字对比度 ≈ 6:1。
-	var tag := _label("当前版本 V%s" % ver, 11, Color(0.12, 0.16, 0.19, 0.92))
+	var tag := _label(T.t("MENU_VERSION", "当前版本 V%s") % ver, 11, Color(0.12, 0.16, 0.19, 0.92))
 	tag.name = "VersionTag"
 	tag.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
 	tag.offset_left = -170.0
@@ -564,13 +673,16 @@ func _build_credits_panel() -> void:
 
 	# 正文可用宽度 = 面板宽 - 两侧留白（再减 2 给边框，与 desc 同口径）
 	var inner := CREDITS_W - 68.0 - 2.0
-	col.add_child(_label("版权声明", 20, C_TEXT_HI))
+	col.add_child(_label(T.t("MODE_CREDITS_NAME", "版权声明"), 20, C_TEXT_HI))
 	col.add_child(_label("COPYRIGHT & CREDITS", 9, Color(0.55, 0.78, 0.82, 0.72)))
 	col.add_child(_vspace(16))
 
 	# 每条 = 小标题 + 若干正文行；正文自动折行。
+	# ⚠️ `k` = i18n key 的**段名**（`CREDITS_<k>` / `CREDITS_<k>_<行号>`），
+	#    中文仍是源文 ⇒ zh_CN 下逐字不变、英文走 CSV。
 	var sections := [
 		{
+			"k": "GAME",
 			"h": "游戏本体 · GAME",
 			"b": [
 				"EVE 自走棋（EVE-AutoChess）的游戏架构与全部脚本由 星视寰宇 创作，以 GNU GPL v3 开源。",
@@ -579,6 +691,7 @@ func _build_credits_panel() -> void:
 			],
 		},
 		{
+			"k": "ART",
 			"h": "EVE 题材与美术素材 · EVE IP & ART",
 			"b": [
 				"EVE 相关的 IP 与素材（舰船模型、图标、贴图等）著作权归 Fenris Creations 所有"
@@ -588,6 +701,7 @@ func _build_credits_panel() -> void:
 			],
 		},
 		{
+			"k": "MUSIC",
 			"h": "背景音乐 · MUSIC",
 			"b": [
 				"四首 BGM 原曲作者：乌鸦Producer。",
@@ -595,6 +709,7 @@ func _build_credits_panel() -> void:
 			],
 		},
 		{
+			"k": "LICENSE",
 			"h": "开源许可 · LICENSE",
 			"b": [
 				"代码：GNU GPL v3（Copyright © 2026 xshynews）。",
@@ -603,10 +718,13 @@ func _build_credits_panel() -> void:
 		},
 	]
 	for sec in sections:
-		col.add_child(_label(String(sec["h"]), 13, C_ACCENT))
+		var sec_k := String(sec["k"])
+		col.add_child(_label(T.t("CREDITS_H_%s" % sec_k, String(sec["h"])), 13, C_ACCENT))
 		col.add_child(_vspace(4))
-		for line in sec["b"]:
-			var l := _label(String(line), 12, Color(0.81, 0.89, 0.91, 0.90))
+		var bl: Array = sec["b"]
+		for i in bl.size():
+			var line := T.t("CREDITS_%s_%d" % [sec_k, i + 1], String(bl[i]))
+			var l := _label(line, 12, Color(0.81, 0.89, 0.91, 0.90))
 			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			l.custom_minimum_size = Vector2(inner, 0)
 			col.add_child(l)
@@ -616,7 +734,7 @@ func _build_credits_panel() -> void:
 
 
 func _build_modes() -> void:
-	var cap := _label("游戏模式　MODE", 9, Color(0.73, 0.83, 0.87, 1.0))
+	var cap := _label(T.t("MENU_MODES_CAP", "游戏模式　MODE"), 9, Color(0.73, 0.83, 0.87, 1.0))
 	cap.position = MODES_POS - Vector2(0, 32)
 	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_content.add_child(cap)
@@ -655,7 +773,7 @@ func _make_mode_row(m: Dictionary) -> Button:
 	b.text = ""
 	b.clip_contents = true
 	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	b.tooltip_text = String(m["name"])
+	b.tooltip_text = _mode_txt(m, "name")
 
 	# 选中态左侧亮条。⚠️ Button 不是 Container，子节点不会被 fit ⇒ 锚点可用。
 	var bar := ColorRect.new()
@@ -674,8 +792,8 @@ func _make_mode_row(m: Dictionary) -> Button:
 	box.offset_bottom = -12.0
 	box.add_theme_constant_override("separation", 5)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var nm := _label(String(m["name"]), 19, C_TEXT)
-	var mt := _label(String(m["meta"]), 11, C_DIM)
+	var nm := _label(_mode_txt(m, "name"), 19, C_TEXT)
+	var mt := _label(_mode_txt(m, "meta"), 11, C_DIM)
 	box.add_child(nm)
 	box.add_child(mt)
 	b.add_child(box)
@@ -733,16 +851,16 @@ func _make_strip(card: Dictionary, idx: int) -> void:
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	mn.add_child(col)
 
-	var nm := _label(String(card["name"]), 23, C_TEXT_HI if open else Color(0.91, 0.96, 0.97, 0.72))
+	var nm := _label(_card_txt(card, "name"), 23, C_TEXT_HI if open else Color(0.91, 0.96, 0.97, 0.72))
 	col.add_child(nm)
 	col.add_child(_vspace(10))
-	col.add_child(_label(String(card["code"]), 9,
+	col.add_child(_label(_card_txt(card, "code"), 9,
 			Color(0.55, 0.78, 0.82, 0.55 if open else 0.38)))
 	col.add_child(_vspace(18))
 
 	# ⚠️ autowrap 的 Label **必须给死宽**：宽度为 0 时它会按"一个字一行"折行，
 	#    量出的最小高度大得离谱（设置窗踩过，见 MEMORY 第 1 章）。
-	var desc := _label(String(card["desc"]), 13,
+	var desc := _label(_card_txt(card, "desc"), 13,
 			Color(0.81, 0.89, 0.91, 0.88) if open else Color(0.71, 0.79, 0.81, 0.62))
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	desc.custom_minimum_size = Vector2(_card_w - 2.0 - 44.0, 0)
@@ -769,7 +887,10 @@ func _make_strip(card: Dictionary, idx: int) -> void:
 	b.name = "Start"
 	# ⚠️ 按钮文案由 open **推导**，不放进难度表 ——
 	#    "按钮写什么"是 UI 决策，数据表只描述"这一档开没开"。
-	b.text = ("▶　开始" + String(card["name"])) if open else "待开发"
+	# ⚠️ 中英语序不同（中「▶　开始X」/ 英「▶ Start X」）⇒ 整句做成带 `%s` 的一条，
+	#    ⛔ 别把「开始」和名字拼起来 —— 拼出来的英文是 "StartDou Dizhu"。
+	b.text = (T.t("MENU_START", "▶　开始%s") % _card_txt(card, "name")) \
+			if open else T.t("CARD_TODO", "待开发")
 	b.custom_minimum_size = Vector2(0, 44)
 	BTN_THEME.apply(b, "hud_main" if open else "hud")
 	b.disabled = not open
@@ -811,7 +932,7 @@ func _make_kv(stats: Array, open: bool) -> VBoxContainer:
 		row.custom_minimum_size = Vector2(0, 24)
 		row.add_theme_constant_override("separation", 6)
 		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var k := _label(String(s[0]), 11, C_DIM)
+		var k := _label(_stat_txt(String(s[0])), 11, C_DIM)
 		k.custom_minimum_size = Vector2(66, 0)
 		row.add_child(k)
 		var tint := String(s[2]) if s.size() > 2 else ""
@@ -820,7 +941,7 @@ func _make_kv(stats: Array, open: bool) -> VBoxContainer:
 			vcol = C_GOLD
 		elif not open:
 			vcol = Color(0.63, 0.71, 0.73, 0.70)
-		var v := _label(String(s[1]), 11, vcol)
+		var v := _label(_stat_txt(String(s[1])), 11, vcol)
 		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		v.clip_text = true
 		row.add_child(v)
@@ -1014,14 +1135,30 @@ func _on_start_pressed() -> void:
 		# ⚠️ 不能静默 return：玩家点了「开始」必须知道为什么没动静（红线 9）。
 		if String(_modes[_mode_idx]["id"]) == CARD_ROOM_MODE_ID:
 			if String(cards[sel]["code"]) == "DOUDIZHU":
-				_show_toast("斗地主制作中 —— 规则内核与人机对战开发中，开放后这里直接进牌局")
+				_show_toast(T.t("MENU_TOAST_DDZ",
+						"斗地主制作中 —— 规则内核与人机对战开发中，开放后这里直接进牌局"))
 			else:
-				_show_toast("「%s」还在开发中" % String(cards[sel]["name"]))
+				_show_toast(T.t("MENU_TOAST_MODE_WIP", "「%s」还在开发中")
+						% _card_txt(cards[sel], "name"))
 		return
 	print("[主界面] 开始 %s / %s → %s%s"
 			% [_modes[_mode_idx]["name"], cards[sel]["name"], target,
 			   "（首次 ⇒ 先播开场）" if target == INTRO_SCENE else "（已看过开场）"])
+	# ★ 2026-10-10（审查 2#2）：只有**真实会话**才允许写对局存档
+	#   （40 多个 probe/自检会直接加载 battle_scene，不设闸就会覆盖玩家的一局）。
+	RUN_STORE.session_active = true
 	get_tree().change_scene_to_file(target)
+
+
+## 「继续上局」：直接恢复上一局的存档（⛔ 不经过开场剧情）。
+func _on_continue_run() -> void:
+	if not RUN_STORE.has_run():
+		_show_toast(T.t("MENU_TOAST_NO_RUN", "没有可继续的对局"))
+		return
+	print("[主界面] 继续上一局 → %s" % BATTLE_SCENE)
+	RUN_STORE.session_active = true
+	RUN_STORE.resume_requested = true
+	get_tree().change_scene_to_file(BATTLE_SCENE)
 
 
 ## 菜单顶右「回看片头」：不看进度，直接进开场；**不重置** intro_seen
