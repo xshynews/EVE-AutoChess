@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dx1vs6ctxc3wy"
-path="res://.godot/imported/cormorant_cde1_t1_d.png-e89bf7089ea5872031c22fc1049f8ab0.ctex"
+path.s3tc="res://.godot/imported/cormorant_cde1_t1_d.png-e89bf7089ea5872031c22fc1049f8ab0.s3tc.ctex"
+path.etc2="res://.godot/imported/cormorant_cde1_t1_d.png-e89bf7089ea5872031c22fc1049f8ab0.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "4c33fb7ac7041e1db7766b4fe3936468"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/ships3d/cormorant_cde1_t1_d.png"
-dest_files=["res://.godot/imported/cormorant_cde1_t1_d.png-e89bf7089ea5872031c22fc1049f8ab0.ctex"]
+dest_files=["res://.godot/imported/cormorant_cde1_t1_d.png-e89bf7089ea5872031c22fc1049f8ab0.s3tc.ctex", "res://.godot/imported/cormorant_cde1_t1_d.png-e89bf7089ea5872031c22fc1049f8ab0.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

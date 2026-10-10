@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bqeok101vm4fj"
-path="res://.godot/imported/condor_cf2_t1_d.png-4e1429eb0cf39d8c673c029d36023263.ctex"
+path.s3tc="res://.godot/imported/condor_cf2_t1_d.png-4e1429eb0cf39d8c673c029d36023263.s3tc.ctex"
+path.etc2="res://.godot/imported/condor_cf2_t1_d.png-4e1429eb0cf39d8c673c029d36023263.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "a739f502a1c506f81165638da053175c"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/ships3d/condor_cf2_t1_d.png"
-dest_files=["res://.godot/imported/condor_cf2_t1_d.png-4e1429eb0cf39d8c673c029d36023263.ctex"]
+dest_files=["res://.godot/imported/condor_cf2_t1_d.png-4e1429eb0cf39d8c673c029d36023263.s3tc.ctex", "res://.godot/imported/condor_cf2_t1_d.png-4e1429eb0cf39d8c673c029d36023263.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

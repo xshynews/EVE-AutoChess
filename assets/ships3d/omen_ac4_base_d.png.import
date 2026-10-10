@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dfp8pnpwxa5jo"
-path="res://.godot/imported/omen_ac4_base_d.png-03f1593c0e782f0ffbf9101f9c878448.ctex"
+path.s3tc="res://.godot/imported/omen_ac4_base_d.png-03f1593c0e782f0ffbf9101f9c878448.s3tc.ctex"
+path.etc2="res://.godot/imported/omen_ac4_base_d.png-03f1593c0e782f0ffbf9101f9c878448.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "8b8d23c3e60ffc9ce66eef6dc9d742a2"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/ships3d/omen_ac4_base_d.png"
-dest_files=["res://.godot/imported/omen_ac4_base_d.png-03f1593c0e782f0ffbf9101f9c878448.ctex"]
+dest_files=["res://.godot/imported/omen_ac4_base_d.png-03f1593c0e782f0ffbf9101f9c878448.s3tc.ctex", "res://.godot/imported/omen_ac4_base_d.png-03f1593c0e782f0ffbf9101f9c878448.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

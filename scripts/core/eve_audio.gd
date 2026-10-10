@@ -242,32 +242,71 @@ func _build_banks() -> void:
 ##
 ## 命名约定：`<逻辑名>_<序号>.ogg` —— 例如 `fire_01.ogg` / `hit_03.ogg`。
 ## 逻辑名取第一个下划线之前的部分，序号只用来区分变体。
+##
+## ⚠️ 判据**不能**只看 `fn.get_extension() == "ogg"`：
+##    编辑器里目录内容就是磁盘上的 `menu_01.ogg`，但**导出包**（PCK）里
+##    同一个音源会同时出现 `menu_01.ogg` 与 `menu_01.ogg.import` 两条记录，
+##    且不同引擎版本对 `.remap` 的暴露方式不一样（有的把 `menu_01.ogg.remap`
+##    原样列出来）。判死一种写法 → 导出后 BGM 全静音**且不报错**。
+##    所以：先剥掉 `.remap` 再按扩展名认。
 func _scan_dir(dir_path: String) -> Dictionary:
 	var out: Dictionary = {}
-	var d := DirAccess.open(dir_path)
-	if d == null:
+	var names := _list_files(dir_path)
+	for fn in names:
+		var real := fn.trim_suffix(".remap")
+		if real.get_extension().to_lower() != "ogg":
+			continue
+		var base := real.get_basename()
+		# 逻辑名 = 去掉末尾的 _NN 变体号
+		var logical := base
+		var us := base.rfind("_")
+		if us > 0:
+			var tail := base.substr(us + 1)
+			if tail.is_valid_int():
+				logical = base.substr(0, us)
+		var stream := _load_stream(dir_path.path_join(real))
+		if stream != null:
+			if not out.has(logical):
+				out[logical] = []
+			out[logical].append(stream)
+	# 目录里明明有文件，却一个音源都没认出来 —— 只可能是导出包的命名变了。
+	# ⚠️ 这条告警是「BGM 静默静音」的探针：正常包 / 编辑器里不会出现。
+	if out.is_empty() and not names.is_empty() and not _missing_reported.has(dir_path):
 		_missing_reported[dir_path] = true
-		return out
-	d.list_dir_begin()
-	var fn := d.get_next()
-	while fn != "":
-		if not d.current_is_dir() and fn.get_extension().to_lower() == "ogg":
-			var base := fn.get_basename()
-			# 逻辑名 = 去掉末尾的 _NN 变体号
-			var logical := base
-			var us := base.rfind("_")
-			if us > 0:
-				var tail := base.substr(us + 1)
-				if tail.is_valid_int():
-					logical = base.substr(0, us)
-			var stream := _load_stream(dir_path + fn)
-			if stream != null:
-				if not out.has(logical):
-					out[logical] = []
-				out[logical].append(stream)
-		fn = d.get_next()
-	d.list_dir_end()
+		var probe := "(无 .ogg 候选)"
+		for fn in names:
+			var real := fn.trim_suffix(".remap")
+			if real.get_extension().to_lower() == "ogg":
+				var full := dir_path.path_join(real)
+				probe = "%s exists=%s" % [full, ResourceLoader.exists(full)]
+				break
+		push_warning("[EveAudio] %s 未识别到音源；目录内容：%s；探针：%s"
+				% [dir_path, ", ".join(PackedStringArray(names)), probe])
 	return out
+
+
+## 列出一个目录下的**文件**名（不含子目录）。
+##
+## ⚠️ 带不带尾斜杠都试一遍：编辑器里 `res://.../music/` 两种写法都行，
+##    但导出包里 `DirAccess.open()` 对尾斜杠的处理与磁盘不一致，
+##    会直接返回 null —— 于是「明明有音源却扫不到，且不报错」。
+func _list_files(dir_path: String) -> Array[String]:
+	var out: Array[String] = []
+	for p in [dir_path, dir_path.trim_suffix("/")]:
+		var d := DirAccess.open(p)
+		if d == null:
+			continue
+		d.list_dir_begin()
+		var fn := d.get_next()
+		while fn != "":
+			if not d.current_is_dir() and not fn.begins_with("."):
+				out.append(fn)
+			fn = d.get_next()
+		d.list_dir_end()
+		if not out.is_empty():
+			break
+	return out
+
 
 
 func _load_stream(path: String) -> AudioStream:

@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cgwyoc5u7kiwe"
-path="res://.godot/imported/thorax_gen_tech_01_s.jpg-ae0fdd4b0bb36285a86b5c3b9ad5b44b.ctex"
+path.s3tc="res://.godot/imported/thorax_gen_tech_01_s.jpg-ae0fdd4b0bb36285a86b5c3b9ad5b44b.s3tc.ctex"
+path.etc2="res://.godot/imported/thorax_gen_tech_01_s.jpg-ae0fdd4b0bb36285a86b5c3b9ad5b44b.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "eb4214247d5e70fa09b3f5b9346cfe82"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/ships3d/thorax_gen_tech_01_s.jpg"
-dest_files=["res://.godot/imported/thorax_gen_tech_01_s.jpg-ae0fdd4b0bb36285a86b5c3b9ad5b44b.ctex"]
+dest_files=["res://.godot/imported/thorax_gen_tech_01_s.jpg-ae0fdd4b0bb36285a86b5c3b9ad5b44b.s3tc.ctex", "res://.godot/imported/thorax_gen_tech_01_s.jpg-ae0fdd4b0bb36285a86b5c3b9ad5b44b.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

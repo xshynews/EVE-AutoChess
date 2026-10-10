@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dxyfp283ipd5n"
-path="res://.godot/imported/talwar_mde2_t1_d.png-ab8fac027b56e498f8a170558ad1d25a.ctex"
+path.s3tc="res://.godot/imported/talwar_mde2_t1_d.png-ab8fac027b56e498f8a170558ad1d25a.s3tc.ctex"
+path.etc2="res://.godot/imported/talwar_mde2_t1_d.png-ab8fac027b56e498f8a170558ad1d25a.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "50794a06b12aa5bd811e4f509fab219a"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/ships3d/talwar_mde2_t1_d.png"
-dest_files=["res://.godot/imported/talwar_mde2_t1_d.png-ab8fac027b56e498f8a170558ad1d25a.ctex"]
+dest_files=["res://.godot/imported/talwar_mde2_t1_d.png-ab8fac027b56e498f8a170558ad1d25a.s3tc.ctex", "res://.godot/imported/talwar_mde2_t1_d.png-ab8fac027b56e498f8a170558ad1d25a.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

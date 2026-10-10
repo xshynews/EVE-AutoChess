@@ -19,9 +19,11 @@ const FONT := preload("res://scripts/ui/eve_font.gd")
 ## ##      绘制里另写一套坐标 = 「看着能点、点了没反应」（工程红线 9，踩过）。
 ## ##   ② 被拒的操作**必须给理由**（`_toast`），⛔ 不许静默 return。
 ## ##      「点不动」和「点了告诉你为什么不行」对玩家是两件事。
-## ##   ③ 牌面**全部代码画**（`_draw_*`），⛔ 不用贴图：零包体增量、
-## ##      风格与工程一致。花色也 ⛔ 不用 ♠♥♦♣ 字符 —— 某些字体会把它们
-## ##      渲染成彩色 emoji（红线 3），这里画几何形状。
+## ##   ③ 牌面**默认全代码画**（`_draw_*`）：零包体增量、风格与工程一致。
+## ##      ★ 2026-10-07 起开一个**按牌 id 的贴图白名单**（`CARD_FACES`）：
+## ##      AI 生成的整张牌面（舰船立绘 + 派系徽记 + 角标）代码画不出来，
+## ##      命中白名单的牌整张画贴图。花色仍 ⛔ 不用 ♠♥♦♣ 字符 —— 某些字体会把它们
+## ##      渲染成彩色 emoji（红线 3），代码画的牌花色一律几何形状。
 
 const R := preload("res://scripts/card/ddz/ddz_rules.gd")
 const G := preload("res://scripts/card/ddz/ddz_game.gd")
@@ -42,6 +44,69 @@ const SETTINGS_SCRIPT := preload("res://scripts/ui/panels/eve_settings.gd")
 const AUDIO_SCRIPT := preload("res://scripts/core/eve_audio.gd")
 ## 设置存档（读音量 / 字号 / 分辨率的初值）
 const STORE := preload("res://scripts/core/eve_settings_store.gd")
+
+## ★ 牌面贴图白名单（2026-10-07 起；2026-10-08 全量 54 张）。键 = **牌 id**
+## （唯一真相源；id 除以 4 的余数：0=黑桃 1=红桃 2=方块 3=梅花；rank=3+id/4
+## ⇒ id 0~51 普通牌、52=小王 53=大王）。值 = 整张牌面贴图（自带角标 / 立绘 / 派系名，
+## 角标已由 10-08 管线归一放大、圆角已烘 alpha）。
+## 生成链：F:\EVE自走棋\牌面\牌面 → C:\godot\_export\card_face_pipeline.py
+## ⛔ 别按「点数」当键 —— 同一点数有 4 张花色。
+const CARD_FACES := {
+	0: preload("res://assets/cards/card_0.png"),
+	1: preload("res://assets/cards/card_1.png"),
+	2: preload("res://assets/cards/card_2.png"),
+	3: preload("res://assets/cards/card_3.png"),
+	4: preload("res://assets/cards/card_4.png"),
+	5: preload("res://assets/cards/card_5.png"),
+	6: preload("res://assets/cards/card_6.png"),
+	7: preload("res://assets/cards/card_7.png"),
+	8: preload("res://assets/cards/card_8.png"),
+	9: preload("res://assets/cards/card_9.png"),
+	10: preload("res://assets/cards/card_10.png"),
+	11: preload("res://assets/cards/card_11.png"),
+	12: preload("res://assets/cards/card_12.png"),
+	13: preload("res://assets/cards/card_13.png"),
+	14: preload("res://assets/cards/card_14.png"),
+	15: preload("res://assets/cards/card_15.png"),
+	16: preload("res://assets/cards/card_16.png"),
+	17: preload("res://assets/cards/card_17.png"),
+	18: preload("res://assets/cards/card_18.png"),
+	19: preload("res://assets/cards/card_19.png"),
+	20: preload("res://assets/cards/card_20.png"),
+	21: preload("res://assets/cards/card_21.png"),
+	22: preload("res://assets/cards/card_22.png"),
+	23: preload("res://assets/cards/card_23.png"),
+	24: preload("res://assets/cards/card_24.png"),
+	25: preload("res://assets/cards/card_25.png"),
+	26: preload("res://assets/cards/card_26.png"),
+	27: preload("res://assets/cards/card_27.png"),
+	28: preload("res://assets/cards/card_28.png"),
+	29: preload("res://assets/cards/card_29.png"),
+	30: preload("res://assets/cards/card_30.png"),
+	31: preload("res://assets/cards/card_31.png"),
+	32: preload("res://assets/cards/card_32.png"),
+	33: preload("res://assets/cards/card_33.png"),
+	34: preload("res://assets/cards/card_34.png"),
+	35: preload("res://assets/cards/card_35.png"),
+	36: preload("res://assets/cards/card_36.png"),
+	37: preload("res://assets/cards/card_37.png"),
+	38: preload("res://assets/cards/card_38.png"),
+	39: preload("res://assets/cards/card_39.png"),
+	40: preload("res://assets/cards/card_40.png"),
+	41: preload("res://assets/cards/card_41.png"),
+	42: preload("res://assets/cards/card_42.png"),
+	43: preload("res://assets/cards/card_43.png"),
+	44: preload("res://assets/cards/card_44.png"),
+	45: preload("res://assets/cards/card_45.png"),
+	46: preload("res://assets/cards/card_46.png"),
+	47: preload("res://assets/cards/card_47.png"),
+	48: preload("res://assets/cards/card_48.png"),
+	49: preload("res://assets/cards/card_49.png"),
+	50: preload("res://assets/cards/card_50.png"),
+	51: preload("res://assets/cards/card_51.png"),
+	52: preload("res://assets/cards/card_52.png"),
+	53: preload("res://assets/cards/card_53.png"),
+}
 
 ## 牌桌内容的**基准区** = 设计稿坐标系的尺寸。
 ##
@@ -201,6 +266,9 @@ var _auto := false                    ## 托管：把你的座位也交给 AI
 var _toast := ""
 var _toast_t := 0.0
 var _t := 0.0                                 ## 累计时间（回合脉冲动画用）
+var _drag_sel := false                        ## 左键按住「划过即选 / 划过即取」进行中
+var _drag_mode := 1                           ## 本次拖选方向：1=选上 / -1=取下（按下第一张牌时定下）
+var _drag_p := Vector2.ZERO                   ## 拖选的上一个采样点（沿路径补采样用）
 var _hover_i := -1                            ## 鼠标悬停的手牌下标（-1 = 没有）
 ## ★ 头像贴图（每座一张）。`null` ⇒ 画几何占位剪影；有贴图 ⇒ 直接画立绘。
 ##   接口 `set_avatar()` —— 以后拿到素材一行接上，⛔ 不用改任何布局代码。
@@ -231,6 +299,12 @@ var _settings: Variant = null
 
 
 func _ready() -> void:
+	# ★ 2026-10-09：牌面贴图 512×717 要画到 76×108（约 6.7 倍缩小），
+	#   贴图无 mipmap + 节点默认 LINEAR 过滤 ⇒ 缩小采样必然出锯齿。
+	#   这里开 mipmap 过滤，配合 assets/cards/card_*.png.import 的
+	#   mipmaps/generate=true 才能让缩小后的角标与圆角平滑。
+	#   注意：没有 mipmap 的贴图（如背景星云）Godot 会自动退回 LINEAR，无副作用。
+	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	# ★ 牌桌恒定 1.0 缩放：`content_scale_factor` 是根窗口属性，
 	#   从战场退出来还留着放大值 ⇒ 牌桌版面会散（见 EveUiScale 的说明）。
 	UI_SCALE_SCRIPT.apply_scene_default(get_window())
@@ -260,15 +334,19 @@ func _build_audio() -> void:
 	add_child(_audio)
 	# ⚠️ 必须显式标注 `: Dictionary` —— `_audio` 是 Variant，`volumes()` 的返回值
 	#    也推不出类型，用 `:=` 会直接**解析失败**。
-	var vols: Dictionary = _audio.volumes()
-	_audio.set_volume(&"master", float(vols.get("master", 1.0)))
-	_audio.set_volume(&"sfx", float(vols.get("sfx", 0.6)))
-	_audio.set_volume(&"amb", float(vols.get("amb", 0.39)))
-	_audio.set_volume(&"music", float(vols.get("music", 0.32)))
-	_audio.set_muted(bool(vols.get("muted", false)))
-	# BGM 用战场「准备阶段」那一首：娱乐总汇是休憩场所，同一首不违和，
-	# 而且它让设置窗的音量滑杆**听得出效果**（⛔ 否则就是一排死旋钮）。
-	_audio.play_music("prep")
+	# ⚠️ 音量必须读**存档**（`settings.cfg`），⛔ 不能读 `_audio.volumes()` ——
+	#    后者是「刚 new 出来的实例的出厂默认值」，写进总线等于把玩家在战场 /
+	#    设置窗里调好的音量**重置回默认**（总线音量是全局的，见 EveAudio._set_bus_vol）。
+	#    表现是「在战场把音乐调到 80%，一进牌桌又变回 32%」且**不报错**（2026-10-10 修）。
+	var s: Dictionary = STORE.load_all()
+	_audio.set_volume(&"master", float(s.get("master", 1.0)))
+	_audio.set_volume(&"sfx", float(s.get("sfx", 0.60)))
+	_audio.set_volume(&"amb", float(s.get("amb", 0.39)))
+	_audio.set_volume(&"music", float(s.get("music", 0.32)))
+	_audio.set_muted(bool(s.get("muted", false)))
+	# ★ 2026-10-10：牌桌 BGM 换成 Lantern（逻辑名 "ddz"，`ddz_01.ogg`，71.5s 无缝循环）。
+	#    它同时让设置窗的音乐滑杆**听得出效果**（⛔ 否则就是一排死旋钮）。
+	_audio.play_music("ddz")
 
 
 ## 设置窗（**与战场共用同一个类**，只是换 `profile`）。
@@ -576,17 +654,34 @@ func _refresh_status() -> void:
 # ══════════════════════════════════════════════════════════════════
 
 func _gui_input(event: InputEvent) -> void:
-	# ★ 非 16:9 分辨率下内容整体平移过（见 `_ui_origin`）⇒ 输入要先**减掉偏移**，
+	# ★ 非 16:9 分辨率下内容整体平移过（见 _ui_origin）⇒ 输入要先**减掉偏移**，
 	#   否则就是「看到的牌在那里、点的却是别处」。绘制与输入**用同一个偏移**
 	#   就是本工程「画与点同源」那条红线在这里的落点。
 	var o := _ui_origin()
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if not mb.pressed:
-			return
 		if mb.button_index == MOUSE_BUTTON_LEFT:
-			_on_click(mb.position - o)
+			if mb.pressed:
+				var p := mb.position - o
+				_drag_p = p
+				# ★ 按住左键 = 进入「划过即选 / 划过即取」（快速多选 / 快速取消）。
+				#   ⚠️ 落在顶栏按钮上时不进入拖选 —— 否则拖一下按钮会把下面的牌划选一片。
+				_drag_sel = _hit_button(p) == "" and _can_pick()
+				# ★ 状态检测：按下的第一张牌**当前是不是已选中**，决定这一划的方向 ——
+				#   压未选中的牌 ⇒ 一路选上；压已选中的牌 ⇒ 一路取下。
+				#   ⚠️ 必须在 `_on_click` 之前判：它会把落点这张 toggle 掉，判晚了拿到的
+				#     就是翻转后的状态，方向刚好反掉。
+				_drag_mode = 1
+				if _drag_sel:
+					var hid := _hand_id_at_base(p)
+					if hid >= 0 and _sel.has(hid):
+						_drag_mode = -1
+				_on_click(p)
+			else:
+				_drag_sel = false
 			accept_event()
+		elif not mb.pressed:
+			return
 		elif mb.button_index == MOUSE_BUTTON_RIGHT:
 			# 右键清空选择 —— 选错了不用一个个点回去
 			if not _sel.is_empty():
@@ -595,11 +690,23 @@ func _gui_input(event: InputEvent) -> void:
 				queue_redraw()
 			accept_event()
 	elif event is InputEventMouseMotion:
+		var mm := event as InputEventMouseMotion
+		var p := mm.position - o
 		# 悬停高亮 = 即时反馈（资料：每个操作都要有立刻的视觉回应）
-		var mi := _hand_hover_index((event as InputEventMouseMotion).position - o)
+		var mi := _hand_hover_index(p)
 		if mi != _hover_i:
 			_hover_i = mi
 			queue_redraw()
+		# ★ 按住左键划过手牌 ⇒ 沿途按同一方向选上 / 取下（见 _drag_paint）。
+		#   ⚠️ 用 button_mask 判「左键还按着」，而不是只认按下/抬起事件：
+		#     在控件外松开左键收不到 release，只靠事件会把拖选状态卡死，
+		#     之后不按键也会一直选牌。
+		if mm.button_mask & MOUSE_BUTTON_MASK_LEFT:
+			if _drag_sel:
+				_drag_paint(_drag_p, p)
+				_drag_p = p
+		elif _drag_sel:
+			_drag_sel = false
 
 
 ## 设置窗开 / 关（同一个按钮，再点一次收起 —— 与战场的 `≡` 同一种交互）。
@@ -625,14 +732,11 @@ func _toggle_settings() -> void:
 
 
 func _on_click(p: Vector2) -> void:
-	for b in _buttons():
-		var r: Rect2 = b["rect"]
-		if r.has_point(p):
-			_on_button(String(b["id"]))
-			return
-	if game == null or game.is_over() or not _is_human_turn():
+	var bid := _hit_button(p)
+	if bid != "":
+		_on_button(bid)
 		return
-	if int(game.phase) != int(G.Phase.PLAY):
+	if not _can_pick():
 		return
 	var my: Array = game.hand_of(HUMAN_SEAT)
 	# ⚠️ 从右往左判：右边的牌画在上层，点重叠处应该选中**看得见的那张**。
@@ -648,6 +752,57 @@ func _on_click(p: Vector2) -> void:
 			_toast_t = 0.0
 			queue_redraw()
 			return
+
+
+## 现在能不能点 / 划选自己的手牌（发牌中、叫分、非自己回合、托管、已结束都不行）。
+## ★ 与 _hand_hover_index() 的守卫完全一致 —— 能出悬停高亮的地方就点得中、
+##   也划得中，三处共用同一个「能不能选」的判断，少一处不一致就少一个 bug。
+func _can_pick() -> bool:
+	return _is_human_turn() and int(game.phase) == int(G.Phase.PLAY)
+
+
+## 点 p 命中的顶栏按钮 id（没有则空串）。
+func _hit_button(p: Vector2) -> String:
+	for b in _buttons():
+		if (b["rect"] as Rect2).has_point(p):
+			return String(b["id"])
+	return ""
+
+
+## 按住左键拖选：把光标从 a 划到 b 沿途经过的手牌按 `_drag_mode` 统一选上 / 取下。
+##
+## ⚠️ 沿路径补采样：快速划动时 MOUSE_MOTION 是稀疏事件，只判当前点会漏掉
+##    中间那些牌，就不是「一路划过去全选中」了（而这正是本规则的用途）。
+## ⚠️ 命中用**未抬起**的基准矩形（见 _hand_id_at_base）：已选中的牌会抬起
+##    半截，拿抬起后的框去判，光标划到哪儿牌就从哪儿滑走 —— 与悬停抖动同坑。
+## ⚠️ 一划只有一个方向（按下第一张牌时定下，见 _gui_input）：选上就只加、取下就
+##    只减，**不逐张看当前状态** —— 否则来回划会来回翻转（同资源管理器多选拖选）。
+func _drag_paint(a: Vector2, b: Vector2) -> void:
+	if not _can_pick():
+		return
+	# ⚠️ 上一个采样点离得太远 ⇒ 中间不是「划过去」而是事件断档（例如光标掠过
+	#    设置窗这类会吃掉鼠标的子控件）。此时只判当前点，别沿长直线补采样，
+	#    否则会把中间根本没碰到的牌一并选中。
+	if a.distance_to(b) > 240.0:
+		a = b
+	var steps := int(maxf(1.0, ceilf(a.distance_to(b) / 8.0)))
+	var changed := false
+	for s in range(steps + 1):
+		var id := _hand_id_at_base(a.lerp(b, float(s) / float(steps)))
+		if id < 0:
+			continue
+		if _drag_mode < 0:
+			if _sel.has(id):
+				_sel.erase(id)
+				changed = true
+		elif not _sel.has(id):
+			_sel.append(id)
+			changed = true
+	if changed:
+		_hint_i = -1
+		_toast = ""
+		_toast_t = 0.0
+		queue_redraw()
 
 
 func _on_button(id: String) -> void:
@@ -1407,8 +1562,16 @@ func _card_at(pos: Vector2, id: int, cw: float, ch: float, hi: bool) -> void:
 	# 阴影：让牌「立起来」（资料：微妙阴影/边框能让牌面分离出来）
 	_round_rect(Rect2(pos + Vector2(2.5, 2.5), Vector2(cw, ch)), Color(0, 0, 0, 0.30), cw * 0.09)
 	_round_rect(Rect2(pos, Vector2(cw, ch)), C_CARD, cw * 0.09)
+	# ★ 贴图牌面（白名单见 CARD_FACES 顶注）：整张覆盖，角标贴图自带。
+	#   ⚠️ 画在**底色之后、描边之前** —— 选中金框要压在贴图上。
+	#   贴图比例（512:717 ≈ 0.714）与牌面（76:108 ≈ 0.704）几乎一致，直接拉伸无畸变。
+	var face: Texture2D = CARD_FACES.get(id)
+	if face != null:
+		draw_texture_rect(face, Rect2(pos, Vector2(cw, ch)), false)
 	_round_rect(Rect2(pos, Vector2(cw, ch)), C_GOLD if hi else C_CARD_EDGE, cw * 0.09, false,
 			2.0 if hi else 1.0)
+	if face != null:
+		return
 	var rank := R.rank_of(id)
 	# ⚠️ 大王(53) 红、小王(52) 黑 —— 与实体牌一致
 	var col := C_RED if (R.suit_of(id) == 1 or R.suit_of(id) == 2 or id == 53) else C_BLACK
@@ -1543,6 +1706,17 @@ func _hand_hover_index(p: Vector2) -> int:
 	for i in range(my.size() - 1, -1, -1):
 		if _hand_base_rect(i, my.size()).has_point(p):
 			return i
+	return -1
+
+
+func _hand_id_at_base(p: Vector2) -> int:
+	# ⚠️ 用**未抬起**的基准矩形判定：选中的牌会抬起半截，拿抬起后的框去判会让
+	#    光标「划到哪儿牌就从哪儿滑走」（与 _hand_hover_index 是同一个坑）。
+	#   调用方（_drag_paint）已保证 game 非空且轮到你出牌。
+	var my: Array = game.hand_of(HUMAN_SEAT)
+	for i in range(my.size() - 1, -1, -1):
+		if _hand_base_rect(i, my.size()).has_point(p):
+			return int(my[i])
 	return -1
 
 

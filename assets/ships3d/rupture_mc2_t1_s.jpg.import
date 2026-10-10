@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bdkhv0hkg6pla"
-path="res://.godot/imported/rupture_mc2_t1_s.jpg-bcab4bf1c3c90b5eeb8aec96a76e693a.ctex"
+path.s3tc="res://.godot/imported/rupture_mc2_t1_s.jpg-bcab4bf1c3c90b5eeb8aec96a76e693a.s3tc.ctex"
+path.etc2="res://.godot/imported/rupture_mc2_t1_s.jpg-bcab4bf1c3c90b5eeb8aec96a76e693a.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "3d1ad6b2a0df1172a01d75ced0c8e439"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/ships3d/rupture_mc2_t1_s.jpg"
-dest_files=["res://.godot/imported/rupture_mc2_t1_s.jpg-bcab4bf1c3c90b5eeb8aec96a76e693a.ctex"]
+dest_files=["res://.godot/imported/rupture_mc2_t1_s.jpg-bcab4bf1c3c90b5eeb8aec96a76e693a.s3tc.ctex", "res://.godot/imported/rupture_mc2_t1_s.jpg-bcab4bf1c3c90b5eeb8aec96a76e693a.etc2.ctex"]
 
 [params]
 
-compress/mode=1
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.85
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

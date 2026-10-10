@@ -67,6 +67,23 @@ const INTRO_SCENE := "res://scenes/intro_scene.tscn"
 const FIRST_MODE_ID := "campaign"
 const FIRST_TIER_ID := "guard_border"
 const PROGRESS := preload("res://scripts/core/eve_progress_store.gd")
+## ★ 2026-10-10 主界面 BGM。菜单原本**没有音频宿主**（见 `_build_sys` 里那条
+##    「菜单上没有这个宿主」的说明）⇒ 要出声必须自己起一个只做
+##    「总线音量 + 一条 BGM」的实例，与牌桌（ddz_table）同一套做法。
+const AUDIO_SCRIPT := preload("res://scripts/core/eve_audio.gd")
+## 设置存档（读音量初值 —— 让玩家在设置窗里调的音乐音量**在主界面照样生效**）
+const STORE := preload("res://scripts/core/eve_settings_store.gd")
+
+## ★ 2026-10-10 版权声明。它不是"游戏模式"，但对玩家来说就是**左边按钮列表最下面**
+##   的一项，而且要和模式按钮**共用同一套选中样式与键盘导航** ⇒ 作为伪模式挂在
+##   `_modes` 末尾（`credits = true`）。⛔ 不放进 EXTRA_MODES：那里是"可玩模式"的数据。
+##
+## ⚠️ 它是 `_modes` 里唯一 `cards` 为空的项 ⇒ 所有"按卡片下标"的路径都要先
+##    `_is_credits()` 挡一下，否则左右键的 `% 0` 与开始的 `cards[0]` 会越界报错。
+const CREDITS_MODE_ID := "credits"
+## 版权声明大方框（右侧，正好占满难度卡片那块地方：3 列 × 964 宽 / 470 高）。
+const CREDITS_W := 964.0
+const CREDITS_H := 470.0
 
 # ══════════════════════════════════════════════════════════════════
 #  配色（口径同 scripts/ui/eve_window.gd）
@@ -195,6 +212,14 @@ var _strip_panels: Array[PanelContainer] = []
 var _strip_bars: Array[ColorRect] = []
 ## ★ 内容居中层：除底图之外的一切都挂在它身上（非 16:9 分辨率下整体平移）。
 var _content: Control = null
+## ★ 主界面 BGM 宿主。
+## ⚠️ 声明成 **Variant** 而不是 `Node`：`AudioStreamPlayer` 之外的成员
+##    （`set_volume` / `play_music`）在 `Node` 基类上没有，写死类型会**解析失败**
+##    —— 牌桌踩过同一个坑，见 `ddz_table` 的同款说明。
+var _audio: Variant = null
+## ★ 2026-10-10 版权声明大方框。**只建一次**，之后靠 `visible` 切换 ——
+##    每次 `_refresh()` 重建会让文字闪一下，也白白丢掉旧节点的引用。
+var _credits_panel: PanelContainer = null
 
 
 func _ready() -> void:
@@ -230,6 +255,10 @@ func _ready() -> void:
 	#      表现是「4:3 下主菜单整屏只剩星云」（2026-10-07 出图实测踩到，
 	#      而 verify_menu 那 38 条断言**全绿** —— 它不看像素）。
 	_build_bg()
+	# ★ 2026-10-10：主界面 BGM（见 `_build_audio` 的说明）。
+	#   ⚠️ 放在建内容层之前：它只往根上挂两个 AudioStreamPlayer、与版面无关，
+	#      但越早起播越不容易听出「进了菜单半秒没声」。
+	_build_audio()
 	# ★ 内容居中层（非 16:9 分辨率档：1920×1200 之类）。
 	#   为什么是**另一层**而不是直接挪 root：底图要铺满整个窗口（含多出来的边），
 	#   而品牌 / 模式 / 卡片全部按 1920×1080 死坐标排 ⇒ 内容整体平移即可。
@@ -244,6 +273,7 @@ func _ready() -> void:
 	_build_sys()
 	_build_modes()
 	_build_strips()
+	_build_credits_panel()
 	_refresh()
 	_layout_content()
 	resized.connect(_layout_content)
@@ -261,6 +291,25 @@ func _layout_content() -> void:
 	_content.size = base
 
 
+## 主界面 BGM（**只为「一条 BGM + 总线音量」存在**，不做任何打击反馈）。
+##
+## ⚠️ 音量读**存档**而不是 `_audio.volumes()`：后者是刚 new 出来的实例的
+##    出厂默认值，写进总线会把玩家在战场/设置窗里调好的音乐音量重置回默认
+##    （总线音量是全局的）。牌桌踩过同一个坑，见 `ddz_table._build_audio()`。
+func _build_audio() -> void:
+	_audio = AUDIO_SCRIPT.new()
+	_audio.name = "MenuAudio"
+	add_child(_audio)
+	var s: Dictionary = STORE.load_all()
+	_audio.set_volume(&"master", float(s.get("master", 1.0)))
+	_audio.set_volume(&"sfx", float(s.get("sfx", 0.60)))
+	_audio.set_volume(&"amb", float(s.get("amb", 0.39)))
+	_audio.set_volume(&"music", float(s.get("music", 0.32)))
+	_audio.set_muted(bool(s.get("muted", false)))
+	# ★ 主界面 BGM = City of Night（逻辑名 "menu"，`menu_01.ogg`，68.25s 无缝循环）。
+	_audio.play_music("menu")
+
+
 ## 模式表 = 任务关卡（难度来自表）+ 两个无分级的模式
 func _build_mode_table() -> Array:
 	var first: Dictionary = TIERS.ROWS[0]
@@ -270,6 +319,12 @@ func _build_mode_table() -> Array:
 			"cards": TIERS.ROWS})
 	for m in EXTRA_MODES:
 		out.append(m)
+	# ★ 2026-10-10：版权声明（伪模式，见 CREDITS_MODE_ID 的注释）。
+	#   **必须最后追加** —— 用户要求它落在左边按钮的最下方。
+	out.append({
+		"id": CREDITS_MODE_ID, "name": "版权声明", "meta": "致谢 · 开源许可",
+		"locked": false, "credits": true, "cards": [],
+	})
 	return out
 
 
@@ -326,6 +381,8 @@ func _build_sys() -> void:
 	#    （雾 / 射程环 / 棋盘 / 相机复位 / 重开一局），而且它的音量要挂在
 	#    局内那个 EveAudio 上。菜单上没有这个宿主 ⇒ 放上去就是个点不动的
 	#    死按钮（红线 9）。等设置与音频提到全局宿主之后再补。
+	#    ⚠️ 2026-10-10 更新：`_build_audio()` 之后菜单**已经有**音频宿主了，
+	#       所以缺的只剩「设置窗本身 + 它的音量回写」——补的时候直接用 _audio。
 	#
 	# 「回看片头」：开场剧情**默认只在第一次玩时出现**（存 progress.cfg），
 	# 所以必须留一个显式的回看入口 —— **跳过不可以是不可逆的**。
@@ -355,6 +412,94 @@ func _build_sys() -> void:
 	v.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	box.add_child(v)
 	_content.add_child(box)
+
+
+## 当前选中的是不是「版权声明」这一项。
+func _is_credits() -> bool:
+	return String(_modes[_mode_idx]["id"]) == CREDITS_MODE_ID
+
+
+## 版权声明大方框（右侧）。文字口径见下方各行 ——
+##   · 游戏本体（架构 / 脚本 + 开源地址）→ 星视寰宇 / xshynews · GPL v3
+##   · EVE 题材与美术素材             → Fenris Creations（原 CCP Games）
+##   · 背景音乐                       → 乌鸦Producer · 本项目版本经 AI 重编曲
+##
+## ⚠️ 只建一次、之后靠 `visible` 切换（见 `_credits_panel` 的说明）。
+## ⚠️ autowrap 的 Label **必须给死宽**（`CREDITS_W - 两侧留白`）——
+##    宽度为 0 时它会按"一个字一行"折行，量出的最小高度大得离谱
+##    （`_make_strip` 的 desc 踩过同一个坑）。
+func _build_credits_panel() -> void:
+	_credits_panel = PanelContainer.new()
+	_credits_panel.name = "Credits"
+	_credits_panel.position = STRIP_POS
+	_credits_panel.size = Vector2(CREDITS_W, CREDITS_H)
+	_credits_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_credits_panel.add_theme_stylebox_override("panel", _strip_style(false, true))
+	_credits_panel.visible = false
+
+	var mn := MarginContainer.new()
+	mn.add_theme_constant_override("margin_left", 34)
+	mn.add_theme_constant_override("margin_right", 34)
+	mn.add_theme_constant_override("margin_top", 28)
+	mn.add_theme_constant_override("margin_bottom", 26)
+	_credits_panel.add_child(mn)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 0)
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mn.add_child(col)
+
+	# 正文可用宽度 = 面板宽 - 两侧留白（再减 2 给边框，与 desc 同口径）
+	var inner := CREDITS_W - 68.0 - 2.0
+	col.add_child(_label("版权声明", 20, C_TEXT_HI))
+	col.add_child(_label("COPYRIGHT & CREDITS", 9, Color(0.55, 0.78, 0.82, 0.72)))
+	col.add_child(_vspace(16))
+
+	# 每条 = 小标题 + 若干正文行；正文自动折行。
+	var sections := [
+		{
+			"h": "游戏本体 · GAME",
+			"b": [
+				"EVE 自走棋（EVE-AutoChess）的游戏架构与全部脚本由 星视寰宇 创作，以 GNU GPL v3 开源。",
+				"源码地址：https://github.com/xshynews/EVE-AutoChess",
+				"Copyright © 2026 xshynews · 衍生作品须同样以 GPL v3 开源。",
+			],
+		},
+		{
+			"h": "EVE 题材与美术素材 · EVE IP & ART",
+			"b": [
+				"EVE 相关的 IP 与素材（舰船模型、图标、贴图等）著作权归 Fenris Creations 所有"
+						+ "（该公司于 2026 年 5 月由 CCP Games 更名而来，CCP 原名 Crowd Control Productions）。",
+				"本项目不持有这些素材的任何权利，相关内容不在 GPL v3 覆盖范围内，"
+						+ "仅用于学习、开发与体验目的。",
+			],
+		},
+		{
+			"h": "背景音乐 · MUSIC",
+			"b": [
+				"四首 BGM 原曲作者：乌鸦Producer。",
+				"本项目使用的版本为适配游戏时长与无缝循环经 AI 重编曲处理，原曲版权仍归原作者所有。",
+			],
+		},
+		{
+			"h": "开源许可 · LICENSE",
+			"b": [
+				"代码：GNU GPL v3（Copyright © 2026 xshynews）。",
+				"美术 / 音频素材：归 Fenris Creations 及原作者所有，非本项目许可证覆盖范围。",
+			],
+		},
+	]
+	for sec in sections:
+		col.add_child(_label(String(sec["h"]), 13, C_ACCENT))
+		col.add_child(_vspace(4))
+		for line in sec["b"]:
+			var l := _label(String(line), 12, Color(0.81, 0.89, 0.91, 0.90))
+			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			l.custom_minimum_size = Vector2(inner, 0)
+			col.add_child(l)
+		col.add_child(_vspace(16))
+
+	_content.add_child(_credits_panel)
 
 
 func _build_modes() -> void:
@@ -616,6 +761,16 @@ func _refresh() -> void:
 	for c in _strip_row.get_children():
 		c.queue_free()
 
+	# ★ 2026-10-10 版权声明：右侧换成大方框，收掉卡片区。
+	if _is_credits():
+		_strip_row.visible = false
+		if _credits_panel != null:
+			_credits_panel.visible = true
+		return
+	_strip_row.visible = true
+	if _credits_panel != null:
+		_credits_panel.visible = false
+
 	var cards := _cards_of(_mode_idx)
 	# 先按模式定好「列数 + 卡片尺寸」，再让 `_make_strip` 去建 ——
 	# 顺序不能反：`_make_strip` 读的就是这两个量。
@@ -694,6 +849,9 @@ func _on_strip_input(event: InputEvent, idx: int) -> void:
 ##   抽出来的理由：验收要能**在不真的切场景**的前提下测「首次 / 非首次」这条分支
 ##   —— 自检节点本身是 current_scene，真切场景会把它一起销毁。
 func target_scene_for_start() -> String:
+	# ⚠️ 版权声明没有卡片（`cards` 为空）⇒ 必须先挡掉，否则下面的 `cards[sel]` 越界。
+	if _is_credits():
+		return ""
 	var cards := _cards_of(_mode_idx)
 	var sel := int(_pick[String(_modes[_mode_idx]["id"])])
 	if not bool(cards[sel]["open"]):
@@ -777,11 +935,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_UP:
 			_on_mode_pressed((_mode_idx - 1 + _modes.size()) % _modes.size())
 		KEY_RIGHT:
-			_pick[id] = (_pick[id] + 1) % cards.size()
-			_refresh_strips()
+			# ⚠️ 版权声明没有难度可切，且 `cards.size() == 0` ⇒ `% 0` 会报除零。
+			if not _is_credits():
+				_pick[id] = (_pick[id] + 1) % cards.size()
+				_refresh_strips()
 		KEY_LEFT:
-			_pick[id] = (_pick[id] - 1 + cards.size()) % cards.size()
-			_refresh_strips()
+			if not _is_credits():
+				_pick[id] = (_pick[id] - 1 + cards.size()) % cards.size()
+				_refresh_strips()
 		KEY_ENTER, KEY_KP_ENTER:
 			_on_start_pressed()
 		KEY_ESCAPE:

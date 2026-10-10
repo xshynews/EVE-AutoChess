@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://kvkxuvcn4xfc"
-path="res://.godot/imported/megathron_gb2_t1_s.jpg-1de1db2e1f32605008655b1e6b3837fc.ctex"
+path.s3tc="res://.godot/imported/megathron_gb2_t1_s.jpg-1de1db2e1f32605008655b1e6b3837fc.s3tc.ctex"
+path.etc2="res://.godot/imported/megathron_gb2_t1_s.jpg-1de1db2e1f32605008655b1e6b3837fc.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "b575a52a6250735b05ebce6f4a0e9f72"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/ships3d/megathron_gb2_t1_s.jpg"
-dest_files=["res://.godot/imported/megathron_gb2_t1_s.jpg-1de1db2e1f32605008655b1e6b3837fc.ctex"]
+dest_files=["res://.godot/imported/megathron_gb2_t1_s.jpg-1de1db2e1f32605008655b1e6b3837fc.s3tc.ctex", "res://.godot/imported/megathron_gb2_t1_s.jpg-1de1db2e1f32605008655b1e6b3837fc.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

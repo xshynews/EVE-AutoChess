@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://sx2vtcyloycs"
-path="res://.godot/imported/bantam_cf1_t1_d.png-20e9c7a6ae4b45e40ce2823ae7cd73ec.ctex"
+path.s3tc="res://.godot/imported/bantam_cf1_t1_d.png-20e9c7a6ae4b45e40ce2823ae7cd73ec.s3tc.ctex"
+path.etc2="res://.godot/imported/bantam_cf1_t1_d.png-20e9c7a6ae4b45e40ce2823ae7cd73ec.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "0e934a022454dbb894e21dff9829c8a4"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/ships3d/bantam_cf1_t1_d.png"
-dest_files=["res://.godot/imported/bantam_cf1_t1_d.png-20e9c7a6ae4b45e40ce2823ae7cd73ec.ctex"]
+dest_files=["res://.godot/imported/bantam_cf1_t1_d.png-20e9c7a6ae4b45e40ce2823ae7cd73ec.s3tc.ctex", "res://.godot/imported/bantam_cf1_t1_d.png-20e9c7a6ae4b45e40ce2823ae7cd73ec.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

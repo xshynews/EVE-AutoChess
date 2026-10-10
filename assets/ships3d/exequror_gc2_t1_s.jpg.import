@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://due1gpf71p3sq"
-path="res://.godot/imported/exequror_gc2_t1_s.jpg-35e53b6bea1e4def3bb0398794e3e00c.ctex"
+path.s3tc="res://.godot/imported/exequror_gc2_t1_s.jpg-35e53b6bea1e4def3bb0398794e3e00c.s3tc.ctex"
+path.etc2="res://.godot/imported/exequror_gc2_t1_s.jpg-35e53b6bea1e4def3bb0398794e3e00c.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "eb0e1e0f003819c00c7c5d76f3e9b145"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/ships3d/exequror_gc2_t1_s.jpg"
-dest_files=["res://.godot/imported/exequror_gc2_t1_s.jpg-35e53b6bea1e4def3bb0398794e3e00c.ctex"]
+dest_files=["res://.godot/imported/exequror_gc2_t1_s.jpg-35e53b6bea1e4def3bb0398794e3e00c.s3tc.ctex", "res://.godot/imported/exequror_gc2_t1_s.jpg-35e53b6bea1e4def3bb0398794e3e00c.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

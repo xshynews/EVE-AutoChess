@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cwoptqj7kr50n"
-path="res://.godot/imported/executioner_af4_t1_s.jpg-c5106cd0a2e324d52f3098c6ba959a9c.ctex"
+path.s3tc="res://.godot/imported/executioner_af4_t1_s.jpg-c5106cd0a2e324d52f3098c6ba959a9c.s3tc.ctex"
+path.etc2="res://.godot/imported/executioner_af4_t1_s.jpg-c5106cd0a2e324d52f3098c6ba959a9c.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "824ad348a5cdeb7494f6b8cac7d966e1"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/ships3d/executioner_af4_t1_s.jpg"
-dest_files=["res://.godot/imported/executioner_af4_t1_s.jpg-c5106cd0a2e324d52f3098c6ba959a9c.ctex"]
+dest_files=["res://.godot/imported/executioner_af4_t1_s.jpg-c5106cd0a2e324d52f3098c6ba959a9c.s3tc.ctex", "res://.godot/imported/executioner_af4_t1_s.jpg-c5106cd0a2e324d52f3098c6ba959a9c.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

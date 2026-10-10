@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://5cteqhiuqfdb"
-path="res://.godot/imported/tempest_mb2_t1_d.png-9f6617590005a58fa0cdd07828f24369.ctex"
+path.s3tc="res://.godot/imported/tempest_mb2_t1_d.png-9f6617590005a58fa0cdd07828f24369.s3tc.ctex"
+path.etc2="res://.godot/imported/tempest_mb2_t1_d.png-9f6617590005a58fa0cdd07828f24369.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "822e1c23bf99d21ba6807173487d2556"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/ships3d/tempest_mb2_t1_d.png"
-dest_files=["res://.godot/imported/tempest_mb2_t1_d.png-9f6617590005a58fa0cdd07828f24369.ctex"]
+dest_files=["res://.godot/imported/tempest_mb2_t1_d.png-9f6617590005a58fa0cdd07828f24369.s3tc.ctex", "res://.godot/imported/tempest_mb2_t1_d.png-9f6617590005a58fa0cdd07828f24369.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

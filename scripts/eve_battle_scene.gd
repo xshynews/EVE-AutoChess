@@ -1361,15 +1361,34 @@ func _on_phase_changed(phase: int) -> void:
 	#    还会设 HUD 文案，但声音只在这里发一次 —— 否则「开战」会响两遍
 	#    （一次来自这里、一次来自 start_battle 自己的提示音）。
 	audio.play_phase(phase)
+	# ★ 2026-10-10：守卫边境的 BGM 改成**按节点分段**，不再按准备/交战分曲。
+	#
+	# ⚠️ 为什么要这么改：准备→交战→结算**每个节点都要走一遍**，按阶段切曲
+	#    意味着每回合都交叉淡入淡出两次（1.2s × 2），一场 15 节点淡 30 次 ——
+	#    听感是「音乐一直在找方向」。分段后整局只在第 11 个节点换一次曲。
 	match phase:
-		EveRunState.Phase.PREP:
-			audio.play_music("prep")
-		EveRunState.Phase.BATTLE:
-			audio.play_music("battle")
-		EveRunState.Phase.RESOLVE:
-			audio.play_music("prep")
+		EveRunState.Phase.PREP, EveRunState.Phase.BATTLE, EveRunState.Phase.RESOLVE:
+			audio.play_music(_round_music())
 		_:
 			audio.play_music("")
+
+
+## 守卫边境的 BGM 分段节点（前 10 个节点一段，第 11 起是终局段）。
+##
+## ⚠️ 写死成常量而不是由 `EveNodeTable.TOTAL` 算：分段点是**设计值**
+##    （用户 2026-10-10 定），改它要连音源一起换，不是「节点数变了就跟着变」。
+const MUSIC_ROUND_SPLIT := 10
+
+
+## 按**当前节点**选 BGM 逻辑名（逻辑名 = 文件名去掉末尾 `_NN`，见 `EveAudio._scan_dir`）：
+##    节点 1~10   → `"border"`        （`border_01.ogg`，80s 无缝循环）
+##    节点 11~15  → `"border_final"`  （`border_final_01.ogg`，96s 无缝循环）
+##
+## ⚠️ 判据用 `run.node_index`（唯一真相源）而不是自己数阶段：
+##    `EveRunState.advance()` 先 `node_index += 1` 再发 `phase_changed`，
+##    所以这里读到的**已经是新节点**，第 11 节点那一帧就换曲。
+func _round_music() -> String:
+	return "border" if run.node_index <= MUSIC_ROUND_SPLIT else "border_final"
 
 
 func _on_run_ended(cleared: bool) -> void:

@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dsd4dbkam5onn"
-path="res://.godot/imported/caracal_cc3_t1_d.png-f1b69a3acab3f18ec5097be6e3f4cbfd.ctex"
+path.s3tc="res://.godot/imported/caracal_cc3_t1_d.png-f1b69a3acab3f18ec5097be6e3f4cbfd.s3tc.ctex"
+path.etc2="res://.godot/imported/caracal_cc3_t1_d.png-f1b69a3acab3f18ec5097be6e3f4cbfd.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "4b51ad91a44514b9827f76a9d12a7c39"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/ships3d/caracal_cc3_t1_d.png"
-dest_files=["res://.godot/imported/caracal_cc3_t1_d.png-f1b69a3acab3f18ec5097be6e3f4cbfd.ctex"]
+dest_files=["res://.godot/imported/caracal_cc3_t1_d.png-f1b69a3acab3f18ec5097be6e3f4cbfd.s3tc.ctex", "res://.godot/imported/caracal_cc3_t1_d.png-f1b69a3acab3f18ec5097be6e3f4cbfd.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0
