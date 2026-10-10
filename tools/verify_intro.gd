@@ -86,7 +86,7 @@ func _ready() -> void:
 	if _intro != null and is_instance_valid(_intro):
 		_intro.queue_free()
 	await get_tree().process_frame
-	get_tree().quit()
+	get_tree().quit(1 if _fail > 0 else 0)
 
 
 # ─────────────────────────────────────────────── ① 场景与分层
