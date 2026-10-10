@@ -430,7 +430,8 @@ func speed_scale(m: float) -> void:
 
 ## 是否被 ECM 打断火控链路
 func is_jammed(now: float) -> bool:
-	return is_ewar and jammed_until > now
+	# 判的是「本舰被干扰」，与本舰是否携带电子战模块（is_ewar）无关
+	return jammed_until > now
 
 
 func faction_name() -> String:

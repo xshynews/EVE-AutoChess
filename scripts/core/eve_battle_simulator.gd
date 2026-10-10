@@ -417,6 +417,10 @@ func _update_lock(ship: EveShip, dt: float) -> void:
 	if target == null or not target.alive:
 		ship.target_id = -1
 		return
+	# ECM 期间锁定进度不推进；干扰结束后从零重新读锁定条
+	if ship.is_jammed(elapsed):
+		ship.lock_elapsed = 0.0
+		return
 	ship.lock_elapsed += dt
 	if ship.lock_elapsed >= ship.lock_total:
 		ship.locked = true
@@ -434,6 +438,7 @@ func _try_fire(ship: EveShip, dt: float) -> void:
 	# ECM 会打断已有的锁定
 	if ship.is_jammed(elapsed):
 		ship.locked = false
+		ship.lock_elapsed = 0.0
 		return
 
 	# 电容不足无法开火
@@ -445,6 +450,10 @@ func _try_fire(ship: EveShip, dt: float) -> void:
 	while ship.weapon_timer <= 0.0:
 		ship.weapon_timer += maxf(0.1, ship.weapon_cycle)
 		_fire_once(ship, target)
+		# 同一 tick 内连射时目标可能已被前一发击毁 ⇒ 停火，
+		# 否则 kills 重复累加、unit_destroyed 重复发出
+		if not target.alive:
+			break
 
 
 func _fire_once(ship: EveShip, target: EveShip) -> void:
