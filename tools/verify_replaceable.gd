@@ -77,38 +77,43 @@ func _test_button_skin_library() -> void:
 		return
 	var ids := EveButtonTheme.available_ids()
 	print("[替换验证] 可用皮肤 %d 套：%s" % [ids.size(), ", ".join(ids)])
+	# ⚠️ HUD 已不再提供「整体换皮」接口（`set_button_skin` 已移除，按钮按用途各自
+	#    套 hud / hud_main / hud_warn）⇒ 这里直接验皮肤库本身：每套皮肤都能把
+	#    5 个状态盒完整套到一个按钮上。
 	for id in ids:
-		var ok: bool = _hud.call("set_button_skin", id)
+		var btn := Button.new()
+		EveButtonTheme.apply(btn, id)
+		var states := ""
+		for st in ["normal", "hover", "pressed", "disabled", "focus"]:
+			if btn.has_theme_stylebox_override(st):
+				states += st.substr(0, 1)
+		btn.free()
+		var ok := states.length() == 5
 		var tag := "✓" if ok else "✗"
 		if not ok:
 			_fail += 1
-		# 抽查一个按钮，确认 5 个状态盒都真的设上了
-		var btn := _find_first_button(_hud)
-		var states := ""
-		if btn != null:
-			for st in ["normal", "hover", "pressed", "disabled", "focus"]:
-				if btn.has_theme_stylebox_override(st):
-					states += st.substr(0, 1)
 		print("[替换验证] %s %s  已设状态盒=[%s]（n/h/p/d/f）" % [tag, id, states])
+	# HUD 里确实有按钮套上了皮肤（抽查一个）
+	var hud_btn := _find_first_button(_hud)
+	if hud_btn == null or not hud_btn.has_theme_stylebox_override("normal"):
+		print("[替换验证] ✗ HUD 里找不到已套皮肤的按钮")
+		_fail += 1
 
 
 ## ③ 运行时连续切换（模拟玩家快速换背景 / 换皮肤）
 func _test_runtime_switch() -> void:
 	print("[替换验证] ── ③ 运行时连续切换 ──")
 	var bgs := EveBackgroundLibrary.available_ids()
-	var skins := EveButtonTheme.available_ids()
 	for i in 6:
 		var b: String = bgs[i % bgs.size()]
-		var s: String = skins[i % skins.size()]
 		_arena.call("set_background", b)
-		_hud.call("set_button_skin", s)
 		# 校验：换完之后当前值确实变了
 		var cur_b: String = _arena.call("current_background_id")
 		if cur_b != b:
 			print("[替换验证] ✗ 第 %d 次切背景：期望 %s 实际 %s" % [i, b, cur_b])
 			_fail += 1
-	print("[替换验证] 连续切换 6 轮完成，当前背景=%s 当前皮肤=%s"
-			% [_arena.call("current_background_id"), _hud.get("button_skin")])
+	print("[替换验证] 连续切换 6 轮完成，当前背景=%s"
+			% _arena.call("current_background_id"))
 
 
 func _finish() -> void:
