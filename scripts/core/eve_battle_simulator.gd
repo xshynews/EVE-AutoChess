@@ -131,6 +131,12 @@ var winner_team: int = -1
 var log_entries: Array[LogEntry] = []
 var _next_target_refresh: float = 0.0
 var _ship_by_id: Dictionary = {}
+## 尚未消化的不足一个 FIXED_STEP 的时间（见 `step()`）
+var _accum: float = 0.0
+
+## 战斗专用 RNG（命中判定）。⛔ 不用全局 randf() —— 设 `rng.seed` 即可复现整场战斗。
+## 默认种子是伪随机的，不设种子时行为与原来一致。
+var rng := RandomNumberGenerator.new()
 
 ## 索敌/开火的分频调度（借鉴参考实现：不同系统跑不同频率）
 const TARGET_REFRESH_INTERVAL := 5.0 / TICK_RATE   ## 每 5 tick
@@ -145,6 +151,9 @@ func setup(own_ships: Array[EveShip], enemy_ships: Array[EveShip]) -> void:
 	tick = 0
 	finished = false
 	winner_team = -1
+	_accum = 0.0
+	_next_target_refresh = 0.0
+	_target_switches = 0
 	# 时限回到默认（180s），由调用方决定是否用 set_time_limit() 收窄。
 	# ⚠️ 必须在这里重置而不是依赖新实例 —— 复用同一个模拟器重开一局时，
 	#    上一场的时限会静默地留在身上。
@@ -166,11 +175,12 @@ func step(dt: float = FIXED_STEP) -> void:
 		return
 
 	# 按固定步长推进（避免变帧率影响物理）
-	var remaining := dt
-	while remaining > 0.0 and not finished:
-		var step_dt: float = minf(FIXED_STEP, remaining)
-		_advance_one_tick(step_dt)
-		remaining -= step_dt
+	# ⚠️ 每个 tick 都是完整的 FIXED_STEP；不足一步的零头留到下一次调用，
+	#    ⛔ 不许把零头当成一个"短 tick"跑 —— 那样结果会随帧率变化。
+	_accum += maxf(0.0, dt)
+	while _accum >= FIXED_STEP - 1e-6 and not finished:
+		_advance_one_tick(FIXED_STEP)
+		_accum = maxf(0.0, _accum - FIXED_STEP)
 
 
 func _advance_one_tick(dt: float) -> void:
@@ -285,7 +295,9 @@ func _refresh_targets() -> void:
 				or (best_reach and not cur_reach)
 		if best != null and best.id != ship.target_id \
 				and (must_switch or best.id == -1 \
-				or best_score > cur_score * (1.0 + SWITCH_MARGIN) + 1.0):
+				or best_score > cur_score + absf(cur_score) * SWITCH_MARGIN + 1.0):
+			# ⚠️ 裕度按 |cur_score| 算：分数可能为负（目标在射程外时 -dist 占主导），
+			#    原先 `cur_score * (1 + margin)` 在负分时阈值反而更低，迟滞失效。
 			ship.target_id = best.id
 			ship.locked = false
 			ship.lock_elapsed = 0.0
@@ -483,7 +495,7 @@ func _fire_once(ship: EveShip, target: EveShip) -> void:
 			ship.signature_resolution, _effective_signature(target),
 			distance, angular
 		)
-		var roll := randf()
+		var roll := rng.randf()
 		var result := EveCombatCore.turret_hit_quality(float(app["chance"]), roll)
 		hit = result["hit"]
 		quality = result["quality"]

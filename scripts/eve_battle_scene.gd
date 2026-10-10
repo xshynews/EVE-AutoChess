@@ -86,6 +86,10 @@ const RESULT_POPUP_DELAY := 1.0
 ## 全局时间倍率（调试用：2.0 = 战斗快进一倍）
 @export var time_scale: float = 1.0
 
+## 单帧最多推进的真实时间（秒）。卡顿一帧时只补这么多，
+## 避免一帧里补算几十个 tick（每个 tick 还会触发一串开火回调）越补越卡。
+const MAX_FRAME_DT := 0.1
+
 ## 准备倒计时归零是否自动开战。
 ##
 ## 默认开（云顶口径：准备阶段结束就开打）。
@@ -1207,7 +1211,7 @@ func _process(delta: float) -> void:
 
 		EveRunState.Phase.BATTLE:
 			if not _paused and sim != null and not sim.finished:
-				sim.step(delta * time_scale)
+				sim.step(minf(delta, MAX_FRAME_DT) * time_scale)
 				_sync_log()
 				_check_sudden_death()
 			if sim != null:
