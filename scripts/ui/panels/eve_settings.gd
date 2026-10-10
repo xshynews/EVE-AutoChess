@@ -92,6 +92,15 @@ signal resolution_changed(idx: int)
 ##    永远点不动的按钮，比没有更糟（同一个理由见「系统 DEBUG」那一段）。
 const PROFILE_BATTLE := "battle"
 const PROFILE_LOUNGE := "lounge"
+## ★ 2026-10-10 主界面（大厅主菜单）档案。
+##
+## ⚠️ 它 = 「音频 + 显示」，**没有**「界面·字号」与「操作」两块：
+##    · 字号：主菜单按 1920×1080 **死坐标**排、恒定 100%（`FONT.reset_scale`）——
+##      给滑块就地 `reapply` 会把 62px 的模式按钮撑破（见 EveFont 顶注）。
+##      字号偏好仍在设置里，进战场 / 牌桌时 `load_from_settings()` 读回生效。
+##    · 操作：那一块是「相机复位/重开/离开这一局·回主界面」——我们**就在**主界面
+##      ⇒ 一个对应物都没有，建出来就是一排死按钮（红线 9）。
+const PROFILE_MENU := "menu"
 
 ## 本窗的档案。**建 UI 之前**设好（`_build_contents` 读它决定建哪些分区）。
 var profile := PROFILE_BATTLE
@@ -99,6 +108,12 @@ var profile := PROFILE_BATTLE
 
 func _is_battle() -> bool:
 	return profile == PROFILE_BATTLE
+
+
+## 主界面档案：没有「界面·字号」（菜单恒定 100%），也没有「操作 / 返回主界面」
+## （我们就在主界面）。见 `PROFILE_MENU` 的说明。
+func _is_menu() -> bool:
+	return profile == PROFILE_MENU
 
 ## ⚠️ DEBUG-ONLY: 调试期加币按钮，发布时**必须删除**。
 ##   加 300 星币让玩家在不动现有结构的前提下快速测试经济路径
@@ -238,7 +253,7 @@ func _build_contents() -> void:
 	for r in _build_display_rows():
 		content.add_child(r)
 
-	# ── ③ 界面（字号）—— **两个档案都有** ──
+	# ── ③ 界面（字号）—— **战斗与牌桌有；主界面没有** ──
 	#
 	#  ★★ 字号缩放（**独立于界面缩放**：只动字、版面一点不动）。
 	#  · 界面缩放：整幅画布一起放大（字号与版面同步）——代价是设计空间被压缩
@@ -250,12 +265,14 @@ func _build_contents() -> void:
 	#    设计稿写死的高度，1.30 之内它们还塞得下（实测见日志），再大就该用界面缩放。
 	# ⚠️ 桌面端**也有**这一行 —— 它跟界面缩放不同，桌面同样有意义
 	#    （窗口大小是玩家自己拖的，字号未必跟着舒服）。
-	content.add_child(make_group_header("界面  INTERFACE"))
-	_font_slider = _build_slider_row("字号", FONT.scale,
-			func(v: float): _pick_font_scale(v),
-			FONT.MIN_SCALE, FONT.MAX_SCALE, FONT.STEP)
-	content.add_child(_font_slider["row"])
-	content.add_child(make_divider())
+	# ★ 2026-10-10 主界面档案**不建**这一行：主菜单恒定 100%（见 `PROFILE_MENU`）。
+	if not _is_menu():
+		content.add_child(make_group_header("界面  INTERFACE"))
+		_font_slider = _build_slider_row("字号", FONT.scale,
+				func(v: float): _pick_font_scale(v),
+				FONT.MIN_SCALE, FONT.MAX_SCALE, FONT.STEP)
+		content.add_child(_font_slider["row"])
+		content.add_child(make_divider())
 
 	# ── ④ 画面（天空盒 / 氛围）—— **只有战场有** ──
 	#    ⚠️ 牌桌没有 3D 场景可换：它的背景是 `ddz_table` 自己画的，
@@ -296,32 +313,36 @@ func _build_contents() -> void:
 		content.add_child(toggles)
 		content.add_child(make_divider())
 
-	# ── ⑥ 操作（不是开关，是「做一件事」）—— **两个档案都有** ──
-	content.add_child(make_group_header("操作  ACTION"))
-	if _is_battle():
-		var acts := HBoxContainer.new()
-		acts.add_theme_constant_override("separation", 5)
-		acts.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var cam_btn := _mk_btn("相机复位")
-		cam_btn.pressed.connect(func(): camera_reset_requested.emit())
-		acts.add_child(cam_btn)
-		var restart_btn := _mk_btn("重开一局")
-		EveButtonTheme.apply(restart_btn, "hud_warn")
-		restart_btn.pressed.connect(func(): run_restart_requested.emit())
-		acts.add_child(restart_btn)
-		content.add_child(acts)
+	# ── ⑥ 操作（不是开关，是「做一件事」）—— **战斗与牌桌有；主界面没有** ──
+	#    ★ 2026-10-10 主界面档案整块**不建**：这里的动作是「相机复位 / 重开一局 /
+	#      离开这一局·回主界面」，在主界面上**一个对应物都没有**（我们就在主界面）。
+	#      建出来就是一排点不动的死按钮（红线 9，见 `PROFILE_MENU`）。
+	if not _is_menu():
+		content.add_child(make_group_header("操作  ACTION"))
+		if _is_battle():
+			var acts := HBoxContainer.new()
+			acts.add_theme_constant_override("separation", 5)
+			acts.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			var cam_btn := _mk_btn("相机复位")
+			cam_btn.pressed.connect(func(): camera_reset_requested.emit())
+			acts.add_child(cam_btn)
+			var restart_btn := _mk_btn("重开一局")
+			EveButtonTheme.apply(restart_btn, "hud_warn")
+			restart_btn.pressed.connect(func(): run_restart_requested.emit())
+			acts.add_child(restart_btn)
+			content.add_child(acts)
 
-	# 返回主界面单独一行：它是"离开这一局"，与上面两个"局内动作"不同级。
-	# ⚠️ **两个档案都要**（牌桌上这是唯一的"离开"入口），只是文案不同：
-	#    战场**没有存档**，所以必须把"放弃本局"写出来，不能只写"返回主界面"
-	#    —— 那会让人以为进度还在（本文件顶注也写过这条）。
-	var back_row := HBoxContainer.new()
-	back_row.add_theme_constant_override("separation", 5)
-	back_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var menu_btn := _mk_btn("放弃本局 · 回主界面" if _is_battle() else "返回主界面")
-	menu_btn.pressed.connect(func(): back_to_menu_requested.emit())
-	back_row.add_child(menu_btn)
-	content.add_child(back_row)
+		# 返回主界面单独一行：它是"离开这一局"，与上面两个"局内动作"不同级。
+		# ⚠️ **战斗与牌桌都要**（牌桌上这是唯一的"离开"入口），只是文案不同：
+		#    战场**没有存档**，所以必须把"放弃本局"写出来，不能只写"返回主界面"
+		#    —— 那会让人以为进度还在（本文件顶注也写过这条）。
+		var back_row := HBoxContainer.new()
+		back_row.add_theme_constant_override("separation", 5)
+		back_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var menu_btn := _mk_btn("放弃本局 · 回主界面" if _is_battle() else "返回主界面")
+		menu_btn.pressed.connect(func(): back_to_menu_requested.emit())
+		back_row.add_child(menu_btn)
+		content.add_child(back_row)
 
 	# ── ⑦ 系统（DEBUG 默认折叠）—— **只有战场有** ──────────────
 	#
@@ -374,9 +395,20 @@ func _build_contents() -> void:
 	#    底部留下 390px 空白（用户 2026-09-29 实测）。这一行本来就放得下，不需要折行。
 	# ⚠️ 牌桌档案里那串战场快捷键（空格 / C / B / R）**一个都不存在** ⇒
 	#    换成一句只说显示的话，⛔ 别把战场的说明写进牌桌（那是一页骗人的话）。
+	# ★ 2026-10-10 主界面档案：只说主界面上**真实有效**的东西（音量 / 分辨率），
+	#    ⛔ 别提字号（主界面恒定 100%，这里改不了 —— 见 `PROFILE_MENU`）。
 	var hint := Label.new()
-	hint.text = "快捷键  空格 暂停/继续 · C 相机复位 · B 棋盘 · R 重开" if _is_battle() \
-			else "分辨率与字号即时生效；牌桌不参与「界面缩放」"
+	var hint_text := "快捷键  空格 暂停/继续 · C 相机复位 · B 棋盘 · R 重开"
+	if _is_menu():
+		# ⚠️ 「显示」区随平台变：桌面 = 分辨率（即时生效）；移动 = 界面缩放
+		#    （存档值，主界面是固定版面**不参与**放大）⇒ 提示必须跟着平台说，
+		#    ⛔ 别在手机上写「分辨率即时生效」（根本没这一行）。
+		hint_text = "音量与分辨率即时生效；主界面为固定版面，字号沿用战斗设置" \
+				if RESOLUTION_SCRIPT.is_enabled() \
+				else "音量即时生效；界面缩放与字号在战斗中生效（主界面为固定版面）"
+	elif not _is_battle():
+		hint_text = "分辨率与字号即时生效；牌桌不参与「界面缩放」"
+	hint.text = hint_text
 	hint.add_theme_color_override("font_color", C_TEXT_FAINT)
 	FONT.fs(hint, 9)
 	hint.autowrap_mode = TextServer.AUTOWRAP_OFF
@@ -762,7 +794,10 @@ func set_background_id(id: String) -> void:
 	for i in _bg_btns.size():
 		var on := String(BACKGROUNDS[i]["id"]) == id
 		EveButtonTheme.apply(_bg_btns[i], "hud_main" if on else "hud")
-	set_status(_bg_name(id))
+	# ★ 2026-10-10 主界面档案**没有天空盒可换** ⇒ 标题栏右侧别挂「加达里 C07」
+	#    这种背景名（会让人以为这里能换背景，其实是块死信息）。
+	if not _is_menu():
+		set_status(_bg_name(id))
 
 
 ## 回写缩放档高亮。传**存档原值**（0 = 自动）。

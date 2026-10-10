@@ -73,6 +73,11 @@ const PROGRESS := preload("res://scripts/core/eve_progress_store.gd")
 const AUDIO_SCRIPT := preload("res://scripts/core/eve_audio.gd")
 ## 设置存档（读音量初值 —— 让玩家在设置窗里调的音乐音量**在主界面照样生效**）
 const STORE := preload("res://scripts/core/eve_settings_store.gd")
+## ★ 2026-10-10 主界面「设置」窗 —— 与战场 / 牌桌**共用同一个类**，只是换档案。
+##   用 `PROFILE_MENU`（音频 + 分辨率；⛔ 无字号、无返回主界面，理由见该类顶注）。
+const SETTINGS_SCRIPT := preload("res://scripts/ui/panels/eve_settings.gd")
+## 设置窗宽度（设计空间像素）。高度由窗自己按内容反推，⛔ 别在这里定。
+const SETTINGS_W := 320.0
 
 ## ★ 2026-10-10 版权声明。它不是"游戏模式"，但对玩家来说就是**左边按钮列表最下面**
 ##   的一项，而且要和模式按钮**共用同一套选中样式与键盘导航** ⇒ 作为伪模式挂在
@@ -220,6 +225,12 @@ var _audio: Variant = null
 ## ★ 2026-10-10 版权声明大方框。**只建一次**，之后靠 `visible` 切换 ——
 ##    每次 `_refresh()` 重建会让文字闪一下，也白白丢掉旧节点的引用。
 var _credits_panel: PanelContainer = null
+## ★ 2026-10-10 设置窗（`eve_settings.gd` 的 `PROFILE_MENU` 档案）。
+## ⚠️ 声明成 **Variant**：要调 `set_state()` / `set_window_rect()` / `move_to_front()`
+##    这些 `Control` 基类上没有的成员，写成具体类型会**解析失败**（牌桌踩过同款坑）。
+var _settings: Variant = null
+## 右上角「设置」按钮（开 / 关同一扇窗）。
+var _settings_btn: Button = null
 
 
 func _ready() -> void:
@@ -271,9 +282,14 @@ func _ready() -> void:
 		_pick[String(m["id"])] = 0
 	_build_brand()
 	_build_sys()
+	_build_version_tag()
 	_build_modes()
 	_build_strips()
 	_build_credits_panel()
+	# ★ 2026-10-10 设置窗**最后建** —— Godot 里后加的子节点画在上面，
+	#   建早了会被模式按钮 / 难度卡片盖住（底图那处踩过同一个坑）。
+	#   ⚠️ 它挂在 `_content` 上 ⇒ 坐标即基准区坐标，跟着内容一起居中。
+	_build_settings()
 	_refresh()
 	_layout_content()
 	resized.connect(_layout_content)
@@ -308,6 +324,68 @@ func _build_audio() -> void:
 	_audio.set_muted(bool(s.get("muted", false)))
 	# ★ 主界面 BGM = City of Night（逻辑名 "menu"，`menu_01.ogg`，68.25s 无缝循环）。
 	_audio.play_music("menu")
+
+
+## ★ 2026-10-10 主界面「设置」窗（与战场 / 牌桌**共用同一个类**，换 `PROFILE_MENU` 档案）。
+##
+## ⚠️ `profile` 必须在 `add_child` **之前**设好 —— `_ready` 里就按它决定建哪些分区。
+## ⚠️ `layout_key` 用**独立的一个**：⛔ 别与战场 / 牌桌共用存档位（三方窗尺寸不同，
+##    共用一个键会让窗一进来就落在别人的坐标上）。
+## ⚠️ 它挂 `_content` 上（跟着内容居中），且是 `_content` 的**最后一个**子节点
+##    （在 `_build_credits_panel()` 之后建）—— Godot 里后加的画在上面。
+func _build_settings() -> void:
+	_settings = SETTINGS_SCRIPT.new()
+	_settings.name = "MenuSettings"
+	_settings.profile = SETTINGS_SCRIPT.PROFILE_MENU
+	_settings.layout_key = "menu_settings"
+	_content.add_child(_settings)
+	_settings.visible = false
+	# 音量 / 静音直接回写到菜单自己的音频宿主（它已在 `_build_audio()` 里建好）。
+	_settings.volume_changed.connect(func(kind: StringName, v: float):
+		if _audio != null:
+			_audio.set_volume(kind, v))
+	_settings.mute_toggled.connect(func(on: bool):
+		if _audio != null:
+			_audio.set_muted(on))
+	# 分辨率变了 ⇒ 窗口尺寸变 ⇒ 内容的居中偏移变 ⇒ 把窗与内容一起重摆。
+	_settings.resolution_changed.connect(func(_i: int):
+		_place_settings()
+		_layout_content())
+	_place_settings()
+
+
+## 把设置窗摆在设计空间**居中偏上**。
+##
+## ⚠️ 它挂在 `_content` 上 ⇒ 坐标即「基准区」坐标，⛔ 不用再补居中偏移
+##    （`_content` 自己已经被 `_layout_content()` 挪到居中位置了）。
+## ⚠️ 高度**不由这里定**：`EveSettingsWindow._fit_height()` 会按内容反推并接管。
+func _place_settings() -> void:
+	if _settings == null:
+		return
+	var base := LAYOUT.BASE
+	_settings.set_window_rect((base.x - SETTINGS_W) * 0.5, 70.0, SETTINGS_W, 480.0)
+
+
+## 右上角「设置」：开 / 关同一扇窗（再点一次收起 —— 与牌桌同一个交互）。
+##
+## ⚠️ 打开时回写**全部真实状态**：窗里显示的必须就是实际值，否则玩家看到的
+##    开关与实际不符，点一下反而改成了他不想要的那个。
+func _toggle_settings() -> void:
+	if _settings == null:
+		return
+	if _settings.visible:
+		_settings.visible = false
+		return
+	_place_settings()
+	var vols: Dictionary = _audio.volumes() if _audio != null else {}
+	_settings.set_state({
+		"resolution_index": RESOLUTION.current_index(),
+		"ui_scale": float(STORE.load_all().get("ui_scale", 0.0)),
+		"muted": bool(vols.get("muted", false)),
+		"volumes": vols,
+	})
+	_settings.visible = true
+	_settings.move_to_front()
 
 
 ## 模式表 = 任务关卡（难度来自表）+ 两个无分级的模式
@@ -369,7 +447,9 @@ func _build_sys() -> void:
 	box.alignment = BoxContainer.ALIGNMENT_END
 	box.add_theme_constant_override("separation", 10)
 	box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	box.offset_left = -(SYS_MARGIN_R + 220.0)
+	# ⚠️ 宽度要够放三个按钮（设置 / 回看片头 / 退出游戏，各 84 + 两道 18 间隔
+	#    = 288）⇒ 留 300。原来 220 只够两个，加「设置」后第三个会被挤出去。
+	box.offset_left = -(SYS_MARGIN_R + 300.0)
 	box.offset_right = -SYS_MARGIN_R
 	box.offset_top = SYS_TOP
 	box.offset_bottom = SYS_TOP + 70.0
@@ -377,12 +457,21 @@ func _build_sys() -> void:
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_END
 	row.add_theme_constant_override("separation", 18)
-	# ⚠️ 这里**没有「设置」** —— 设置窗里绝大半是局内项
-	#    （雾 / 射程环 / 棋盘 / 相机复位 / 重开一局），而且它的音量要挂在
-	#    局内那个 EveAudio 上。菜单上没有这个宿主 ⇒ 放上去就是个点不动的
-	#    死按钮（红线 9）。等设置与音频提到全局宿主之后再补。
-	#    ⚠️ 2026-10-10 更新：`_build_audio()` 之后菜单**已经有**音频宿主了，
-	#       所以缺的只剩「设置窗本身 + 它的音量回写」——补的时候直接用 _audio。
+	# ★ 2026-10-10 补上「设置」（用户要求：主界面右上角要有设置，主要设置都放进去）。
+	#   此前缺它的唯一理由是「菜单没有音频宿主 ⇒ 音量滑杆是死旋钮」（红线 9）；
+	#   `_build_audio()` 之后菜单**已经有** `_audio` 宿主了 ⇒ 那个理由不再成立。
+	#   ⚠️ 用 `PROFILE_MENU` 档案：音频 + 分辨率；⛔ 无字号（菜单恒定 100%）、
+	#      无「返回主界面」（我们就在主界面）。
+	var set_btn := Button.new()
+	set_btn.name = "SettingsBtn"
+	set_btn.text = "设置"
+	BTN_THEME.apply(set_btn, "plain")
+	FONT.fs(set_btn, 12)
+	set_btn.custom_minimum_size = Vector2(84, 26)
+	set_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+	set_btn.pressed.connect(_toggle_settings)
+	row.add_child(set_btn)
+	_settings_btn = set_btn
 	#
 	# 「回看片头」：开场剧情**默认只在第一次玩时出现**（存 progress.cfg），
 	# 所以必须留一个显式的回看入口 —— **跳过不可以是不可逆的**。
@@ -407,11 +496,35 @@ func _build_sys() -> void:
 	row.add_child(quit_btn)
 	box.add_child(row)
 
-	var v := _label("v%s · 开发版" % str(ProjectSettings.get_setting("application/config/version",
-			"0.4.0")), 10, Color(0.62, 0.72, 0.76, 0.75))
-	v.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	box.add_child(v)
+	# ⚠️ 版本号**不再放这里**（2026-10-10 用户要求）：移到主界面**右下角**，
+	#    见 `_build_version_tag()`。以后导出只改 `application/config/version`，
+	#    右下角自动跟着变（永久管线，见 MEMORY「导出」章）。
 	_content.add_child(box)
+
+
+## ★ 2026-10-10 主界面**右下角**版本号（显示 `V<application/config/version>`）。
+##
+## ⚠️ 版本号**只读 `application/config/version`**（`project.godot` 的 `config/version`）
+##    —— ⛔ 这里不许另写死一个数字。导出流程只改那一处，右下角就自动更新
+##    （**永久管线**：导出改版本 ⇒ 右下角版本号默认跟着变）。
+## ⚠️ 锚在 `_content` 上（=`LAYOUT.BASE` 1920×1080）⇒ 非 16:9 下跟着内容一起居中，
+##    始终贴在基准区右下角。
+## ⚠️ 用 `set_anchors_and_offsets_preset`（⛔ 不是 `set_anchors_preset`）：后者会
+##    **保持 0×0 的当前矩形**、量不出正确位置（见 MEMORY §10 的同类坑）。
+func _build_version_tag() -> void:
+	var ver := str(ProjectSettings.get_setting("application/config/version", "0.0.0"))
+	# ⚠️ **不加暗底**（用户 2026-10-10 明确要求）⇒ 必须用**深色字**：底图右下角是
+	#    亮星云（实测 RGB≈160,180,192），浅色字根本读不出来；深色字对比度 ≈ 6:1。
+	var tag := _label("当前版本 V%s" % ver, 11, Color(0.12, 0.16, 0.19, 0.92))
+	tag.name = "VersionTag"
+	tag.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	tag.offset_left = -170.0
+	tag.offset_right = -56.0
+	tag.offset_top = -50.0
+	tag.offset_bottom = -26.0
+	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	tag.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_content.add_child(tag)
 
 
 ## 当前选中的是不是「版权声明」这一项。
@@ -926,6 +1039,14 @@ func _on_quit() -> void:
 ## 键盘：上下切模式、左右切难度、回车=开始
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	# ★ 2026-10-10 设置窗开着 ⇒ 菜单的键盘导航**让位**（只留 Esc 关窗）：
+	#   否则玩家在窗里调设置时，背后的模式/难度还跟着上下左右键乱跳；
+	#   而 Esc 原本是「退出游戏」——窗开着时直接退游会吓人，先关窗才对。
+	if _settings != null and _settings.visible:
+		if event.keycode == KEY_ESCAPE:
+			_settings.visible = false
+			get_viewport().set_input_as_handled()
 		return
 	var cards := _cards_of(_mode_idx)
 	var id := String(_modes[_mode_idx]["id"])

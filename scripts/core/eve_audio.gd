@@ -252,10 +252,16 @@ func _build_banks() -> void:
 func _scan_dir(dir_path: String) -> Dictionary:
 	var out: Dictionary = {}
 	var names := _list_files(dir_path)
+	var seen := {}
 	for fn in names:
-		var real := fn.trim_suffix(".remap")
+		var real := _strip_import_suffix(fn)
 		if real.get_extension().to_lower() != "ogg":
 			continue
+		# 同一音源在导出包里可能同时以 `<名>.ogg` 与 `<名>.ogg.import` 两条出现
+		# （编辑器里两者都在）⇒ 按还原后的名字去重，别把同一个流塞两次。
+		if seen.has(real):
+			continue
+		seen[real] = true
 		var base := real.get_basename()
 		# 逻辑名 = 去掉末尾的 _NN 变体号
 		var logical := base
@@ -275,7 +281,7 @@ func _scan_dir(dir_path: String) -> Dictionary:
 		_missing_reported[dir_path] = true
 		var probe := "(无 .ogg 候选)"
 		for fn in names:
-			var real := fn.trim_suffix(".remap")
+			var real := _strip_import_suffix(fn)
 			if real.get_extension().to_lower() == "ogg":
 				var full := dir_path.path_join(real)
 				probe = "%s exists=%s" % [full, ResourceLoader.exists(full)]
@@ -283,6 +289,22 @@ func _scan_dir(dir_path: String) -> Dictionary:
 		push_warning("[EveAudio] %s 未识别到音源；目录内容：%s；探针：%s"
 				% [dir_path, ", ".join(PackedStringArray(names)), probe])
 	return out
+
+
+## 把「目录里列出来的文件名」还原成**资源路径用的文件名**。
+##
+## ⚠️⚠️ Godot **导出包对导入资源（.ogg 等）不保留源文件** —— 目录里列出来的是
+##    `<名>.ogg.import`（编辑器里则是 `<名>.ogg` **和** `<名>.ogg.import` 两条）。
+##    历史版本还可能用 `<名>.ogg.remap`。⇒ 三种后缀都要剥掉再按扩展名认，
+##    认出来后按**原始路径**（`<名>.ogg`）去 load —— `ResourceLoader` 会自己
+##    顺着 `.import` 里 `[remap] path=` 找到 `res://.godot/imported/...`。
+##    ⛔ 只认 `.ogg` 会让**导出后 BGM/SFX/环境音全静音、且一条报错都没有**
+##    （2026-10-10 在 MuMu 上实测踩到：整个音源库为空）。
+func _strip_import_suffix(fn: String) -> String:
+	for suf in [".remap", ".import"]:
+		if fn.ends_with(suf):
+			return fn.substr(0, fn.length() - suf.length())
+	return fn
 
 
 ## 列出一个目录下的**文件**名（不含子目录）。

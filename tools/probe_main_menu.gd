@@ -23,6 +23,8 @@ const SHOTS := [
 	{"file": "main_menu_2_tier2.png", "mode": "campaign", "tier": 1},
 	{"file": "main_menu_3_endless.png", "mode": "endless", "tier": 0},
 	{"file": "main_menu_4_cardroom.png", "mode": "cardroom", "tier": 0},
+	# ★ 2026-10-10 右上角「设置」窗打开态（PROFILE_MENU 档案）。
+	{"file": "main_menu_5_settings.png", "mode": "campaign", "tier": 0, "settings": true},
 ]
 
 
@@ -50,6 +52,9 @@ func _ready() -> void:
 		if int(shot["tier"]) != 0:
 			menu._pick["campaign"] = int(shot["tier"])
 			menu._refresh_strips()
+		# ★ 2026-10-10 右上角「设置」窗（打开态出图）
+		if bool(shot.get("settings", false)):
+			menu._toggle_settings()
 		await get_tree().process_frame
 		await get_tree().process_frame
 		await RenderingServer.frame_post_draw

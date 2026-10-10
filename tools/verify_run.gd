@@ -41,6 +41,8 @@ const BATTLE_SCRIPT := preload("res://scripts/eve_battle_scene.gd")
 const ARENA_SCRIPT := preload("res://scripts/scene/eve_battle_arena.gd")
 const ORBIT_CAM_SCRIPT := preload("res://scripts/scene/eve_orbit_camera.gd")
 const SETTINGS_SCRIPT := preload("res://scripts/ui/panels/eve_settings.gd")
+## 浮窗布局存档（`user://window_layout.cfg`）—— 验收要能**隔离**玩家存下来的窗布局。
+const WINDOW_STORE := preload("res://scripts/ui/eve_window_store.gd")
 ## 打击特效层：开火线的几何验收要读它的 `METERS_PER_UNIT`（米↔世界单位）
 const BfxScript := preload("res://scripts/visual/eve_battle_fx.gd")
 
@@ -2147,7 +2149,12 @@ func _step_start_battle() -> void:
 	_expect(bool(s.get("has_sfx", false)), "打击音库已装载（sfx）")
 	_expect(bool(s.get("has_amb", false)), "环境音库已装载（ambience）")
 	_expect(bool(s.get("has_music", false)), "音乐库已装载（music）")
-	_expect(str(s.get("music_current", "")) == "battle",
+	# ⚠️ 2026-10-10：战斗 BGM 名从旧的 "battle" 换成 V0.13 的战场段
+	#    `border` / `border_final`（见 `eve_battle_scene._round_music()`，
+	#    按 `run.node_index` 选段）⇒ 断言跟着改（改语义同步改断言）。
+	#    这里只判「属于战斗段曲目」（`border*`），⛔ 不写死具体哪一首 ——
+	#    曲目随 node_index 变，写死会把"正常换段"误判成失败。
+	_expect(str(s.get("music_current", "")).begins_with("border"),
 			"开战 → BGM 切到战斗段（实际 %s）" % str(s.get("music_current", "")))
 	# ★ 2026-10-01 起音效有总开关（默认关）。断言跟着开关翻 ——
 	#    ⚠️ 不能只写成"关掉就没声音"：那与"音频线断了"完全同构。
@@ -2993,6 +3000,15 @@ func _step_d_settings() -> void:
 	#    `get_combined_minimum_size()` 是控件自己报的最小需求，不需要布局 ——
 	#    而它恰恰就是「窗被撑大」这个病的判据：窗高应当 = 内容最小需求 + 窗框开销。
 	#    （真实观感的「底部空白」由 `tools/probe_settings_fit.tscn` 出数：8~9px。）
+	# ⚠️⚠️ 2026-10-10：这条断言会被**玩家存档的窗布局**污染 ——
+	#    `user://window_layout.cfg` 里若 "设置" 被玩家收起来过（collapsed=true），
+	#    建设置窗时 `_load_layout()` 就把它恢复成收起态 ⇒ 窗高只剩标题栏（27），
+	#    断言假失败。验收必须与玩家存档隔离：先清掉这扇窗的布局记忆、按内容
+	#    重推一次窗高，判完再**原样写回**（验收不该改变玩家的窗布局）。
+	var layout_key := String(sw.call("_layout_key"))
+	var saved_layout: Dictionary = WINDOW_STORE.load_window(layout_key)
+	sw.call("reset_layout")     # 清 _user_rect / _collapsed / _height_owned
+	sw.call("_fit_height")      # 按当前内容重新反推窗高（被测的就是这个语义）
 	var sw_content = sw.get("content")
 	# 窗框开销：标题栏 26 + 内容区上下内距 6/8（COMPACT density）+ 上下边框各 1
 	var chrome := 42.0
@@ -3001,6 +3017,7 @@ func _step_d_settings() -> void:
 			"窗高贴合内容（窗高 %.0f vs 需求 %.0f）" % [float(sw.get("size").y), want])
 	_expect(float(sw.get("size").y) <= 700.0,
 			"窗高没有失控（%.0f ≤ 700）" % float(sw.get("size").y))
+	WINDOW_STORE.save_window(layout_key, saved_layout)   # 原样写回玩家存档
 
 	# ④ 再点一次 ≡ 应当收起（同一个按钮负责开关）
 	if bar.has_signal("settings_requested"):
