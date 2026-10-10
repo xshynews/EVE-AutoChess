@@ -56,7 +56,7 @@ func _ready() -> void:
 	print("RESULT passed=%d failed=%d" % [_pass, _fail])
 	if _fail > 0:
 		print("⚠️ 有失败项 —— 见上面的 FAIL 行")
-	get_tree().quit()
+	get_tree().quit(1 if _fail > 0 else 0)
 
 
 # ------------------------------------------------------------------ 步骤

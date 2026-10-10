@@ -126,6 +126,11 @@ func _verify_clamp() -> void:
 
 
 func _shot(path: String) -> void:
+	# ⚠️ headless 下不渲染，`frame_post_draw` 永远不会发出 ⇒ 不跳过就挂死到超时。
+	#    无头时只跑流程与诊断输出，不截图。
+	if DisplayServer.get_name() == "headless":
+		print("[截图跳过] headless：", path)
+		return
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
 	if img == null:

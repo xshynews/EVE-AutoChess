@@ -437,8 +437,13 @@ func _build_display_rows() -> Array:
 		var blk := _build_choice_block(items, "name", 2,
 				func(i: int): _pick_resolution(i))
 		var btns: Array = blk["btns"]
-		for b in btns:
-			_res_btns.append(b as Button)
+		for i in btns.size():
+			var rb := btns[i] as Button
+			# 当前屏幕放不下的档位置灰（选了也会被退回自动档）
+			if not RESOLUTION_SCRIPT.fits_screen(i):
+				rb.disabled = true
+				rb.tooltip_text = "超出当前屏幕"
+			_res_btns.append(rb)
 		var blk_rows: Array = blk["rows"]
 		for r in blk_rows:
 			rows.append(r)

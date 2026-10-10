@@ -32,7 +32,7 @@ func _ready() -> void:
 	_t_height_sync()
 	_t_persist()
 	print("═══ RESULT passed=%d failed=%d ═══" % [_pass, _fail])
-	get_tree().quit()
+	get_tree().quit(1 if _fail > 0 else 0)
 
 
 func _mk_win(title: String, persist := false) -> Control:

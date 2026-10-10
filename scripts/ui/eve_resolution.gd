@@ -151,8 +151,20 @@ static func resolve_index(saved: String) -> int:
 		return default_index()
 	for i in CHOICES.size():
 		if String(CHOICES[i]["key"]) == saved:
-			return i
+			# 存的档位当前屏幕放不下（换了显示器 / 当初选大了）⇒ 按自动档算
+			return i if fits_screen(i) else default_index()
 	return default_index()
+
+
+## 该档位能否完整放进当前屏幕的可用区。
+## ⚠️ 无头 / 移动端恒为 true：那里不改窗口，也量不出真实屏幕。
+static func fits_screen(idx: int) -> bool:
+	if idx < 0 or idx >= CHOICES.size():
+		return false
+	if not is_enabled():
+		return true
+	var avail := usable_size()
+	return int(CHOICES[idx]["w"]) <= avail.x and int(CHOICES[idx]["h"]) <= avail.y
 
 
 ## 当前生效的档位下标（读存档）。
@@ -169,6 +181,10 @@ static func apply_index(win: Window, idx: int) -> void:
 		return
 	if not is_enabled():
 		return
+	# ⚠️ 档位比屏幕可用区大 ⇒ 退回自动档。否则窗口超出屏幕、再一居中，
+	#    四边都被裁掉（1080p 笔记本选了 4K 档 ⇒ 开屏只看得见画面中间一块）。
+	if not fits_screen(idx):
+		idx = default_index()
 	var want := Vector2i(int(CHOICES[idx]["w"]), int(CHOICES[idx]["h"]))
 	if win.size != want:
 		win.size = want
