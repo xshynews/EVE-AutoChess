@@ -398,14 +398,21 @@ func _toggle_settings() -> void:
 	_settings.move_to_front()
 
 
+## 「任务关卡」的副标题 —— **唯一构造点**：取词 + 格式化只在这里做**一次**。
+##
+## ⛔⛔ 别在渲染处再过 `T.t()`：那会拿拼好的「15 回合 · 共 3 个难度」去查
+##    `MODE_CAMPAIGN_META`，命中后返回 CSV 的**模板** ⇒ 界面显示裸 `%d`
+##    （2026-10-11 实际踩到；渲染走 `_mode_meta()`，`verify_i18n` 有断言）。
+static func _campaign_meta() -> String:
+	var first: Dictionary = TIERS.ROWS[0]
+	return T.t("MODE_CAMPAIGN_META", "%d 回合 · 共 %d 个难度") \
+			% [int(first["rounds"]), TIERS.ROWS.size()]
+
 ## 模式表 = 任务关卡（难度来自表）+ 两个无分级的模式
 func _build_mode_table() -> Array:
-	var first: Dictionary = TIERS.ROWS[0]
-	var meta := T.t("MODE_CAMPAIGN_META", "%d 回合 · 共 %d 个难度") \
-			% [int(first["rounds"]), TIERS.ROWS.size()]
 	var out: Array = []
-	out.append({"id": "campaign", "name": "任务关卡", "meta": meta, "locked": false,
-			"cards": TIERS.ROWS})
+	out.append({"id": "campaign", "name": "任务关卡", "meta": _campaign_meta(),
+			"locked": false, "cards": TIERS.ROWS})
 	for m in EXTRA_MODES:
 		out.append(m)
 	# ★ 2026-10-10：版权声明（伪模式，见 CREDITS_MODE_ID 的注释）。
@@ -442,6 +449,16 @@ static func _mode_key(m: Dictionary, field: String) -> String:
 
 static func _mode_txt(m: Dictionary, field: String) -> String:
 	return T.t(_mode_key(m, field), String(m[field]))
+
+
+## ⛔⛔ **副标题（meta）不许再过 `T.t()`** —— 它是**运行时拼好的最终串**
+## （`_build_mode_table()` 里已经 `T.t(模板) % [数字]` 过一遍了）。
+## 再取词就会拿「15 回合 · 共 3 个难度」去查 `MODE_CAMPAIGN_META`，
+## 命中后返回 CSV 的**模板** ⇒ 界面显示裸 `%d 回合 · 共 %d 个难度`
+## （2026-10-11 实际踩到；`verify_i18n` 已加断言钉死）。
+## ✅ 英文版仍然正确：取词发生在 `_build_mode_table()` 里，英文模板在那儿就被选中了。
+static func _mode_meta(m: Dictionary) -> String:
+	return String(m["meta"])
 
 
 ## 卡片的 key 前缀：任务关卡用 `id`（`guard_border`…），娱乐总汇的卡用 `code`
@@ -793,7 +810,7 @@ func _make_mode_row(m: Dictionary) -> Button:
 	box.add_theme_constant_override("separation", 5)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var nm := _label(_mode_txt(m, "name"), 19, C_TEXT)
-	var mt := _label(_mode_txt(m, "meta"), 11, C_DIM)
+	var mt := _label(_mode_meta(m), 11, C_DIM)
 	box.add_child(nm)
 	box.add_child(mt)
 	b.add_child(box)

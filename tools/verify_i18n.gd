@@ -296,6 +296,25 @@ func _t_menu_wired() -> void:
 			"★ en：「开始」按钮是整句带 %%s，不是拼出来的（实际「%s」）"
 			% (T.t("MENU_START", "▶　开始%s") % "Campaign"))
 
+	# ── ⛔⛔ 「任务关卡」副标题：拼好之后**不许再取词** ────────────────
+	#    事故（2026-10-11）：渲染处拿已格式化的 meta 又过了一遍 `T.t()` ⇒
+	#    `T.t("MODE_CAMPAIGN_META", "15 回合 · 共 3 个难度")` **命中** CSV，
+	#    返回的是模板 ⇒ 界面显示裸「%d 回合 · 共 %d 个难度」。
+	#    ⇒ 构造只许在 `_campaign_meta()`，渲染只许走 `_mode_meta()`（不取词）。
+	T.set_locale("zh_CN")
+	var meta_zh := MENU._campaign_meta()
+	_ok(meta_zh == "15 回合 · 共 3 个难度",
+			"★ zh_CN：副标题 = 15 回合 · 共 3 个难度（实际「%s」）" % meta_zh)
+	_ok(not meta_zh.contains("%"),
+			"⛔⛔ zh_CN：副标题里不许残留占位符 %%（实际「%s」）" % meta_zh)
+	_ok(MENU._mode_meta({"meta": meta_zh}) == meta_zh,
+			"⛔⛔ 渲染 `_mode_meta()` 原样返回、不再取词（实际「%s」）"
+					% MENU._mode_meta({"meta": meta_zh}))
+	T.set_locale("en")
+	var meta_en := MENU._campaign_meta()
+	_ok(not meta_en.contains("%") and meta_en.to_lower().contains("round"),
+			"★★ en：副标题是英文且已代入数字（实际「%s」）" % meta_en)
+
 	# ── 覆盖率 A：`STAT_KEYS` 登记的每一条都要真有英文 ──────────────
 	var miss := PackedStringArray()
 	var cn_keys := PackedStringArray()

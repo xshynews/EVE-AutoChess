@@ -376,6 +376,15 @@ func _restore_file(p: String, b: PackedByteArray) -> void:
 		f.store_buffer(b)
 
 
+## 盘上某个文件的**内容签名**（不存在 = ""）。
+## ⛔ 判据用它代替 `has_run()`：后者会随"玩家有没有真档"而变（假红/假绿）。
+func _file_sig(p: String) -> String:
+	var f := FileAccess.open(p, FileAccess.READ)
+	if f == null:
+		return ""
+	return f.get_buffer(f.get_length()).hex_encode()
+
+
 func _t_save_schema_version() -> void:
 	print("── 2#3 存档 schema_version ──")
 	# ① 纯逻辑（无盘）
@@ -462,12 +471,19 @@ func _t_run_save_roundtrip() -> void:
 	_ok(str(a.to_dict()) == str(d), "★ to_dict 幂等（同一局两次序列化一致）")
 	# ③ store：闸门 / 往返 / 版本不符丢弃 / 删档
 	RUN_STORE.persist = true
+	# ⚠️ 判据是「**盘上签名不变**」，⛔ 不是 `not has_run()`：
+	#    后者假设"自检开始前盘上没有对局存档"，而玩家机器上**常常有真档**
+	#    （2026-10-11 就这样误红了一条，改的人还以为是自己改坏的）。
+	#    改成比对签名后，无论盘上本来有没有档都成立，且**不会动玩家存档**。
+	var sig_before := _file_sig(RUN_STORE.PATH)
 	RUN_STORE.session_active = false
 	RUN_STORE.save_run(d)
-	_ok(not RUN_STORE.has_run(), "★ 非真实会话（session_active=false）**不写盘**")
+	_ok(_file_sig(RUN_STORE.PATH) == sig_before,
+			"★ 非真实会话（session_active=false）**不写盘**（盘上签名不变）")
 	RUN_STORE.session_active = true
 	RUN_STORE.save_run(d)
-	_ok(RUN_STORE.has_run(), "★ 真实会话才写盘")
+	_ok(_file_sig(RUN_STORE.PATH) != sig_before, "★ 真实会话才写盘（签名变了）")
+	_ok(RUN_STORE.has_run(), "★ 真实会话写完后 `has_run()` 为真")
 	var back := RUN_STORE.load_run()
 	_ok(int(back.get("coin", -1)) == 37 and int(back.get("node_index", -1)) == 5,
 			"★ 从盘上读回（coin=%d node=%d）" % [int(back.get("coin", -1)), int(back.get("node_index", -1))])
