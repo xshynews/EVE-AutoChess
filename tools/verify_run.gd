@@ -4140,8 +4140,8 @@ func _t_ship_yaw() -> void:
 	#   这是唯一能抓住「表把舰艏标在横向轴上」的护栏（实机症状：横着飞/倒着飞，
 	#   而 ①~⑨ 条**全部放行**，因为表内部自洽、长轴也确实在水平面内）。
 	#   几何长轴来自 glb 的 AABB 最长边经 `mesh_rot` —— 与任何表无关（红线 50a）。
-	EveShipYawTable.set_geo_long_provider(
-			func(id: StringName) -> Vector3: return _geo_long_root(id))
+	# ⚠️ 方法引用，⛔ 不用 lambda（存进 static var 的 lambda 会让进程退出时段错误）
+	EveShipYawTable.set_geo_long_provider(_geo_long_root)
 	var problems := EveShipYawTable.validate()
 	_expect(_mesh_rot_injected(), "47 轮：`mesh_rot` provider 已注入（否则 ⑧⑨ 会退回单位阵口径 ⇒ 假失败）")
 	_expect(problems.is_empty(), "朝向修正表自检通过（%s）" % str(problems))
