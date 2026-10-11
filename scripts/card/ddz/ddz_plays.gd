@@ -95,7 +95,8 @@ static func candidates_for(hand: Array, target: Dictionary) -> Array:
 					out.append(body)
 				else:
 					var need3 := 2 if tt == R.Type.PLANE_TWO else 1
-					for kick in _kickers(g, -1, need3, tlen, seg):
+					# ★ B-R05：body_each=3 ⇒ 主体点数的第 4 张可当单翼
+					for kick in _kickers(g, -1, need3, tlen, seg, 3):
 						out.append(body + kick)
 		R.Type.FOUR_TWO_SINGLE, R.Type.FOUR_TWO_PAIR:
 			var need4 := 2 if tt == R.Type.FOUR_TWO_PAIR else 1
@@ -194,29 +195,46 @@ static func _triple_ranks(g: Dictionary, ranks: Array[int]) -> Array:
 ## `per` = 每组几张（1 = 三带一 / 2 = 三带二或飞机带对）；
 ## `groups` = 需要几组（三带一是 1 组，飞机带牌是 k 组）。
 ## `exclude_ranks` = 不能用来当陪牌的点数（主体自己 / 已定的四张）。
+## `body_each` = 上述点数每个已被主体吃掉几张（0 = 整个点数不可用）。
+##   ⚠️ B-R05（2026-10-11 审查）：飞机主体点数若持 4 张，剩的第 4 张
+##   可以当**单翼**（333444+3+5 是合法飞机带单）—— 传 `body_each=3` 即可。
+##   三带一**不传**（333+3 会被 classify 判成炸弹，不能造这种候选）。
 ##
 ## ⚠️ 只返回**有限个**组合（每个点数取最少张数），不是全排列 ——
 ##    全排列在手牌多时是组合爆炸，而 AI 只需要「有个能打的」。
 static func _kickers(g: Dictionary, main_rank: int, per: int, groups: int,
-		exclude_ranks: Array = []) -> Array:
+		exclude_ranks: Array = [], body_each: int = 0) -> Array:
 	var pool: Array[int] = []
 	var rs: Array[int] = []
 	for r in g:
 		rs.append(int(r))
 	rs.sort()
 	for r in rs:
-		if r == main_rank or exclude_ranks.has(r):
+		if _kick_used(g, r, main_rank, exclude_ranks, body_each, per) < 0:
 			continue
-		if (g[r] as Array).size() >= per:
-			pool.append(r)
+		pool.append(r)
 	var out: Array = []
 	if pool.size() < groups:
 		return out
 	var one: Array = []
 	for i in groups:
-		one.append_array((g[pool[i]] as Array).slice(0, per))
+		var u := _kick_used(g, pool[i], main_rank, exclude_ranks, body_each, per)
+		one.append_array((g[pool[i]] as Array).slice(u, u + per))
 	out.append(one)
 	return out
+
+
+## 点数 r 还能出几张当陪牌（从第 `used` 张起取）；不可用返回 -1。
+static func _kick_used(g: Dictionary, r: int, main_rank: int,
+		exclude_ranks: Array, body_each: int, per: int) -> int:
+	var used := 0
+	if r == main_rank or exclude_ranks.has(r):
+		if body_each <= 0:
+			return -1
+		used = body_each
+	if (g[r] as Array).size() - used < per:
+		return -1
+	return used
 
 
 ## 去重（按排序后的 id 串）

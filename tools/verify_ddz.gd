@@ -8,6 +8,7 @@ extends Node
 ##    所以这里把每种牌型都摆正例 + 反例，边界全部钉住。
 
 const R := preload("res://scripts/card/ddz/ddz_rules.gd")
+const P := preload("res://scripts/card/ddz/ddz_plays.gd")
 const G := preload("res://scripts/card/ddz/ddz_game.gd")
 const AI := preload("res://scripts/card/ddz/ddz_ai.gd")
 const T := preload("res://scripts/card/ddz/ddz_table.gd")
@@ -26,6 +27,7 @@ func _ready() -> void:
 	_run_timed("_t_singles", _t_singles)
 	_run_timed("_t_straights", _t_straights)
 	_run_timed("_t_planes", _t_planes)
+	_run_timed("_t_plays", _t_plays)
 	_run_timed("_t_fours", _t_fours)
 	_run_timed("_t_invalid", _t_invalid)
 	_run_timed("_t_beats", _t_beats)
@@ -167,6 +169,55 @@ func _t_planes() -> void:
 	_ok(_type_of([13, 13, 13, 14, 14, 14]) == R.Type.PLANE, "KKKAAA 飞机（封顶 A）")
 	_ok(_type_of([14, 14, 14, 15, 15, 15]) == R.Type.INVALID,
 			"★ AAA222 ⇒ 非法（2 不许进飞机主体）")
+
+	# ★ A-P1（2026-10-11 审查）：带对主体要**回溯**，不许固定剥最高三张
+	_ok(_type_of([3, 3, 3, 4, 4, 4, 5, 5, 5, 5]) == R.Type.PLANE_TWO,
+			"★ 3334445555 飞机带对（主体 333444、翅膀 5555——旧版误判非法）")
+	_ok(_rank_of([3, 3, 3, 4, 4, 4, 5, 5, 5, 5]) == 4, "★ 上例主体点数 = 4")
+	_ok(_type_of([4, 4, 4, 5, 5, 5, 6, 6, 6, 6]) == R.Type.PLANE_TWO
+			and _rank_of([4, 4, 4, 5, 5, 5, 6, 6, 6, 6]) == 5,
+			"4445556666 带对，主体 456")
+	_ok(_type_of([3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7]) == R.Type.PLANE_TWO
+			and _rank_of([3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7]) == 5,
+			"★ 15 张：合法主体是 345（剥最高 456 会剩奇数 ⇒ 旧版漏判）")
+	_ok(_type_of([3, 3, 3, 4, 4, 4, 5, 5, 5, 6]) == R.Type.INVALID,
+			"10 张凑不出两对 ⇒ 非法（回溯后仍无合法主体）")
+
+
+# ------------------------------------------------------- 候选生成（B-R05）
+
+func _t_plays() -> void:
+	print("[3b] 候选生成（同点数单翼）")
+	# ★ B-R05：手牌 3333 444 5 压「飞机带单 rank3 len2」——
+	#   唯一可行解 333444+3+5（主体的第 4 张 3 当单翼），旧版漏掉这个候选。
+	var hand := _ids([3, 3, 3, 3, 4, 4, 4, 5])
+	var target := {"type": R.Type.PLANE_ONE, "rank": 3, "len": 2}
+	var cands: Array = P.candidates_for(hand, target)
+	_ok(cands.size() > 0, "★ 33334445 能给出飞机带单候选（旧版为空）")
+	var found := false
+	for c in cands:
+		var d := R.classify(c)
+		if int(d.get("type", 0)) == R.Type.PLANE_ONE and int(d.get("rank", 0)) == 4:
+			found = true
+	_ok(found, "★ 候选含合法飞机带单（主体 333444，rank 4）")
+	# 反向护栏：三带一不造「333+3」——主体点数整组排除
+	# （3333 会走**炸弹分支**进候选列表，那是合法的另一牌型，不算这条的失败）
+	var g2 := P.group_by_rank(_ids([3, 3, 3, 3, 5]))
+	var k2: Array = P._kickers(g2, 3, 1, 1)
+	var has_same := false
+	for kick in k2:
+		for id in kick:
+			if R.rank_of(int(id)) == 3:
+				has_same = true
+	_ok(k2.size() > 0 and not has_same, "三带一带牌不取主体点数（333+5，不造 333+3）")
+	# ★ B-R05 正向：飞机主体点数的第 4 张可当单翼
+	var g3 := P.group_by_rank(hand)
+	var k3: Array = P._kickers(g3, -1, 1, 2, [3, 4], 3)
+	var ranks_in := {}
+	for id in (k3[0] as Array):
+		ranks_in[R.rank_of(int(id))] = true
+	_ok(k3.size() > 0 and ranks_in.has(3) and ranks_in.has(5),
+			"★ 飞机单翼可取主体第 4 张（3 与 5 各一）")
 
 
 # ------------------------------------------------------------------ 四带二

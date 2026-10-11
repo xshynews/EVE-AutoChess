@@ -39,6 +39,7 @@ func _ready() -> void:
 	print("═══ verify_review_fixes ═══")
 	_t_r01_restart_clears_picks()
 	_t_r02_salvage_cap()
+	_t_salvage_state_domain()
 	_t_r03_friendly_wreck_star()
 	_t_r04_merge_keeps_buffs()
 	_t_r05_black_market_pending()
@@ -132,6 +133,35 @@ func _t_r02_salvage_cap() -> void:
 	_ok(delivered == in_flight and st.repair_queue.is_empty(),
 			"★ R02 交付 %d 艘（在途 %d）且队列清空，无静默丢失"
 			% [delivered, in_flight])
+
+
+# ────────────────────────────────────────────────────────────── C-P1-1
+## ★ C-P1-1（2026-10-11 三源审查）：`salvage_info()` 的值域契约。
+## 全部消费方（商店只读看板 / 结算页打捞区）都只认 ""/"list"/"repairing"；
+## 这里用真实场景把值域钉死，防未来有人发明第四种 state 让 UI 静默走空。
+func _t_salvage_state_domain() -> void:
+	print("── C-P1-1 salvage_info() 值域契约 ──")
+	# ① 有残骸待捡 ⇒ "list"（结算页打捞区消费；商店框按空态引导渲染）
+	var st := _new_run(31)
+	st.set_phase(EveRunState.Phase.RESOLVE)
+	st.wrecks.append({"ship_key": &"punisher", "name": "惩罚者",
+			"star": 1, "cost": 1, "team": 0})
+	st.wrecks_display.append({"star": 1, "m": 1.0})
+	var info := st.salvage_info()
+	_ok(String(info.get("state", "")) == "list",
+			"★ 有残骸 ⇒ state=\"list\"（旧注释写的 \"wreck\" 不是真实值域）")
+	_ok((info.get("items", []) as Array).size() == 1, "\"list\" 携带 items 供结算页渲染")
+	# ② 无残骸、有在途队列 ⇒ "repairing"
+	var st2 := _new_run(32)
+	st2.set_phase(EveRunState.Phase.RESOLVE)
+	st2.repair_queue.append({"ship_key": &"punisher", "name": "惩罚者",
+			"star": 1, "cost": 1, "evt": 1})
+	var info2 := st2.salvage_info()
+	_ok(String(info2.get("state", "")) == "repairing", "仅在途队列 ⇒ state=\"repairing\"")
+	# ③ 两者皆无 ⇒ {}（空字典）
+	var st3 := _new_run(33)
+	st3.set_phase(EveRunState.Phase.RESOLVE)
+	_ok(st3.salvage_info().is_empty(), "无残骸无队列 ⇒ {}（空态）")
 
 
 # ────────────────────────────────────────────────────────────── R03

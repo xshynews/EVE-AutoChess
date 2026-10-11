@@ -1001,8 +1001,11 @@ func _refresh_run_ui() -> void:
 	#   幂等（值没变直接 return），放这儿零成本。
 	hud.set_shop_buy_enabled(run.phase == EveRunState.Phase.PREP)
 	hud.set_augments(run.picked_event_info())
-	# 打捞框：`salvage_info()` 是唯一输入源，三态（无 / 可下单 / 修复中）都在里面判，
-	# 场景这一侧不重复判一遍「有没有残骸」—— 判据写两份必然分叉。
+	# 打捞框：`salvage_info()` 是唯一输入源，值域 = ""/"list"/"repairing"
+	# （C-P1-1 收口后的契约）。商店框是**只读看板**：把 "list" 渲染成
+	# 空态引导（打捞入口在结算页）、"repairing" 渲染修复中；"list" 的真
+	# 消费者是结算页打捞区。场景这一侧不重复判一遍「有没有残骸」——
+	# 判据写两份必然分叉。
 	hud.set_salvage(run.salvage_info())
 	# 备战席立绘（2D，画在 EveBenchRail 的格子里）。
 	# ⚠️ 2026-09-23：入口从 arena.bench_stage.update_fleet 换成这里 ——

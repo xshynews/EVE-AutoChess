@@ -53,6 +53,8 @@ def main() -> None:
     original = io.open(PROJECT, encoding="utf-8").read()
     if MCP_LINE not in original:
         print("⚠ project.godot 里没有 MCP 启用行，跳过摘除")
+    # B-R02（2026-10-11 审查）：失败必须传播 —— 否则 CI / 调用方拿 0 当成功
+    failed = []
     try:
         io.open(PROJECT, "w", encoding="utf-8", newline="").write(
             original.replace(MCP_LINE, MCP_OFF, 1)
@@ -70,10 +72,19 @@ def main() -> None:
             ok = r.returncode == 0 and os.path.exists(out)
             size = os.path.getsize(out) if os.path.exists(out) else 0
             print("   %s  %.1f MB" % ("✓" if ok else "✗ 失败", size / 1048576.0))
+            if not ok:
+                failed.append("%s(退出码 %d)" % (name, r.returncode))
+                err_tail = [l for l in (r.stderr or "").splitlines() if l.strip()][-5:]
+                for l in err_tail:
+                    print("    [stderr]", l)
     finally:
         # ⛔ 无论成功失败都要还原 —— 否则用户下次打开编辑器 MCP 就没了
         io.open(PROJECT, "w", encoding="utf-8", newline="").write(original)
         print("── 已还原 project.godot（MCP 插件保持启用）")
+    if failed:
+        # ⚠️ 还原**之后**才退非零 —— 保证 project.godot 一定先写回
+        raise SystemExit("✗ 导出失败：%s" % ", ".join(failed))
+    print("── 全部导出成功")
 
 
 if __name__ == "__main__":

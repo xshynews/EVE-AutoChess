@@ -64,7 +64,11 @@ var _cards_row: HBoxContainer
 var _slv_box: Control
 var _slv_head: Label
 var _slv_body: VBoxContainer
-## 打捞框状态："empty"（无残骸）/ "wreck"（可下单）/ "repairing"（已下单等到账）。
+## 打捞框状态：**只读看板两态**——"empty"（空态引导）/ "repairing"（已下单等到账）。
+## ⚠️ C-P1-1 契约收口（2026-10-11）：数据源 `salvage_info()` 的真实值域是
+##   ""(空) / "list" / "repairing"（见 eve_run_state.salvage_info）。"list"
+##   （残骸挂在结算页）在本框**有意**按空态渲染——引导文案把玩家指去结算页。
+##   旧注释写的 "wreck" 不是数据源值域（那是商店还能下单年代的遗留口径）。
 ## 具体含义与唯一输入源见 set_salvage() 的注释。
 ##
 ## （旧字段 `_slot_index: int` 已删除：它表达不了三态，只够表达「有 / 无」。
@@ -530,11 +534,17 @@ static func _dash_rect(ci: CanvasItem, r: Rect2, col: Color, dash: float, gap: f
 ## 设置打捞框。传 {} 表示空。
 ##
 ## info 由 `EveRunState.salvage_info()` 产出 —— **唯一输入源**，本函数不自己判
-## 「有没有残骸」（判据写两份必然分叉）：
-##   {"state": "wreck", "name":…, "star":…, "cost":…, "price":…,
-##    "atk":…, "def":…, "scan_res":…, "cap":…, "base_exact":…, "evt":…}
-##   {"state": "repairing", "name":…, "star":…, "cost":…, "evt":…}
-##   {}                                                                    空
+## 「有没有残骸」（判据写两份必然分叉）。★ C-P1-1 契约收口（2026-10-11），
+## 值域以数据源为准：
+##   {"state": "list", …}      残骸挂在**结算页** ⇒ 本框按空态渲染（见下）
+##   {"state": "repairing", …} 已下单等到账 ⇒ 「修复中」
+##   {}                        空
+##
+## ⚠️ 本框 2026-10-04 起退役为**只读看板**（打捞入口在结算页）：
+##   "list" 在这里按空态渲染是有意设计——空态的引导文案把玩家指去结算页，
+##   不是 bug。下面保留的 "wreck" 渲染分支只是**兜底**（万一未来恢复商店下单），
+##   当前数据流永远不会喂进来。
+##   ⛔ 因此别「顺手」把 wreck 分支删掉或把 "list" 映射成 wreck 展示。
 ##
 ## ⚠️⚠️ 2026-10-01 修「**打捞框里的数字有残留**」（用户实机报告）：
 ##

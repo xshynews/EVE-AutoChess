@@ -171,16 +171,22 @@ static func classify(cards: Array) -> Dictionary:
 		return _t(Type.STRAIGHT_PAIR, uniq[uniq.size() - 1], kinds)
 
 	# ── ⑥ 飞机（主体 = k 组连续三张，封顶 A）──
+	# ⚠️ A-P1（2026-10-11 审查）：三种飞机各自找主体——带对必须**回溯**
+	#    （固定剥最高 k 组三张会把 3334445555 判非法），
+	#    纯飞机 / 带单无翅膀约束，取最高主体即可（比较口径）。
 	for k in range(MIN_PLANE, 7):
-		var body := _plane_top_rank(cnt, k)
-		if body <= 0:
-			continue
 		if n == k * 3:
-			return _t(Type.PLANE, body, k)
-		if n == k * 4:
-			return _t(Type.PLANE_ONE, body, k)
-		if n == k * 5 and _rest_are_pairs(cnt, k):
-			return _t(Type.PLANE_TWO, body, k)
+			var body := _plane_top_rank(cnt, k)
+			if body > 0:
+				return _t(Type.PLANE, body, k)
+		elif n == k * 4:
+			var body1 := _plane_top_rank(cnt, k)
+			if body1 > 0:
+				return _t(Type.PLANE_ONE, body1, k)
+		elif n == k * 5:
+			var body2 := _plane_two_body(cnt, k)
+			if body2 > 0:
+				return _t(Type.PLANE_TWO, body2, k)
 
 	# ── ⑦ 四带二（单 / 对）──
 	if n == 6:
@@ -268,27 +274,41 @@ static func _plane_top_rank(cnt: Dictionary, k: int) -> int:
 	return 0
 
 
-## 去掉主体（每种点数剥 3 张）之后，剩下的牌是否**全是**对子
-static func _rest_are_pairs(cnt: Dictionary, k: int) -> bool:
-	# 主体由调用方保证存在；这里只验「剩余部分能否凑成若干对」
-	var rest := {}
+## 飞机带对：在所有「k 组**连续**三张」的主体里，从高到低找第一个
+## 「剥掉主体后剩余**全是对子**」的，返回主体最高点（0 = 没有合法主体）。
+##
+## ⚠️ A-P1（2026-10-11 审查）：旧版 `_rest_are_pairs` 固定剥**点数最高的**
+##    k 组三张，跟主体（连续段）对不上 ——
+##    `3334445555`（主体 333444、翅膀 5555 两对）被误判非法。
+##    现在逐个候选主体回溯验证；取**最高**的合法主体（与比较口径一致）。
+static func _plane_two_body(cnt: Dictionary, k: int) -> int:
+	var cands: Array[int] = []
 	for r in cnt:
-		rest[r] = int(cnt[r])
-	# 剥掉 k 组三张：挑点数最高的那些 ≥3 的
-	var triples: Array[int] = []
-	for r in rest:
-		if int(rest[r]) >= 3 and int(r) <= MAX_RUN_RANK:
-			triples.append(int(r))
-	triples.sort()
-	if triples.size() < k:
-		return false
-	for i in range(k):
-		var r: int = triples[triples.size() - 1 - i]
-		rest[r] = int(rest[r]) - 3
-	for r in rest:
-		if int(rest[r]) != 0 and int(rest[r]) % 2 != 0:
-			return false
-	return true
+		if int(cnt[r]) >= 3 and int(r) <= MAX_RUN_RANK:
+			cands.append(int(r))
+	cands.sort()
+	for i in range(cands.size() - k, -1, -1):
+		var is_run := true
+		for j in range(k):
+			if cands[i + j] != cands[i] + j:
+				is_run = false
+				break
+		if not is_run:
+			continue
+		var rest := {}
+		for r in cnt:
+			rest[r] = int(cnt[r])
+		for j in range(k):
+			rest[cands[i + j]] = int(rest[cands[i + j]]) - 3
+		var all_pairs := true
+		for r in rest:
+			var c := int(rest[r])
+			if c != 0 and c % 2 != 0:
+				all_pairs = false
+				break
+		if all_pairs:
+			return cands[i + k - 1]
+	return 0
 
 
 ## 去掉点数 `four` 的四张后，剩余能否凑成 `need` 个对子

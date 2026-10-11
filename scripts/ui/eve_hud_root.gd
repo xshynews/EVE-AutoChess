@@ -755,10 +755,12 @@ func set_shop_buy_enabled(on: bool) -> void:
 		shop_window.set_buy_enabled(on)
 
 
-## 打捞框。入参 = `EveRunState.salvage_info()` 的输出（**唯一输入源**）：
-##   {"state": "wreck", "name": …, "star": …, "cost": …, "price": …}  可下单
-##   {"state": "repairing", "name": …, "star": …}                     已下单等到账
-##   {}                                                              空
+## 打捞框。入参 = `EveRunState.salvage_info()` 的输出（**唯一输入源**）。
+## ★ C-P1-1 契约收口（2026-10-11）：值域以数据源为准——
+##   {"state": "list", …}       有残骸待捡（**结算页**打捞区消费；
+##                              商店框按空态+引导渲染，见 eve_shop.set_salvage）
+##   {"state": "repairing", …}  已下单等到账
+##   {}                         空
 func set_salvage(info: Dictionary) -> void:
 	if shop_window:
 		shop_window.set_salvage(info)
@@ -1244,9 +1246,10 @@ func _demo_fleet() -> void:
 
 
 func _set_demo_salvage() -> void:
-	# ⚠️ 必须按 salvage_info() 的形状填。旧版只给 name/star，三态化之后
-	#    那样填会被判成 "empty"（框里一片空白），而且**不报错**。
-	set_salvage({"state": "wreck", "name": "断崖级", "star": 1, "cost": 4, "price": 2})
+	# ⚠️ 必须按 salvage_info() 的**真实值域**填（"list"/"repairing"/{}）。
+	#    C-P1-1 收口前这里填的是 "wreck"——数据源永不产出的形态（旧口径遗留）。
+	#    演示用 "repairing"：只读看板唯一能出内容的状态（空态只有引导文案）。
+	set_salvage({"state": "repairing", "name": "断崖级", "star": 1, "cost": 4, "evt": 3})
 
 
 # ------------------------------------------------------------------ 自绘件
