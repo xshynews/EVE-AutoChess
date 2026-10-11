@@ -88,10 +88,14 @@ MODE_CAMPAIGN_NAME,Campaign,任务关卡
 MODE_CAMPAIGN_META,%d rounds · %d difficulties,%d 回合 · 共 %d 个难度
 MODE_CARDROOM_NAME,Recreation Hub,娱乐总汇
 MODE_CARDROOM_META,Dou Dizhu · playable,斗地主 · 可试玩
+MODE_TERRITORY_NAME,Territory,疆域
+MODE_TERRITORY_META,Coming soon,待开发
+MODE_AUTOCHESS_NAME,Auto Chess,自走棋
+MODE_AUTOCHESS_META,Frontier · Endless · Online,守卫边境 · 无尽 · 联机
 MODE_ENDLESS_NAME,Endless,无尽模式
-MODE_ENDLESS_META,Best record —,最高纪录　—
-MODE_VERSUS_NAME,Multiplayer,多人对战
-MODE_VERSUS_META,Opening soon,即将开放
+MODE_ENDLESS_META,Coming soon,待开发
+MODE_VERSUS_NAME,Online Match,联机对战
+MODE_VERSUS_META,Coming soon,待开发
 MODE_CREDITS_NAME,Copyright,版权声明
 MODE_CREDITS_META,Credits · open-source licenses,致谢 · 开源许可
 CARD_GUARD_BORDER_NAME,Guard the Border,守卫边境
@@ -111,9 +115,11 @@ CARD_RIICHI_NAME,Riichi Mahjong,日麻
 CARD_RIICHI_DESC,"Riichi Mahjong. Yaku, dora, furiten.",立直麻将。役种、宝牌、振听。
 CARD_SHENGJI_NAME,Shengji,升级
 CARD_SHENGJI_DESC,"Tractor · 4 players in 2 teams. Declaring and counter-declaring trump, discarding to the bottom.",拖拉机 · 4 人 2 队。亮主反主、甩牌抠底。
+CARD_TERRITORY_NAME,Territory,疆域
+CARD_TERRITORY_DESC,A long-term mode about fighting for control of star systems. Design has not started yet.,为争夺星域控制权而战的长线玩法，尚未开始设计。
 CARD_ENDLESS_NAME,Endless,无尽模式
 CARD_ENDLESS_DESC,"No finish line. Wave after wave of enemy fleets; the higher the wave, the heavier the tonnage and the dirtier the composition. Hold out until you cannot — the only thing that counts is how far you get.",没有终点。一波接一波的敌方舰队，波数越高吨位越重、编制越脏。撑到撑不住为止，只比谁走得更远。
-CARD_VERSUS_NAME,Multiplayer,多人对战
+CARD_VERSUS_NAME,Online Match,联机对战
 CARD_VERSUS_DESC,"Compete against other commanders on the same board — eight players, each for themselves. Opponent compositions keep changing and there is no fixed answer; this mode is reserved for later.",与其他指挥官同场博弈，八人各自为战。对手的阵容在变化，没有固定解法 —— 这是留给后期的模式。
 CARD_K_PLAY,Game,玩法
 CARD_K_OPP,Opponents,对手

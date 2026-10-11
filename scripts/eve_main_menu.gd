@@ -94,6 +94,17 @@ const CREDITS_MODE_ID := "credits"
 const CREDITS_W := 964.0
 const CREDITS_H := 470.0
 
+## ★ 2026-10-12 侧栏改**两层**（用户定）：第一层 疆域 / 自走棋 / 娱乐总汇 / 版权声明；
+##   「自走棋」是**父项**（`parent: true`），`children` 为第二层（缩进显示，竖条排列）：
+##   任务关卡 / 无尽模式 / 联机对战。
+##   ⚠️ 父项**本身不承载卡片**：点它 = 展开/收起；展开时自动选中第一个子项。
+##   ⚠️ 子项不新建 key 以外的文案 —— 模式名一律走 `MODE_<id>_NAME`（i18n 口径不变）。
+const TERRITORY_MODE_ID := "territory"
+const AUTOCHESS_MODE_ID := "autochess"
+## 第二层行的缩进与高度（父行 MODE_H=62；子行略矮，形成层级感）
+const SUB_INDENT := 26.0
+const SUB_MODE_H := 54.0
+
 # ══════════════════════════════════════════════════════════════════
 #  配色（口径同 scripts/ui/eve_window.gd）
 # ══════════════════════════════════════════════════════════════════
@@ -136,19 +147,65 @@ const GRID_GAP_V := 24.0
 const SYS_MARGIN_R := 120.0
 const SYS_TOP := 88.0
 
-## 难度表之外的另外两个模式：它们没有难度分级 ⇒ 各自只有一张"条"。
-## 数据形状与 EveCampaignTiers.ROWS 一致，这样渲染路径只有一条。
+## ★ 2026-10-12 改**两层侧栏**（用户定）：第一层 疆域 / 自走棋 / 娱乐总汇；
+##   版权声明仍作为伪模式追加在最后（见 `_build_top_table()`）。
+##
+## ⚠️ `任务关卡` 不在这里 —— 它的副标题是**运行时取词拼出来的**（`_campaign_meta()`），
+##    const 初始化器里调不了函数 ⇒ 由 `_build_top_table()` 现拼进 `autochess.children`。
+##
+## ⚠️ 认「自走棋」的是 `id` 而不是下标（见 `AUTOCHESS_MODE_ID`）。
 const EXTRA_MODES: Array = [
 	{
-		# ★ 2026-10-06：棋牌室。**刻意排在「无尽模式」之前**（列表第 2 项）——
-		#   但⛔ 绝不排在「任务关卡」之前：主入口必须仍是自走棋，
-		#   免得新玩家第一眼以为这是个棋牌游戏。
-		# ★ 2026-10-06 用户定：**「棋牌室」→「娱乐总汇」**。出处：EVE 里本来就有
+		# ★ 2026-10-12：用户要求「疆域先只做个按钮」⇒ 可点、可选中，
+		#   右侧显示一张「待开发」卡（形态同棋牌室里未开放的几张）。
+		"id": TERRITORY_MODE_ID, "name": "疆域", "meta": "待开发", "locked": false,
+		"cards": [{
+			"name": "疆域", "code": "TERRITORY", "open": false,
+			"desc": "为争夺星域控制权而战的长线玩法，尚未开始设计。",
+			"stats": [["状态", "待开发", ""], ["计划", "未排期", ""]],
+		}],
+	},
+	{
+		# ★ 2026-10-12：新增父项「自走棋」。`children` = 第二层（缩进、竖条排列）。
+		#   ⚠️ 它**没有 `cards`**：所有"按卡片下标"的路径都由 `_content_row_of()`
+		#      回落到第一个子项（任务关卡），见该函数注释。
+		"id": AUTOCHESS_MODE_ID, "name": "自走棋", "meta": "守卫边境 · 无尽 · 联机",
+		"locked": false, "parent": true, "cards": [],
+		"children": [
+			{
+				# ★ 2026-10-06 用户定：**「棋牌室」→「娱乐总汇」**（见下方 cardroom）。
+				# ★ 2026-10-12：无尽模式从顶层**移进**「自走棋」第二层，显示为待开发。
+				"id": "endless", "name": "无尽模式", "meta": "待开发", "locked": true,
+				"cards": [{
+					"name": "无尽模式", "code": "ENDLESS", "open": false,
+					"desc": "没有终点。一波接一波的敌方舰队，波数越高吨位越重、编制越脏。"
+							+ "撑到撑不住为止，只比谁走得更远。",
+					"stats": [["对手", "电脑舰队 · 无限波次", ""], ["终点", "无 · 直到全灭", ""],
+							["纪录", "—", "gold"], ["状态", "待开发", ""]],
+				}],
+			},
+			{
+				# ★ 2026-10-12：原顶层「多人对战」改名**「联机对战」**并移入第二层。
+				#   ⚠️ id 仍是 `versus`（沿用既有 key，⛔ 别改 id —— 会连带动 i18n/验收）。
+				"id": "versus", "name": "联机对战", "meta": "待开发", "locked": true,
+				"cards": [{
+					"name": "联机对战", "code": "VERSUS", "open": false,
+					"desc": "与其他指挥官同场博弈，八人各自为战。对手的阵容在变化，"
+							+ "没有固定解法 —— 这是留给后期的模式。",
+					"stats": [["对手", "其他玩家 · 8 人", ""], ["终点", "最后存活者获胜", ""],
+							["前置", "需要联网与服务器", ""], ["状态", "待开发", ""]],
+				}],
+			},
+		],
+	},
+	{
+		# ★ 2026-10-06：娱乐总汇（原「棋牌室」）。用户定的名字来源：EVE 里本来就有
 		#   「娱乐总汇」这种供人消遣的场所；而且它顺手解决了「代币叫什么」
 		#   —— ⇒ **娱乐币**。
-		"id": "cardroom", "name": "娱乐总汇", "meta": "斗地主 · 可试玩", "locked": false,
+		#   ⚠️ 2026-10-12 起它排在第 3 位（第一层第 3 项），展示方式不变。
+		"id": CARD_ROOM_MODE_ID, "name": "娱乐总汇", "meta": "斗地主 · 可试玩", "locked": false,
 		# ★ 2026-10-06 改：**不再用独立场景**（原 `card_room.tscn` 已删）。
-		#   点「棋牌室」直接在主菜单右侧铺开这 4 张卡，排成 2 行 2 列
+		#   点「娱乐总汇」直接在主菜单右侧铺开这 4 张卡，排成 2 行 2 列
 		#   （列数与卡片尺寸见 `_layout_of()`）。
 		#   ⚠️ `open` 决定两件事：卡片是否压暗 + 「开始」按钮是否可点。
 		#      斗地主 `open=true`（P0 阶段点了会给「制作中」提示，⛔ 不静默）；
@@ -180,26 +237,6 @@ const EXTRA_MODES: Array = [
 			},
 		],
 	},
-	{
-		"id": "endless", "name": "无尽模式", "meta": "最高纪录　—", "locked": true,
-		"cards": [{
-			"name": "无尽模式", "code": "ENDLESS", "open": false,
-			"desc": "没有终点。一波接一波的敌方舰队，波数越高吨位越重、编制越脏。"
-					+ "撑到撑不住为止，只比谁走得更远。",
-			"stats": [["对手", "电脑舰队 · 无限波次", ""], ["终点", "无 · 直到全灭", ""],
-					["纪录", "—", "gold"], ["状态", "尚未开放", ""]],
-		}],
-	},
-	{
-		"id": "versus", "name": "多人对战", "meta": "即将开放", "locked": true,
-		"cards": [{
-			"name": "多人对战", "code": "VERSUS", "open": false,
-			"desc": "与其他指挥官同场博弈，八人各自为战。对手的阵容在变化，"
-					+ "没有固定解法 —— 这是留给后期的模式。",
-			"stats": [["对手", "其他玩家 · 8 人", ""], ["终点", "最后存活者获胜", ""],
-					["前置", "需要联网与服务器", ""], ["状态", "尚未开放", ""]],
-		}],
-	},
 ]
 
 var _modes: Array = []
@@ -211,6 +248,14 @@ var _mode_names: Array[Label] = []
 var _mode_metas: Array[Label] = []
 var _mode_bars: Array[ColorRect] = []
 var _mode_arrows: Array[Label] = []
+## ★ 2026-10-12 两层侧栏：`_top` = 第一层（疆域 / 自走棋 / 娱乐总汇 / 版权声明），
+##   `_modes` = **可见行**（父项 + 展开时的子项）—— 下游（选中 / 卡片 / 键盘）一律
+##   按 `_modes` 索引，父项/子项展开收起只影响这张可见表（见 `_rebuild_rows()`）。
+var _top: Array = []
+## 「自走棋」的子项是否展开（默认展开：新玩家一眼能看到三个玩法）。
+var _expanded := true
+## 侧栏行的容器（展开/收起要整列重建，所以持有引用）。
+var _modes_col: VBoxContainer = null
 var _strip_row: GridContainer = null
 ## 当前模式的卡片尺寸 / 列数 —— 由 `_rebuild_strips()` 每次按模式设好，
 ## `_make_strip()` 只读它。⛔ 别在 `_make_strip` 里直接引用 STRIP_W/H：
@@ -285,9 +330,13 @@ func _ready() -> void:
 	_content.name = "Content"
 	_content.mouse_filter = Control.MOUSE_FILTER_PASS
 	add_child(_content)
-	_modes = _build_mode_table()
-	for m in _modes:
+	_top = _build_top_table()
+	_rebuild_rows()
+	for m in _all_rows():
 		_pick[String(m["id"])] = 0
+	# ★ 2026-10-12：默认选中**「任务关卡」**（自走棋的主玩法）—— 主入口必须仍是自走棋，
+	#   ⛔ 别让默认落在新增的「疆域」占位行上（那样一进菜单右侧只有一张"待开发"卡）。
+	_mode_idx = maxi(0, _index_of_id("campaign"))
 	_build_brand()
 	_build_sys()
 	_build_version_tag()
@@ -408,15 +457,22 @@ static func _campaign_meta() -> String:
 	return T.t("MODE_CAMPAIGN_META", "%d 回合 · 共 %d 个难度") \
 			% [int(first["rounds"]), TIERS.ROWS.size()]
 
-## 模式表 = 任务关卡（难度来自表）+ 两个无分级的模式
-func _build_mode_table() -> Array:
+## 第一层表 = EXTRA_MODES（疆域 / 自走棋 / 娱乐总汇）+ 末尾追加的版权声明伪模式。
+##
+## ⚠️ 「任务关卡」在这里**现拼**进 `autochess.children` 的第一位 ——
+##    它的副标题 `_campaign_meta()` 要取词 + 代数字，const 里做不到。
+## ⚠️ 版权声明**必须最后追加**（用户要求它落在左边按钮的最下方）。
+func _build_top_table() -> Array:
+	var campaign := {
+		"id": "campaign", "name": "任务关卡", "meta": _campaign_meta(),
+		"locked": false, "cards": TIERS.ROWS,
+	}
 	var out: Array = []
-	out.append({"id": "campaign", "name": "任务关卡", "meta": _campaign_meta(),
-			"locked": false, "cards": TIERS.ROWS})
 	for m in EXTRA_MODES:
-		out.append(m)
-	# ★ 2026-10-10：版权声明（伪模式，见 CREDITS_MODE_ID 的注释）。
-	#   **必须最后追加** —— 用户要求它落在左边按钮的最下方。
+		var row: Dictionary = (m as Dictionary).duplicate(true)
+		if String(row.get("id", "")) == AUTOCHESS_MODE_ID:
+			row["children"] = [campaign] + (row.get("children", []) as Array)
+		out.append(row)
 	out.append({
 		"id": CREDITS_MODE_ID, "name": "版权声明", "meta": "致谢 · 开源许可",
 		"locked": false, "credits": true, "cards": [],
@@ -424,8 +480,82 @@ func _build_mode_table() -> Array:
 	return out
 
 
+## 展平成**可见行**：每个顶层项一行 + （自走棋展开时）它的子项各一行。
+##
+## ★ 下游只认 `_modes`（可见行）—— 选中、卡片、键盘导航都不必知道层级。
+## ⚠️ 重建时**按 id 找回原选中行**：原来选中的行消失（子项被收起）⇒ 回落到它的父行，
+##    这样收起子项不会让选中态丢空、右侧也不会变空白。
+func _rebuild_rows() -> void:
+	var prev_id := ""
+	var prev_parent := ""
+	if _mode_idx >= 0 and _mode_idx < _modes.size():
+		var pm: Dictionary = _modes[_mode_idx]
+		prev_id = String(pm["id"])
+		prev_parent = String(pm.get("child_of", ""))
+	var rows: Array = []
+	for m in _top:
+		var row: Dictionary = (m as Dictionary)
+		row["depth"] = 0
+		if row.has("children"):
+			row["parent"] = true
+		else:
+			row.erase("parent")
+		rows.append(row)
+		if bool(row.get("parent", false)) and _expanded:
+			for c in (row["children"] as Array):
+				var sub: Dictionary = (c as Dictionary)
+				sub["depth"] = 1
+				sub["child_of"] = String(row["id"])
+				rows.append(sub)
+	_modes = rows
+	# 选中行没了（子项被收起）⇒ 回落到它的父项（自走棋），再不行才回第 0 行。
+	_mode_idx = _index_of_id(prev_id)
+	if _mode_idx < 0 and prev_parent != "":
+		_mode_idx = _index_of_id(prev_parent)
+	if _mode_idx < 0:
+		_mode_idx = 0
+
+
+## 不分展开与否的全量行（父 + 所有子）—— 只用于初始化 `_pick` 的键。
+func _all_rows() -> Array:
+	var out: Array = []
+	for m in _top:
+		var row: Dictionary = (m as Dictionary)
+		out.append(row)
+		for c in (row.get("children", []) as Array):
+			out.append(c)
+	return out
+
+
+## 可见行里按 id 找下标（找不到 = -1）。
+func _index_of_id(mode_id: String) -> int:
+	if mode_id == "":
+		return -1
+	for i in _modes.size():
+		if String((_modes[i] as Dictionary)["id"]) == mode_id:
+			return i
+	return -1
+
+
+## ★ 选中行对应的**内容行**：父项（自走棋）自己没有卡片 ⇒ 回落到它的第一个子项
+##   （任务关卡）。这样「收起子项后选中父项」时右侧仍然是任务关卡的内容，
+##   ⛔ 不会出现一块空白面板。
+func _content_row_of(idx: int) -> Dictionary:
+	var m: Dictionary = _modes[idx]
+	if bool(m.get("parent", false)):
+		var ch: Array = m.get("children", [])
+		if ch.size() > 0:
+			return ch[0]
+	return m
+
+
+## 当前选中行对应的内容 id（= `_pick` 的键）。
+func _content_id() -> String:
+	return String(_content_row_of(_mode_idx)["id"])
+
+
 func _cards_of(idx: int) -> Array:
-	return _modes[idx]["cards"]
+	return (_content_row_of(idx)["cards"] as Array)
 
 
 # ------------------------------------------------------------ 文案取词（i18n）
@@ -655,7 +785,7 @@ func _build_version_tag() -> void:
 
 ## 当前选中的是不是「版权声明」这一项。
 func _is_credits() -> bool:
-	return String(_modes[_mode_idx]["id"]) == CREDITS_MODE_ID
+	return _content_id() == CREDITS_MODE_ID
 
 
 ## 版权声明大方框（右侧）。文字口径见下方各行 ——
@@ -758,17 +888,37 @@ func _build_modes() -> void:
 	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_content.add_child(cap)
 
-	var col := VBoxContainer.new()
-	col.name = "Modes"
-	col.position = MODES_POS
-	col.add_theme_constant_override("separation", int(MODE_GAP))
-	_content.add_child(col)
+	_modes_col = VBoxContainer.new()
+	_modes_col.name = "Modes"
+	_modes_col.position = MODES_POS
+	_modes_col.add_theme_constant_override("separation", int(MODE_GAP))
+	_content.add_child(_modes_col)
+	_rebuild_rail()
 
+
+## 按 `_modes`（可见行）重建整列按钮 —— 展开/收起时要整列重建。
+##
+## ⚠️ 子行包一层 `MarginContainer` 做**缩进**：`VBoxContainer` 会覆盖子节点的
+##    `position` ⇒ 直接在按钮上写偏移没用。
+func _rebuild_rail() -> void:
+	for c in _modes_col.get_children():
+		c.queue_free()
+	_mode_btns.clear()
+	_mode_names.clear()
+	_mode_metas.clear()
+	_mode_bars.clear()
+	_mode_arrows.clear()
 	for i in _modes.size():
-		var m: Dictionary = _modes[i]
-		var b := _make_mode_row(m)
+		var b := _make_mode_row(_modes[i])
 		b.pressed.connect(_on_mode_pressed.bind(i))
-		col.add_child(b)
+		var depth := int((_modes[i] as Dictionary).get("depth", 0))
+		if depth > 0:
+			var wrap := MarginContainer.new()
+			wrap.add_theme_constant_override("margin_left", int(SUB_INDENT))
+			wrap.add_child(b)
+			_modes_col.add_child(wrap)
+		else:
+			_modes_col.add_child(b)
 		_mode_btns.append(b)
 
 
@@ -785,10 +935,19 @@ func _layout_of(mode_id: String) -> Dictionary:
 
 
 ## 模式项 = 按钮（皮肤抄 EveButtonTheme；两行文字用子 Label，别指望 Button 自带）
+##
+## ★ 2026-10-12：两种行 —
+##   · `depth == 0`（第一层）：原尺寸原字号；
+##   · `depth == 1`（第二层 / 缩进子项）：略窄略矮、字号小一档（层级感）；
+##   · `parent == true`（自走棋）：右侧箭头常显，文字是 `▾`（展开）/ `▸`（收起）。
 func _make_mode_row(m: Dictionary) -> Button:
+	var depth := int(m.get("depth", 0))
+	var is_parent := bool(m.get("parent", false))
 	var b := Button.new()
 	b.name = "Mode_" + String(m["id"])
-	b.custom_minimum_size = Vector2(MODE_W, MODE_H)
+	b.custom_minimum_size = Vector2(
+			MODE_W - (SUB_INDENT if depth > 0 else 0.0),
+			SUB_MODE_H if depth > 0 else MODE_H)
 	b.text = ""
 	b.clip_contents = true
 	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -806,13 +965,13 @@ func _make_mode_row(m: Dictionary) -> Button:
 	var box := VBoxContainer.new()
 	box.set_anchors_preset(Control.PRESET_FULL_RECT)
 	box.offset_left = 18.0
-	box.offset_top = 12.0
+	box.offset_top = 12.0 if depth == 0 else 9.0
 	box.offset_right = -40.0
-	box.offset_bottom = -12.0
+	box.offset_bottom = -12.0 if depth == 0 else -9.0
 	box.add_theme_constant_override("separation", 5)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var nm := _label(_mode_txt(m, "name"), 19, C_TEXT)
-	var mt := _label(_mode_meta(m), 11, C_DIM)
+	var nm := _label(_mode_txt(m, "name"), 19 if depth == 0 else 16, C_TEXT)
+	var mt := _label(_mode_meta(m), 11 if depth == 0 else 10, C_DIM)
 	box.add_child(nm)
 	box.add_child(mt)
 	b.add_child(box)
@@ -824,7 +983,12 @@ func _make_mode_row(m: Dictionary) -> Button:
 	ch.offset_top = -10.0
 	ch.offset_bottom = 10.0
 	ch.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	ch.visible = false
+	# ★ 父项：箭头常显且是折叠指示（▾ 展开 / ▸ 收起）；其余沿用「选中才显示 ›」。
+	if is_parent:
+		ch.text = "▾" if _expanded else "▸"
+		ch.visible = true
+	else:
+		ch.visible = false
 	b.add_child(ch)
 
 	_mode_names.append(nm)
@@ -1005,6 +1169,9 @@ func _refresh() -> void:
 		var m: Dictionary = _modes[i]
 		_on_sel(_mode_btns[i], _mode_names[i], _mode_metas[i], _mode_bars[i],
 				_mode_arrows[i], i == _mode_idx, bool(m.get("locked", false)))
+		# ★ 父项（自走棋）的箭头是**折叠指示**，必须常显（`_on_sel` 只在选中时显示）。
+		if bool(m.get("parent", false)):
+			_mode_arrows[i].visible = true
 
 	# 难度条整体重建（数量随模式变）
 	for c in _strip_panels:
@@ -1027,7 +1194,7 @@ func _refresh() -> void:
 	var cards := _cards_of(_mode_idx)
 	# 先按模式定好「列数 + 卡片尺寸」，再让 `_make_strip` 去建 ——
 	# 顺序不能反：`_make_strip` 读的就是这两个量。
-	var grid := _layout_of(String(_modes[_mode_idx]["id"]))
+	var grid := _layout_of(_content_id())
 	_strip_row.columns = int(grid["cols"])
 	_card_w = float(grid["w"])
 	_card_h = float(grid["h"])
@@ -1042,7 +1209,7 @@ func _refresh() -> void:
 
 func _refresh_strips() -> void:
 	var cards := _cards_of(_mode_idx)
-	var sel := int(_pick[String(_modes[_mode_idx]["id"])])
+	var sel := int(_pick[_content_id()])
 	for i in _strip_panels.size():
 		var open := bool(cards[i]["open"])
 		_strip_panels[i].add_theme_stylebox_override("panel", _strip_style(i == sel, open))
@@ -1075,6 +1242,20 @@ func _on_sel(b: Button, nm: Label, mt: Label, bar: ColorRect, ch: Label,
 # ------------------------------------------------------------------ 交互
 
 func _on_mode_pressed(i: int) -> void:
+	var m: Dictionary = _modes[i]
+	# ★ 2026-10-12：父项（自走棋）—— 点击 = 展开 / 收起（用户定：展开后自动选中
+	#   第一个子项「任务关卡」，玩家一步到位，不用点两次）。
+	if bool(m.get("parent", false)):
+		var ch: Array = m.get("children", [])
+		_expanded = not _expanded
+		_rebuild_rows()          # 收起时选中行自动回落到父项（见该函数）
+		_rebuild_rail()
+		if _expanded and ch.size() > 0:
+			var sub := _index_of_id(String((ch[0] as Dictionary)["id"]))
+			if sub >= 0:
+				_mode_idx = sub
+		_refresh()
+		return
 	if i == _mode_idx:
 		return
 	_mode_idx = i
@@ -1084,7 +1265,7 @@ func _on_mode_pressed(i: int) -> void:
 func _on_strip_input(event: InputEvent, idx: int) -> void:
 	if event is InputEventMouseButton and event.pressed \
 			and event.button_index == MOUSE_BUTTON_LEFT:
-		var id := String(_modes[_mode_idx]["id"])
+		var id := _content_id()
 		if int(_pick[id]) == idx:
 			return
 		_pick[id] = idx
@@ -1106,10 +1287,10 @@ func target_scene_for_start() -> String:
 	if _is_credits():
 		return ""
 	var cards := _cards_of(_mode_idx)
-	var sel := int(_pick[String(_modes[_mode_idx]["id"])])
+	var sel := int(_pick[_content_id()])
 	if not bool(cards[sel]["open"]):
 		return ""
-	var mode_id := String(_modes[_mode_idx]["id"])
+	var mode_id := _content_id()
 	# ★ 棋牌室（2026-10-06 二次改）：**不再切独立场景**，所以这里返回 ""。
 	#   ⚠️ 放在 tier_id 之前判：棋牌室的卡片没有 `id` 字段，
 	#      落到下面会被当成「非首次」而错误地进 BATTLE_SCENE。
@@ -1148,11 +1329,11 @@ func _show_toast(text: String) -> void:
 
 func _on_start_pressed() -> void:
 	var cards := _cards_of(_mode_idx)
-	var sel := int(_pick[String(_modes[_mode_idx]["id"])])
+	var sel := int(_pick[_content_id()])
 	var target := target_scene_for_start()
 	if target == "":
 		# ⚠️ 不能静默 return：玩家点了「开始」必须知道为什么没动静（红线 9）。
-		if String(_modes[_mode_idx]["id"]) == CARD_ROOM_MODE_ID:
+		if _content_id() == CARD_ROOM_MODE_ID:
 			if String(cards[sel]["code"]) == "DOUDIZHU":
 				_show_toast(T.t("MENU_TOAST_DDZ",
 						"斗地主制作中 —— 规则内核与人机对战开发中，开放后这里直接进牌局"))
@@ -1161,7 +1342,7 @@ func _on_start_pressed() -> void:
 						% _card_txt(cards[sel], "name"))
 		return
 	print("[主界面] 开始 %s / %s → %s%s"
-			% [_modes[_mode_idx]["name"], cards[sel]["name"], target,
+			% [_content_row_of(_mode_idx)["name"], cards[sel]["name"], target,
 			   "（首次 ⇒ 先播开场）" if target == INTRO_SCENE else "（已看过开场）"])
 	# ★ 2026-10-10（审查 2#2）：只有**真实会话**才允许写对局存档
 	#   （40 多个 probe/自检会直接加载 battle_scene，不设闸就会覆盖玩家的一局）。
@@ -1205,7 +1386,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		return
 	var cards := _cards_of(_mode_idx)
-	var id := String(_modes[_mode_idx]["id"])
+	var id := _content_id()
 	match event.keycode:
 		KEY_DOWN:
 			_on_mode_pressed((_mode_idx + 1) % _modes.size())

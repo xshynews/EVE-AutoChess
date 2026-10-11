@@ -120,6 +120,7 @@ func _ready() -> void:
 	_step_build()
 	_step_switch()
 	_step_lock()
+	_step_nested_modes()
 	_step_run_entry()
 	_step_settings_close()
 
@@ -132,6 +133,52 @@ func _ready() -> void:
 
 
 # ------------------------------------------------------------------ 步骤
+
+## [7] 两层侧栏（2026-10-12 用户定）：疆域 / 自走棋[任务关卡·无尽模式·联机对战] /
+## 娱乐总汇 / 版权声明。判据盯三件事：可见行顺序、父项的展开收起、父项无卡片时右侧的回落。
+func _step_nested_modes() -> void:
+	print("[7] 两层侧栏（疆域 / 自走棋 → 三个玩法 / 娱乐总汇 / 版权声明）")
+	var ids := PackedStringArray()
+	for m in _menu._modes:
+		ids.append(String((m as Dictionary)["id"]))
+	_ok(ids == PackedStringArray(["territory", "autochess", "campaign", "endless",
+			"versus", "cardroom", "credits"]),
+			"★ 可见行顺序（实际 %s）" % str(ids))
+	var ai := _mode_index("autochess")
+	_ok(ai >= 0 and bool((_menu._modes[ai] as Dictionary).get("parent", false)),
+			"「自走棋」是父项")
+	_ok(bool(_menu._expanded), "默认展开子项")
+	_ok(_menu._mode_btns.size() == _menu._modes.size(), "按钮数 == 可见行数")
+	_ok(String((_menu._modes[_mode_index("versus")] as Dictionary)["name"]) == "联机对战",
+			"原「多人对战」已改名「联机对战」")
+	_ok(String((_menu._modes[_mode_index("endless")] as Dictionary)["name"]) == "无尽模式",
+			"「无尽模式」在第二层（自走棋子项）")
+	# 子项可选中：无尽模式 ⇒ 右侧换成它的卡片
+	_menu._on_mode_pressed(_mode_index("endless"))
+	_ok(_menu._strip_panels.size() == 1,
+			"选中无尽模式 ⇒ 右侧 1 张卡（实际 %d）" % _menu._strip_panels.size())
+	# 点父项（已展开）⇒ 收起；子项行消失，选中回落到父项，右侧回落任务关卡内容
+	_menu._on_mode_pressed(_mode_index("autochess"))
+	_ok(not bool(_menu._expanded), "点父项（已展开）⇒ 收起")
+	_ok(_menu._modes.size() == 4, "收起后可见行 = 4（实际 %d）" % _menu._modes.size())
+	_ok(String((_menu._modes[_menu._mode_idx] as Dictionary)["id"]) == "autochess",
+			"收起后选中回落到父项")
+	_ok(_menu._strip_panels.size() == TIERS.ROWS.size(),
+			"★ 父项无卡片 ⇒ 右侧回落显示任务关卡（%d 条，实际 %d）"
+					% [TIERS.ROWS.size(), _menu._strip_panels.size()])
+	# 再点父项 ⇒ 展开并自动选中「任务关卡」
+	_menu._on_mode_pressed(_mode_index("autochess"))
+	_ok(bool(_menu._expanded), "再点父项 ⇒ 重新展开")
+	_ok(String((_menu._modes[_menu._mode_idx] as Dictionary)["id"]) == "campaign",
+			"★ 展开后自动选中任务关卡")
+	# 疆域：可选中、有 1 张「待开发」卡、不可开始（返回空 ⇒ 由按钮给提示，⛔ 不静默）
+	_menu._on_mode_pressed(_mode_index("territory"))
+	_ok(_menu._strip_panels.size() == 1,
+			"疆域出 1 张卡（实际 %d）" % _menu._strip_panels.size())
+	_ok(String(_menu.target_scene_for_start()) == "", "★ 疆域不可开始（返回空）")
+	# 收尾：回到任务关卡，免得影响后续步骤
+	_menu._on_mode_pressed(_mode_index("campaign"))
+
 
 func _step_project() -> void:
 	print("[1] 工程入口")

@@ -8,6 +8,8 @@ extends SceneTree
 ##
 ## 产物：C:/godot/_export/menu_shot.png（写工程外，⛔ 别污染工程目录）
 ##
+## ★ 2026-10-12：加 `-- --collapsed` 可截「自走棋收起」态（两层侧栏的折叠视觉）。
+##
 ## 存在的理由：i18n 迁移期出过「数据源对、渲染路径错」的 bug（副标题裸 %d），
 ## 只测 `_build_mode_table()` 的返回值测不出来 ⇒ 得看真实界面。
 ##
@@ -31,6 +33,17 @@ func _initialize() -> void:
 
 func _process(_d: float) -> bool:
 	_frames += 1
+	if _frames == 4:
+		# ⚠️ `--script` 起动时 `--` 之后的参数在 get_cmdline_user_args()，
+		#    但个别起动方式会落到 get_cmdline_args() ⇒ 两处都扫，免得静默失效。
+		var args: Array = OS.get_cmdline_user_args() + OS.get_cmdline_args()
+		if args.has("collapsed"):
+			# 「自走棋」父项点一下 = 收起子项（⛔ 按 id 找，别写死下标）
+			var i: int = _menu.call("_index_of_id", "autochess")
+			if i >= 0:
+				_menu.call("_on_mode_pressed", i)
+				print("已收起「自走棋」子项（index %d）" % i)
+		return false
 	if _frames < 8:                 # 让 `_ready` 建完 UI + 字体/布局稳定
 		return false
 	var img := root.get_viewport().get_texture().get_image()
