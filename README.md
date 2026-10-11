@@ -18,6 +18,10 @@
 
 > 注意：本项目工程名与对外名称均为 **EVE 自走棋 / EVE-AutoChess**，与任何数字后缀无关。
 
+## 下载
+
+最新版见 [**Releases**](https://github.com/xshynews/EVE-AutoChess/releases)：Windows 单文件 exe + Android apk（arm64-v8a）。
+
 ## 如何运行 / 构建
 
 1. 安装 [Godot 4.7.2](https://godotengine.org/)。
@@ -45,10 +49,19 @@ export_presets.cfg  导出预设（不含签名密钥）
 GODOT_BIN=/path/to/Godot_v4.7.2-stable_win64_console.exe tools/run_verifies.sh
 ```
 
-判据不止退出码 —— 还要求**出现完成标记**、且输出里**没有** `SCRIPT ERROR`。
-⚠️ `verify_run` 在引擎收尾时会 SIGSEGV（退出码 139，结果其实完整），runner 对它只认结果行。
-诊断型脚本（`verify_battle` / `verify_background` / `verify_camera` / `probe_*`）只出数、
-没有通过/失败语义，**不在套件里**。
+判据共**四条**（只靠退出码不够）：
+
+1. 退出码非 0 ⇒ 失败；
+2. 输出里出现 `SCRIPT ERROR` / `Parse Error` ⇒ 失败；
+3. 输出里**必须**出现完成标记 ⇒ 否则判「没跑完」；
+4. 输出里的**失败计数**（`failed=N` / `N 项失败`）> 0 ⇒ 失败 —— 这是最终判据，
+   因为引擎收尾异常可能把脚本的 `quit(1)` 吞掉，退出码在那时不可信（详见 `tools/run_verifies.sh` 顶注）。
+
+> 历史：`verify_run` 曾因 provider 回调以 lambda 形式存进 static var、退出时脚本先卸载而段错误
+> （退出码 139）——根因已修，现在连跑稳定 exit 0。
+
+诊断型脚本（`verify_background` / `verify_camera` / `probe_*`）只出数、没有通过/失败语义，**不在套件里**；
+`verify_battle` 已补断言（13 条）但仍是诊断入口。
 
 ## 美术资源版权说明
 
@@ -59,6 +72,14 @@ CCP 原名 *Crowd Control Productions*），**本开源项目不持有这些素�
 - 这些资源**仅用于开发、调试与体验目的**；
 - 若你分发包体，请自行确认相关素材的授权合规；
 - 代码（GDScript / 配置 / 工具脚本）以 **GNU GPL v3** 许可证使用、修改与再分发（衍生作品须同样以 GPL v3 开源）。
+
+### 背景音乐（BGM）
+
+- 四首 BGM 原曲：**City of Night / Pixel Wars / DJ BO$$ / Lantern**，作者 **乌鸦Producer**
+  （取自其「免费可商用」原创音乐集合包）。
+- 本项目使用的版本为适配游戏时长与无缝循环经 **AI 重编曲**处理，**原曲版权仍归原作者所有**。
+- 对应用途：主菜单 City of Night · 守卫边境 Pixel Wars · 终局 DJ BO$$ · 斗地主 Lantern。
+- 其余音效与环境音提取自 EVE 客户端资源（见 [`assets/audio/README.md`](./assets/audio/README.md)）。
 
 ## 许可证
 

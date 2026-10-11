@@ -721,8 +721,10 @@ func _build_credits_panel() -> void:
 			"k": "MUSIC",
 			"h": "背景音乐 · MUSIC",
 			"b": [
-				"四首 BGM 原曲作者：乌鸦Producer。",
-				"本项目使用的版本为适配游戏时长与无缝循环经 AI 重编曲处理，原曲版权仍归原作者所有。",
+				"四首 BGM 原曲作者：乌鸦Producer"
+						+ "（City of Night / Pixel Wars / DJ BO$$ / Lantern）。",
+				"本项目使用的版本为适配游戏时长与无缝循环经 AI 重编曲处理；"
+						+ "原曲出自原作者的「免费可商用」原创音乐集合包，版权仍归原作者所有。",
 			],
 		},
 		{

@@ -31,6 +31,12 @@ PROJECT = os.path.join(PROJ, "project.godot")
 MCP_LINE = 'enabled=PackedStringArray("res://addons/godot_mcp/plugin.cfg")'
 MCP_OFF = "enabled=PackedStringArray()"
 
+# ★ 2026-10-11（PR#2 合并后加固）：插件**启用**时，godot_mcp 还会把 autoload 条目
+#   写进 project.godot（编辑器保存项目时注入）。只摘插件行挡不住它 ——
+#   导出包里没有被排除的 probe 脚本 ⇒ 一启动就 "Failed to instantiate an autoload"。
+#   ⇒ 导出期间把 autoload 行也临时摘掉，导完原样还原。
+AUTOLOAD_LINE = 'MCPRuntimeProbe="*res://addons/godot_mcp/runtime/mcp_runtime_probe.gd"'
+
 PLATFORMS = {"windows": "Windows", "android": "Android"}
 
 
@@ -51,14 +57,20 @@ def main() -> None:
     targets = [PLATFORMS[w] for w in want] if want else list(PLATFORMS.values())
 
     original = io.open(PROJECT, encoding="utf-8").read()
-    if MCP_LINE not in original:
+    work = original
+    if MCP_LINE in work:
+        work = work.replace(MCP_LINE, MCP_OFF, 1)
+    else:
         print("⚠ project.godot 里没有 MCP 启用行，跳过摘除")
+    if AUTOLOAD_LINE in work:
+        work = work.replace(AUTOLOAD_LINE + "\n", "", 1)
+        print("── 已临时摘除 [autoload] MCPRuntimeProbe（导完还原）")
+    else:
+        print("⚠ project.godot 里没有 MCP autoload 条目，跳过摘除")
     # B-R02（2026-10-11 审查）：失败必须传播 —— 否则 CI / 调用方拿 0 当成功
     failed = []
     try:
-        io.open(PROJECT, "w", encoding="utf-8", newline="").write(
-            original.replace(MCP_LINE, MCP_OFF, 1)
-        )
+        io.open(PROJECT, "w", encoding="utf-8", newline="").write(work)
         for name in targets:
             out = preset_export_path(name)
             print("── 导出 %s → %s" % (name, out))

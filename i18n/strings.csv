@@ -155,8 +155,8 @@ CREDITS_H_ART,EVE Theme & Art Assets · EVE IP & ART,EVE 题材与美术素材 �
 CREDITS_ART_1,"Copyright in the EVE-related IP and assets (ship models, icons, textures, etc.) belongs to Fenris Creations (the company renamed from CCP Games in May 2026; CCP originally stood for Crowd Control Productions).",EVE 相关的 IP 与素材（舰船模型、图标、贴图等）著作权归 Fenris Creations 所有（该公司于 2026 年 5 月由 CCP Games 更名而来，CCP 原名 Crowd Control Productions）。
 CREDITS_ART_2,"This project claims no rights to these assets; the related content is not covered by GPL v3 and is used only for study, development and personal experience.",本项目不持有这些素材的任何权利，相关内容不在 GPL v3 覆盖范围内，仅用于学习、开发与体验目的。
 CREDITS_H_MUSIC,Background Music · MUSIC,背景音乐 · MUSIC
-CREDITS_MUSIC_1,Original composer of the four BGM tracks: Wuya Producer (CrowProducer).,四首 BGM 原曲作者：乌鸦Producer。
-CREDITS_MUSIC_2,The version used here was rearranged with AI assistance to fit the game length and to loop seamlessly; copyright in the original tracks remains with the original composer.,本项目使用的版本为适配游戏时长与无缝循环经 AI 重编曲处理，原曲版权仍归原作者所有。
+CREDITS_MUSIC_1,"Original composer of the four BGM tracks: Wuya Producer (CrowProducer) — City of Night / Pixel Wars / DJ BO$$ / Lantern.",四首 BGM 原曲作者：乌鸦Producer（City of Night / Pixel Wars / DJ BO$$ / Lantern）。
+CREDITS_MUSIC_2,"The version used here was rearranged with AI assistance to fit the game length and to loop seamlessly; the originals come from the composer's ""free for commercial use"" original music pack, and copyright remains with the original composer.",本项目使用的版本为适配游戏时长与无缝循环经 AI 重编曲处理；原曲出自原作者的「免费可商用」原创音乐集合包，版权仍归原作者所有。
 CREDITS_H_LICENSE,Open-source License · LICENSE,开源许可 · LICENSE
 CREDITS_LICENSE_1,Code: GNU GPL v3 (Copyright © 2026 xshynews).,代码：GNU GPL v3（Copyright © 2026 xshynews）。
 CREDITS_LICENSE_2,Art / audio assets: property of Fenris Creations and the original authors; not covered by this project's license.,美术 / 音频素材：归 Fenris Creations 及原作者所有，非本项目许可证覆盖范围。
