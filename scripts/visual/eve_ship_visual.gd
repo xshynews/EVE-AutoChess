@@ -732,8 +732,11 @@ static func _ensure_provider() -> void:
 	if _provider_installed:
 		return
 	_provider_installed = true
-	EveShipYawTable.set_mesh_rot_provider(
-			func(id: StringName) -> Basis: return EveShipVisual.mesh_rot_of(id))
+	# ⚠️ 必须是**方法引用**，⛔ 不能是 lambda：provider 存在另一个脚本的 static var 里，
+	#    lambda 直接持有本脚本函数的指针；退出时若本脚本先卸载，清理那个 static var
+	#    就会访问已释放内存 ⇒ 进程段错误（打完一场战斗再关游戏即触发）。
+	#    普通 Callable 只记对象 ID，对象没了只是失效，不会悬空。
+	EveShipYawTable.set_mesh_rot_provider(Callable(EveShipVisual, &"mesh_rot_of"))
 
 static func mesh_rot_of(ship_id: StringName) -> Basis:
 	_ensure_provider()

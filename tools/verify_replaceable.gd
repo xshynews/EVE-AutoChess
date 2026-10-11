@@ -80,6 +80,9 @@ func _test_button_skin_library() -> void:
 	print("[替换验证] ── ② 按钮皮肤库 ──")
 	var ids := EveButtonTheme.available_ids()
 	print("[替换验证] 可用皮肤 %d 套：%s" % [ids.size(), ", ".join(ids)])
+	# ⚠️ HUD 已不再提供「整体换皮」接口（`set_button_skin` 已移除，按钮按用途各自
+	#    套 hud / hud_main / hud_warn）⇒ 这里直接验皮肤库本身：每套皮肤都能把
+	#    5 个状态盒完整套到一个按钮上。
 	if ids.is_empty():
 		print("[替换验证] ✗ 皮肤库为空")
 		_fail += 1
@@ -93,12 +96,17 @@ func _test_button_skin_library() -> void:
 		for st in ["normal", "hover", "pressed", "disabled", "focus"]:
 			if btn.has_theme_stylebox_override(st):
 				states += st.substr(0, 1)
-		var ok := states.length() >= 1          # 至少要设上 normal
+		var ok := states.length() == 5          # ★ 合并：5 态必须全齐（PR 侧口径）
 		if not ok:
 			_fail += 1
 		print("[替换验证] %s %s  已设状态盒=[%s]（n/h/p/d/f）"
 				% ["✓" if ok else "✗", id, states])
 		btn.queue_free()
+	# HUD 里确实有按钮套上了皮肤（抽查一个）
+	var hud_btn := _find_first_button(_hud)
+	if hud_btn == null or not hud_btn.has_theme_stylebox_override("normal"):
+		print("[替换验证] ✗ HUD 里找不到已套皮肤的按钮")
+		_fail += 1
 
 
 ## ③ 运行时连续切换（模拟玩家快速换背景）
@@ -119,6 +127,13 @@ func _test_runtime_switch() -> void:
 			_fail += 1
 	print("[替换验证] 连续切换 6 轮完成，当前背景=%s"
 			% _arena.call("current_background_id"))
+
+
+## HUD 树里找第一个 Button（抽查「真的有按钮套上了皮肤」用）。
+## ⚠️ PR 合并补齐：主线版本重构皮肤测试时删掉了这个助手，但 HUD 抽查还调它。
+func _find_first_button(root: Node) -> Button:
+	var found := root.find_children("*", "Button", true, false)
+	return (found[0] as Button) if found.size() > 0 else null
 
 
 func _finish() -> void:

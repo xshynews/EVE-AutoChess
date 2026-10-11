@@ -7,7 +7,8 @@ extends Node
 ##       res://tools/verify_background.tscn -- --bg=caldari_c06 --lat=41.5
 ##
 ##   --bg=<id>   只测这一个背景（省略则遍历库里全部）
-##   --lat=<deg> 期望的中央视线采样纬度（省略用 41.5 = caldari c16 的星云带中心）
+##   --lat=<deg> 期望的中央视线采样纬度。省略时第 5 项只报告、不计失败
+##               （目标纬度因图而异，遍历全部背景时无法共用一个值）
 ##               ⚠️ 换图要跟着改 —— 每张全景图的内容带纬度不同。
 ##                  例：nebula_duo 最亮带 +17.5°，配 bias +40° 时
 ##                      中心采样 -5.8°，所以要 --lat=-5.8
@@ -39,6 +40,9 @@ var _headless := false
 var _fails := 0
 ## 期望的中央视线采样纬度（用 --lat= 传；默认 41.5 = 官方 caldari c16 的星云带中心）
 var _target_lat := 41.5
+## 是否显式传了 --lat=。没传时第 5 项只报告不计失败：
+## 目标纬度因图而异（见顶注），遍历全部背景时套同一个默认值必然误报。
+var _lat_explicit := false
 
 
 func _ready() -> void:
@@ -53,6 +57,7 @@ func _ready() -> void:
 			var lv := a.substr(6)
 			if lv.is_valid_float():
 				_target_lat = lv.to_float()
+				_lat_explicit = true
 
 	var packed: PackedScene = load(SCENE_PATH)
 	_battle = packed.instantiate()
@@ -88,8 +93,13 @@ func _process(_dt: float) -> void:
 
 	# 切换背景后必须等若干帧：材质的贴图上传 + shader 变体编译不在同一帧完成。
 	# ⚠️ 2 帧不够（实测截到的是上一张背景）。给 12 帧，约 0.2 秒。
+	# ⚠️ headless 下不渲染，`frame_post_draw` 永远不会发出 ⇒ 改等 process_frame，
+	#    否则进程挂死（判断逻辑不依赖像素，等帧只为让状态稳定）。
 	for i in 12:
-		await RenderingServer.frame_post_draw
+		if _headless:
+			await get_tree().process_frame
+		else:
+			await RenderingServer.frame_post_draw
 
 	if _headless:
 		if _pending.is_empty():
@@ -214,10 +224,14 @@ func _report(id: String) -> void:
 	#    硬编码会让「换了图就跑不过」和「没换图也跑不过」混在一起，
 	#    分不清是工具过时还是背景真的没配好。
 	#    例：nebula_duo 的星云带在【南纬 -32.5°】，与 caldari 正好相反。
+	if not _lat_explicit:
+		print("  5. 中央视线采样纬度 . [INFO]  v=%.4f  纬度=%+.1f°  像素行 %.0f / %d  (未传 --lat=，只报告)"
+				% [v, lat, row, tex_h if tex_h > 0 else 2048])
 	var lat_ok := absf(lat - _target_lat) <= 15.0
-	print("  5. 中央视线采样纬度 . %s  v=%.4f  纬度=%+.1f°  像素行 %.0f / %d  (目标 %+.1f°±15°)"
-			% [_mark(lat_ok), v, lat, row, tex_h if tex_h > 0 else 2048, _target_lat])
-	if not lat_ok:
+	if _lat_explicit:
+		print("  5. 中央视线采样纬度 . %s  v=%.4f  纬度=%+.1f°  像素行 %.0f / %d  (目标 %+.1f°±15°)"
+				% [_mark(lat_ok), v, lat, row, tex_h if tex_h > 0 else 2048, _target_lat])
+	if _lat_explicit and not lat_ok:
 		print("       ⚠️ 偏离目标纬度，画面中央会拍到贴图里的空白区")
 		_fails += 1
 

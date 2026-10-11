@@ -661,6 +661,9 @@ static var _axes_cache: Dictionary = {}
 static var _mesh_rot_cb: Callable = Callable()
 
 ## 注入 `mesh_rot` 提供者（`func(id: StringName) -> Basis`）。
+## ⚠️ 必须传**方法引用**（如 `Callable(EveShipVisual, &"mesh_rot_of")`），⛔ 别传 lambda：
+##    它会存进本脚本的 static var；lambda 持有其所属脚本函数的裸指针，
+##    退出时若那个脚本先卸载，清理本 static var 即访问已释放内存 ⇒ 进程段错误。
 static func set_mesh_rot_provider(cb: Callable) -> void:
 	_mesh_rot_cb = cb
 
@@ -1142,8 +1145,10 @@ static func validate() -> PackedStringArray:
 ## 同一条约定（见 `up_axis_from_remap` 的注释）。
 ##
 ## 调用方（`verify_run` / `tools/probe_tabgeom50`）在 `validate()` **之前**注入：
-##     `EveShipYawTable.set_geo_long_provider(func(id): return _geo_long_of(id))`
+##     `EveShipYawTable.set_geo_long_provider(_geo_long_of)`
 ## 不注入 ⇒ 本条跳过（**不报假失败**，但也没护栏）。
+## ⚠️ 传**方法引用**，⛔ 别传 lambda —— 存进 static var 的 lambda 会让进程退出时段错误
+##    （见 `set_mesh_rot_provider`）。
 static func set_geo_long_provider(cb: Callable) -> void:
 	_geo_long_provider = cb
 

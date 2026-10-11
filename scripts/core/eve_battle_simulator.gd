@@ -164,9 +164,11 @@ func setup(own_ships: Array[EveShip], enemy_ships: Array[EveShip]) -> void:
 	log_entries.clear()
 	elapsed = 0.0
 	tick = 0
-	_accum = 0.0
 	finished = false
 	winner_team = -1
+	_accum = 0.0
+	_next_target_refresh = 0.0
+	_target_switches = 0
 	# 时限回到默认（180s），由调用方决定是否用 set_time_limit() 收窄。
 	# ⚠️ 必须在这里重置而不是依赖新实例 —— 复用同一个模拟器重开一局时，
 	#    上一场的时限会静默地留在身上。

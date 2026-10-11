@@ -17,6 +17,13 @@ var _last_report := 0
 var _finished := false
 var _shot_count := 0
 var _hit_count := 0
+var _destroyed_count := 0
+var _pass := 0
+var _fail := 0
+
+## 船表规模（README：4 派系 × 13 艘）
+const EXPECT_SHIPS := 52
+const EXPECT_PER_FACTION := 13
 
 
 func _ready() -> void:
@@ -49,6 +56,11 @@ func _ready() -> void:
 		print("  派系 %s : %d 型" % [EveShip.FACTION_NAMES.get(f, "?"), by_faction[f]])
 	for c in by_class:
 		print("  吨位 %s : %d 型" % [EveShip.CLASS_NAMES.get(c, "?"), by_class[c]])
+	_check("舰船总数 = %d" % EXPECT_SHIPS, all.size() == EXPECT_SHIPS, "实际 %d" % all.size())
+	_check("4 个派系", by_faction.size() == 4, "实际 %d" % by_faction.size())
+	for f in by_faction:
+		_check("派系 %s = %d 型" % [EveShip.FACTION_NAMES.get(f, "?"), EXPECT_PER_FACTION],
+				by_faction[f] == EXPECT_PER_FACTION, "实际 %d" % by_faction[f])
 
 	var pk: EveShip = EveShipDatabase.instantiate(0, 0, 1001)
 	print("\n[抽查] %s (%s %s %d费)" % [
@@ -180,6 +192,7 @@ func _place(fleet: Array[EveShip], other: Array[EveShip], team: int) -> void:
 
 
 func _on_destroyed(ship: EveShip) -> void:
+	_destroyed_count += 1
 	print("      >>> 击毁 %s (队%d)  t=%.1fs" % [ship.ship_name, ship.team, _sim.elapsed])
 
 
@@ -211,7 +224,46 @@ func _finish_report(winner: int) -> void:
 	print("[总输出] %.0f 伤害" % float(st["total_damage"]))
 	print("[日志] %d 条" % int(st["log_count"]))
 	print("=".repeat(72))
-	get_tree().quit(0)
+
+	# ── 断言 ──
+	var dead_a := 0
+	var dead_b := 0
+	var alive_a := 0
+	var alive_b := 0
+	for s in _sim.ships:
+		if s.team == 0:
+			if s.alive: alive_a += 1
+			else: dead_a += 1
+		else:
+			if s.alive: alive_b += 1
+			else: dead_b += 1
+	_check("战斗在时限内收敛", winner != -2)
+	_check("确实开过火", _shot_count > 0, "开火 %d" % _shot_count)
+	_check("确实有命中", _hit_count > 0, "命中 %d" % _hit_count)
+	_check("造成了伤害", float(st["total_damage"]) > 0.0)
+	# 每艘被击毁的船恰好发一次 unit_destroyed（连射鞭尸会让它重复发）
+	_check("击毁信号数 = 阵亡舰数", _destroyed_count == dead_a + dead_b,
+			"信号 %d · 阵亡 %d" % [_destroyed_count, dead_a + dead_b])
+	if winner == 0:
+		_check("己方胜 ⇒ 敌方全灭、己方有存活", alive_b == 0 and alive_a > 0)
+	elif winner == 1:
+		_check("敌方胜 ⇒ 己方全灭、敌方有存活", alive_a == 0 and alive_b > 0)
+	# 固定步长：模拟时间必须严格等于 tick 数 × FIXED_STEP（不随帧率漂）
+	_check("elapsed = tick × FIXED_STEP",
+			absf(_sim.elapsed - float(_sim.tick) * EveBattleSimulator.FIXED_STEP) < 1e-3,
+			"elapsed %.4f · tick %d" % [_sim.elapsed, _sim.tick])
+
+	print("═══ RESULT passed=%d failed=%d ═══" % [_pass, _fail])
+	get_tree().quit(1 if _fail > 0 else 0)
+
+
+func _check(label: String, ok: bool, detail: String = "") -> void:
+	if ok:
+		_pass += 1
+		print("  [OK]   %s" % label)
+	else:
+		_fail += 1
+		print("  [FAIL] %s  %s" % [label, detail])
 
 
 func _arr(a: PackedFloat32Array) -> String:
