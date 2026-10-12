@@ -22,6 +22,10 @@ jobs:
     runs-on: windows-latest
     env:
       GODOT_VERSION: 4.7.2
+      # ⚠️ Windows runner 上 Python 默认按本地代码页编码 stdout（英文系统 = cp1252），
+      #    脚本一打中文就会 UnicodeEncodeError —— 本地中文机复现不出来。
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
       # ⚠️ 官方发布**没有**独立的 console exe 资产 —— Windows 版是个 zip，
       #    解开后同时有 `Godot_v4.7.2-stable_win64.exe` 与 `..._console.exe`。
       GODOT_ZIP: Godot_v4.7.2-stable_win64.exe.zip

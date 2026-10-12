@@ -42,6 +42,17 @@ import os
 import shutil
 import sys
 
+# ★ 2026-10-12：**统一把标准输出设成 UTF-8**。
+#   为什么必须在这里做：Windows 上 Python 的 stdout 默认按**本地代码页**编码
+#   （英文系统 = cp1252），脚本一打中文就 `UnicodeEncodeError` 直接崩 ——
+#   而中文开发机上永远是 UTF-8，**本地根本复现不出来**（CI 实测踩到）。
+#   放在 `_paths`（所有流水线脚本都会 import 的第一个模块）⇒ 一处生效、全仓受益。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # ── 仓库根：本文件 = <root>/tools/pipeline/_paths.py ⇒ 上溯两级 ──────────
 _HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.environ.get("EVE_PROJECT_ROOT") or os.path.dirname(os.path.dirname(_HERE))
