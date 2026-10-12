@@ -3,7 +3,16 @@
   "id": "condor",
   "typeid": 583,
   "status": "skip",
-  "model_name": "Condor"
+  "model_name": "Condor",
+  "verts": 4433,
+  "faces": 5068,
+  "dims": [
+   76.058,
+   27.565,
+   76.283
+  ],
+  "obj": "Condor.obj",
+  "dims_source": "shipped_glb"
  },
  {
   "id": "bantam",
@@ -129,7 +138,16 @@
   "id": "punisher",
   "typeid": 597,
   "status": "skip",
-  "model_name": "Punisher"
+  "model_name": "Punisher",
+  "verts": 3114,
+  "faces": 3978,
+  "dims": [
+   36.598,
+   27.411,
+   65.507
+  ],
+  "obj": "Punisher.obj",
+  "dims_source": "shipped_glb"
  },
  {
   "id": "inquisitor",
@@ -285,7 +303,16 @@
   "id": "moa",
   "typeid": 623,
   "status": "skip",
-  "model_name": "Moa"
+  "model_name": "Moa",
+  "verts": 8466,
+  "faces": 7033,
+  "dims": [
+   228.436,
+   87.099,
+   329.24
+  ],
+  "obj": "Moa.obj",
+  "dims_source": "shipped_glb"
  },
  {
   "id": "caracal",
@@ -438,19 +465,18 @@
   "obj": "Augoror.obj"
  },
  {
-  "id": "arbitrator",
-  "typeid": 628,
+  "id": "maller",
+  "typeid": 624,
   "status": "ok",
-  "model_name": "Arbitrator",
-  "verts": 3963,
-  "faces": 4742,
+  "model_name": "Maller",
+  "verts": 62070,
+  "faces": 50458,
   "dims": [
-   163.666,
-   39.022,
-   326.242
+   197.614,
+   171.447,
+   227.548
   ],
-  "sec": 16.4,
-  "obj": "Arbitrator.obj"
+  "obj": "Maller.obj"
  },
  {
   "id": "drake",

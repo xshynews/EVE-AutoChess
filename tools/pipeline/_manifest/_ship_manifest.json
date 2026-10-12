@@ -147,7 +147,7 @@
   },
   {
    "id": "executioner",
-   "cn": "磨难级",
+   "cn": "刽子手级",
    "name_en": "Executioner",
    "typeid": 589,
    "faction": "艾玛",
@@ -406,17 +406,17 @@
    "model_dir": "_ship3d/augoror"
   },
   {
-   "id": "arbitrator",
+   "id": "maller",
    "cn": "暴君级",
-   "name_en": "Arbitrator",
-   "typeid": 628,
+   "name_en": "Maller",
+   "typeid": 624,
    "faction": "艾玛",
    "race": "amarr",
    "cost": 3,
    "weapon": "激光炮",
    "defense": "甲抗",
-   "portrait": "assets/ships/arbitrator.png",
-   "model_dir": "_ship3d/arbitrator"
+   "portrait": "assets/ships/maller.png",
+   "model_dir": "_ship3d/maller"
   },
   {
    "id": "drake",
@@ -472,7 +472,7 @@
   },
   {
    "id": "cyclone",
-   "cn": "暴风级",
+   "cn": "飓风级",
    "name_en": "Cyclone",
    "typeid": 16231,
    "faction": "米玛塔尔",
@@ -485,7 +485,7 @@
   },
   {
    "id": "hurricane",
-   "cn": "飓风级",
+   "cn": "暴风级",
    "name_en": "Hurricane",
    "typeid": 24702,
    "faction": "米玛塔尔",

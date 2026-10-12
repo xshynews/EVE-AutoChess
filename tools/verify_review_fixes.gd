@@ -669,7 +669,7 @@ func _t_deploy_rules() -> void:
 			"make_drag 带上来源与下标")
 
 	# ghost_payload：字段映射（HUD 侧 _DragGhost.apply 的约定）
-	var g := DEPLOY.ghost_payload({"name": "磨难级", "star": 2, "cost": 3,
+	var g := DEPLOY.ghost_payload({"name": "测试舰级", "star": 2, "cost": 3,
 			"hint": "移动到这里", "hint_ok": true})
-	_ok(bool(g["active"]) and String(g["name"]) == "磨难级" and bool(g["hint_ok"]),
+	_ok(bool(g["active"]) and String(g["name"]) == "测试舰级" and bool(g["hint_ok"]),
 			"ghost_payload 字段映射正确（active/name/hint_ok）")

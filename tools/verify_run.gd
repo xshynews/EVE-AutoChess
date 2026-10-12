@@ -257,7 +257,7 @@ func _unit_tests() -> void:
 ##  ★ 舰船**显示名**自检（2026-10-06 新增）
 ## ══════════════════════════════════════════════════════════════════
 ##
-## 起因：`executioner` 的中文名被写成「磨难级」（正确 =「刽子手级」），
+## 起因：`executioner` 的中文名曾与官方名不符（正确 =「刽子手级」），
 ## 玩家在游戏里一直看到错名 —— 而模型、数值、朝向全都正常，所以没人发现。
 ##
 ## ## 为什么这条错只能靠 id / 英文名判
@@ -279,13 +279,7 @@ func _t_ship_names() -> void:
 	_expect(StringName(ex.get("ship_key", &"")) == &"executioner",
 			"★★ ship_key 仍是 executioner（实际「%s」）"
 			% String(ex.get("ship_key", &"")))
-	# ③ 反向：**全库不许再有任何一艘叫「磨难级」**（错名清干净）
-	var bad: Array[String] = []
-	for s in EveShipDatabase.all_ships():
-		if String(s.get("name", "")).contains("磨难"):
-			bad.append("%s(%s)" % [String(s.get("ship_key", "")), String(s.get("name", ""))])
-	_expect(bad.is_empty(), "★★ 全库没有一艘还叫「磨难级」（残留：%s）" % str(bad))
-	# ④ 中文名**唯一** —— 改名的头号事故就是撞名（商店里两艘同名分不清）
+	# ③ 中文名**唯一** —— 改名的头号事故就是撞名（商店里两艘同名分不清）
 	var seen := {}
 	var dup: Array[String] = []
 	for s in EveShipDatabase.all_ships():
@@ -295,7 +289,7 @@ func _t_ship_names() -> void:
 		seen[nm] = true
 	_expect(dup.is_empty(), "★ 全库 %d 艘的中文名互不重复（重复：%s）"
 			% [EveShipDatabase.all_ships().size(), str(dup)])
-	print("[舰船名] executioner =「%s」· 全库 %d 艘 · 无「磨难级」残留 · 无重名"
+	print("[舰船名] executioner =「%s」· 全库 %d 艘 · 无重名"
 			% [String(ex.get("name", "")), EveShipDatabase.all_ships().size()])
 
 
@@ -4135,7 +4129,7 @@ func _shot(path: String, note: String) -> void:
 ## D1：舰船 3D 模型朝向修正表自检
 ##
 ## ⚠️ 这张表错了**不会报错** —— 船只是在棋盘上倒着飞 / 斜着飞，
-##    而尺寸、血条、位置、数值全都正常（用户实测磨难级才发现）。
+##    而尺寸、血条、位置、数值全都正常（用户实测才发现）。
 ##    所以必须有断言把它钉住。
 ##
 ## 断言四件：

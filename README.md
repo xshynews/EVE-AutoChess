@@ -63,6 +63,15 @@ GODOT_BIN=/path/to/Godot_v4.7.2-stable_win64_console.exe tools/run_verifies.sh
 诊断型脚本（`verify_background` / `verify_camera` / `probe_*`）只出数、没有通过/失败语义，**不在套件里**；
 `verify_battle` 已补断言（13 条）但仍是诊断入口。
 
+### CI（GitHub Actions）
+
+每次 push / PR 到 `main` 会自动跑 [`.github/workflows/verify.yml`](./.github/workflows/verify.yml)：
+
+1. **无头验收套件** —— 同一份 `tools/run_verifies.sh`（windows-latest 上跑，与本地同构）；
+2. **数据一致性** —— 设计表 `data/source_csv/01..` ↔ 代码 `scripts/data/*.gd` 逐行逐列对拍
+   （`_gen_ship_table.py`，这是「人工手抄会漂移」的那条链）；
+3. **产物可复现** —— 用仓库内清单重跑 `_gen_ship_index.py`，产物必须与仓库文件逐字节一致。
+
 ## 美术资源版权说明
 
 仓库内的舰船模型、图标、音频等游戏美术资源**提取自 EVE Echoes 客户端资源**。

@@ -1,0 +1,78 @@
+name: verify
+
+# 2026-10-12：把「无头验收套件」搬进 CI。
+#
+# 为什么用 windows-latest 而不是 ubuntu：
+#   · 套件与工程都在 Windows 上开发、跑绿（`tools/run_verifies.sh` 的默认引擎路径也是 Windows）；
+#   · 部分验收断言对**字体/路径语义**敏感（UI 缩放、窗口、中文文案渲染）；
+#   · GitHub 的 Windows runner 自带 Git Bash ⇒ 直接跑同一份 `.sh`，与本地完全同构。
+#
+# ⛔ 这里只做「验收 + 数据一致性」，**不导出游戏包**
+#   （导出要签名密钥与导出模板，属于发版流程，不进 CI）。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    env:
+      GODOT_VERSION: 4.7.2
+      GODOT_ZIP: Godot_v4.7.2-stable_win64_console.exe
+      GODOT_BIN: ${{ github.workspace }}\godot\Godot_v4.7.2-stable_win64_console.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Godot binary
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: godot
+          key: godot-${{ env.GODOT_ZIP }}
+
+      - name: Download Godot ${{ env.GODOT_VERSION }} (console build)
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -e
+          mkdir -p godot
+          url="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/${GODOT_ZIP}"
+          echo "downloading $url"
+          curl -fL --retry 3 -o "godot/${GODOT_ZIP}" "$url"
+          ls -la godot
+
+      - name: Show engine version
+        shell: bash
+        run: '"$GODOT_BIN" --version'
+
+      # ── ① 无头验收套件（判据见 tools/run_verifies.sh 顶注：退出码 / 无 SCRIPT ERROR /
+      #      完成标记 / 失败计数）───────────────────────────────────────────
+      - name: Run headless verify suite
+        shell: bash
+        run: bash tools/run_verifies.sh "$GODOT_BIN"
+
+      # ── ② 数据一致性：设计表(CSV) ↔ 代码数据文件(.gd) ────────────────────
+      #      这是「人工手抄会漂移」的那条链，必须由机器守。
+      - name: Check design tables vs generated GDScript
+        shell: bash
+        run: |
+          set -e
+          python tools/pipeline/_gen_ship_table.py
+
+      # ── ③ 产物可复现：用仓库里的清单重跑索引生成器，产物必须与仓库内文件一致 ──
+      - name: Check asset index reproducibility
+        shell: bash
+        run: |
+          set -e
+          python tools/pipeline/_gen_ship_index.py
+          if ! git diff --quiet -- scripts/data/eve_ship_asset_index.gd; then
+            echo "::error::eve_ship_asset_index.gd 重新生成后与仓库不一致（清单/数据漂移）"
+            git diff -- scripts/data/eve_ship_asset_index.gd | head -60
+            exit 1
+          fi
+          echo "OK：索引可复现（逐字节一致）"

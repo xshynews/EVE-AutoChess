@@ -28,14 +28,15 @@
 
 | 脚本 | 作用 | 输入 → 输出 |
 |---|---|---|
+| `_gen_ship_table.py` | **设计表 → 代码**：校验（默认）/ 生成（`--write`）舰船表 | `data/source_csv/01_舰船数值全表.csv` ↔ `scripts/data/eve_ship_table.gd` |
 | `_gen_ship_index.py` | 生成 Godot 侧资产索引 | `_manifest/_ship_manifest.json` + 建模结果 → `scripts/data/eve_ship_asset_index.gd` |
 | `_build_all_ships.py` | 批量建模 52 艘 | EVE 客户端资源 → `<工作目录>/_ship3d/<id>/` |
 | `eve_ship_build.py` | **核心**：单个 typeID → OBJ + 官方贴图（一条命令） | gamemodels3d 官方资产 → `<out>/<Model>.obj` |
 | `blender_project.py` | 用 Blender 打开构建结果做人工复核 | 上述 OBJ |
 | `_paths.py` | **路径唯一真源**（环境变量可覆盖） | — |
 
-> ⚠️ 重新生成索引前先读 [`_manifest/README.md`](./_manifest/README.md)：清单与仓库里的
-> `eve_ship_asset_index.gd` 有 **3 处已知偏差**，直接跑会把手工修正冲掉。
+> ✅ 索引生成器**可复现**：用仓库里的清单重跑 `_gen_ship_index.py`，产物与
+> `scripts/data/eve_ship_asset_index.gd` **逐字节一致**（CI 每次提交都会验这条）。
 
 ## 朝向标定（`eve_ship_yaw.gd` 的来源）
 

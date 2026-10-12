@@ -35,16 +35,9 @@ const NODE_CSV := "res://data/source_csv/04_节点表_遥望边境.csv"
 ##   ① 每条必须写**理由**，且理由只能是"**已知的有意改动**"；
 ##   ② 只允许 `cols` 里列出的列不同 —— 同一行的**别的列**漂了照样红；
 ##   ③ 拿它掩盖新漂移 = 把这条验收直接废掉（宁可不加）。
-const KNOWN_DIFF := {
-	"executioner": {
-		"cols": ["中文名"],
-		"why": "正名：磨难级 → 刽子手级（只改显示名，见 MEMORY 红线 1）",
-	},
-	"arbitrator": {
-		"cols": ["船ID", "中文名", "护盾", "装甲/结构", "攻击"],
-		"why": "该船已下线，行位换成 maller（主宰级换装，V0.13 已删 arbitrator 资产）",
-	},
-}
+## ★ 2026-10-12：原先登记的两条（executioner 正名 / arbitrator→maller）已随
+##   设计表与代码**对齐**而作废 ⇒ 清空。⛔ 以后再加必须遵守上面三条使用规则。
+const KNOWN_DIFF := {}
 
 var _pass := 0
 var _fail := 0

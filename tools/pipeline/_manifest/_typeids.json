@@ -3,7 +3,6 @@
   "abaddon": 24692,
   "algos": 32872,
   "apocalypse": 642,
-  "arbitrator": 628,
   "armageddon": 643,
   "augoror": 625,
   "bantam": 582,
@@ -49,13 +48,13 @@
   "thrasher": 16242,
   "tristan": 593,
   "typhoon": 644,
-  "vexor": 626
+  "vexor": 626,
+  "maller": 624
  },
  "key": {
   "abaddon": "am_diyutianshi",
   "algos": "glt_aergesi",
   "apocalypse": "am_zainan",
-  "arbitrator": "am_baojun",
   "armageddon": "am_morishachang",
   "augoror": "am_aogenuo",
   "bantam": "jdl_aijiaoji",
@@ -101,6 +100,7 @@
   "thrasher": "mmte_changweijiao",
   "tristan": "glt_telisitan",
   "typhoon": "mmte_taifeng",
-  "vexor": "glt_kuangnuzhe"
+  "vexor": "glt_kuangnuzhe",
+  "maller": "am_baojun"
  }
 }

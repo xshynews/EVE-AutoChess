@@ -12,23 +12,20 @@
 > （= 假开源）。2026-10-12 起随仓库提供，路径由 `tools/pipeline/_paths.py` 解析
 > （`SHIP_MANIFEST` / `build_result_json()`），可用环境变量覆盖。
 
-## ⚠️ 已知偏差：本清单**比**仓库里的 `eve_ship_asset_index.gd` **旧 3 处**
+## ✅ 口径已于 2026-10-12 对齐（原先的 3 处偏差已消除）
 
-`eve_ship_asset_index.gd`（机生成产物）后来被手工修正过几行，而本清单没有同步。
-现在直接用 `_gen_ship_index.py` 重新生成，会把下面 3 处**改回旧值**：
+历史上本清单比仓库里的 `eve_ship_asset_index.gd` 旧 3 处，现已按「**运行时为准**」
+（谁被引用得更多：`eve_ship_table.gd` + 资产索引 + `assets/` 才有模型与立绘）对齐：
 
-| 舰船 id | 仓库里（`eve_ship_asset_index.gd`，含手工修正） | 本清单会生成 |
+| 舰船 | 对齐结果 | 依据 |
 | --- | --- | --- |
-| `executioner` | `"刽子手级"`（并带一段说明注释） | `"磨难级"` |
-| `maller` / `arbitrator` | `["maller", 624, "Maller", "暴君级", …]` | `["arbitrator", 628, "Arbitrator", "暴君级", …]` |
-| `cyclone` / `hurricane` | `cyclone=飓风级`、`hurricane=暴风级` | 两个中文名**互换** |
+| `executioner` | 刽子手级 | ESI typeID 589 官方中文名 |
+| `arbitrator` → **`maller`** | 暴君级（typeID 624） | 原 `arbitrator` 已下线；游戏里有 `maller.glb` + `maller.png` |
+| `cyclone` / `hurricane` | 飓风级 / 暴风级 | ESI 16231 / 24702 官方中文名 |
 
-同时 `01_舰船数值全表.csv` 与 `scripts/data/eve_ship_table.gd` 之间也有一处不一致：
+同时 `data/source_csv/01_舰船数值全表.csv` 也改到了同一口径，
+`tools/verify_data_source.gd` 里那两条「有意分歧」白名单随之清空。
 
-| 舰船 | 设计表 `01_舰船数值全表.csv` | 代码 `eve_ship_table.gd` |
-| --- | --- | --- |
-| `executioner` | 磨难级 | **刽子手级** |
-| `arbitrator` / `maller` | `arbitrator`（暴君级） | **`maller`**（暴君级） |
+> 现在 `python tools/pipeline/_gen_ship_index.py` 的输出与仓库里的
+> `eve_ship_asset_index.gd` **逐字节一致**（可重复生成，已实测幂等）。
 
-**⇒ 在三处口径对齐之前，别直接跑 `_gen_ship_index.py` 覆盖产物**
-（会把手工修正冲掉）。对齐方案需要作者拍板：以设计表为准去改代码，还是以代码为准去改设计表。

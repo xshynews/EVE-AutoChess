@@ -28,7 +28,7 @@ import json
 import os
 import sys
 
-from _paths import SHIP_INDEX_GD, SHIP_MANIFEST, WORK, build_result_json
+from _paths import GLB_DIR, SHIP_INDEX_GD, SHIP_MANIFEST, WORK, build_result_json
 
 MANIFEST = SHIP_MANIFEST
 RESULT = build_result_json()
@@ -220,7 +220,11 @@ def main():
         note = ""
         if b.get("status") == "mismatch":
             note = "  # !! 建模时模型名对不上"
-        elif not os.path.exists(os.path.join(ROOT, sid, "ship.json")):
+        elif not (os.path.exists(os.path.join(ROOT, sid, "ship.json"))
+                  or os.path.exists(os.path.join(GLB_DIR, sid + ".glb"))):
+            # ★ 2026-10-12：两条证据任一存在即算「已建模」——
+            #   工作目录里的 ship.json（本机刚建完）**或**仓库里已发布的 <id>.glb。
+            #   ⛔ 只看前者会给「资产已随仓库分发、但本机工作目录早被清掉」的船贴错标签。
             note = "  # 未建模"
         lines.append('\t["%s", %d, "%s", "%s", %d, %s],%s'
                      % (sid, m["typeid"], m["name_en"], m["cn"], m["cost"], ds, note))
