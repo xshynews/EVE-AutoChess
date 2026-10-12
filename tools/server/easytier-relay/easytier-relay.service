@@ -1,0 +1,30 @@
+# EVE 自走棋自建会合 / 中继节点（systemd 服务）。部署步骤见同目录 README.md。
+#
+# 只为本游戏的房间转发流量：房间网络名都以 eve-ddz- 开头，白名单之外的网络
+# 只转发 RPC（帮它们打洞建立直连），不转发数据，避免节点被其他用户当免费中继占满带宽。
+
+[Unit]
+Description=EasyTier relay node for EVE AutoChess
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=easytier
+Group=easytier
+ExecStart=/opt/easytier/easytier-core \
+    --no-tun \
+    -l tcp://0.0.0.0:11010 \
+    -l udp://0.0.0.0:11010 \
+    --relay-network-whitelist "eve-ddz-*" \
+    --relay-all-peer-rpc true \
+    --console-log-level warn
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
