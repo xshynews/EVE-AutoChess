@@ -53,6 +53,11 @@ var _tun = null
 ##   本类**不再自己维护第二份映射**（两份迟早会漂移，而漂移的后果是「发给错的人」）。
 var _pending := {}          ## peer_id → 名字（等房主确认）
 var _last_snap := {}        ## seat → 上次下发的负载（避免无变化时反复发）
+## ★ 本帧的房主本地时钟（由 `tick()` 写入）。★ 2026-10-12 审查 N05：
+##   客户端心跳里带的是**它自己进程**的 `Time.get_ticks_msec()`，两个进程的启动时刻不同、
+##   这个数**不能直接相减**（实测能差出十分钟，托管要么永不触发、要么过早触发）。
+##   ⇒ 收到心跳一律记「房主此刻的时间」，客户端的值只当诊断数据。
+var _now_ms := 0
 var _last_ping_ms := -99999 ## ⚠️ 心跳限流：⛔ 别每帧发（60 包/秒纯属浪费）
 const PING_INTERVAL_MS := 1000
 
@@ -67,6 +72,7 @@ func _process(_d: float) -> void:
 
 ## 每帧推进（也由无头验收手动调；本类不读时钟，now_ms 外部传入）。
 func tick(now_ms: int) -> void:
+	_now_ms = now_ms
 	if _tun != null and state == State.TUNNEL:
 		if _tun.poll(now_ms) == TUN.State.FAILED:
 			_fail(_tun.last_error)
@@ -190,12 +196,18 @@ func _assign(peer_id: int, nm: String) -> void:
 	net.seats[seat]["online"] = true
 	# ★ 把连接绑到座位：此后该连接发来的命令，座位号由会话层按 peer 查得，
 	#   ⛔ 命令里自称的 seat 一律被忽略（防冒充他人）。
-	if not net.bind_peer(seat, peer_id):
+	if not net.bind_peer(seat, peer_id, Time.get_ticks_msec()):
 		_tp.send_to(peer_id, {"t": Msg.REJECT, "reason": "座位已被占用"})
 		return
 	net.reclaim(seat, Time.get_ticks_msec())
 	_tp.send_to(peer_id, {"t": Msg.ACCEPT, "seat": seat,
 			"needs_approval": needs_approval})
+	# ★ 2026-10-12 联网专项审查 N06：**新连接必须收到完整首份快照**，不能被去重缓存吃掉。
+	#   `_last_snap` 按**座位**记签名；重连到同一座位、而局面恰好没变时签名相同 ⇒
+	#   下面 `_push_seat()` 直接 return ⇒ 新客户端只拿到 ACCEPT、**没有手牌**
+	#   （若正轮到它，就既不能出牌也没有牌可看，且后续局面不变时永远好不了）。
+	#   ⇒ 绑定的那一刻清掉该座位的缓存签名。
+	_last_snap.erase(seat)
 	_push_seat(seat)
 	log_line.emit("%s 加入了（座位 %d）" % [nm, seat])
 	state_changed.emit()
@@ -257,6 +269,7 @@ func _push_seat(seat: int) -> void:
 			+ "|" + str(snap["base_score"]) + "|" + str(snap["pass_streak"]) \
 			+ "|" + str(snap["counts"]) + "|" + str(snap["played"]) \
 			+ "|" + str(snap["bottom"]) + "|" + str(snap["winner"]) \
+			+ "|" + str(snap["passed"]) + "|" + str(snap["seats"]) \
 			+ "|" + str(snap["your_hand"])
 	# ⚠️ 签名必须覆盖**全部会变的局面字段**。早先只算了 turn/phase/counts ⇒
 	#    「三家叫完分定地主、而 turn 恰好还是同一个人」时签名不变 ⇒ **该发的没发**，
@@ -393,7 +406,9 @@ func _host_handle(from_peer: int, t: int, d: Dictionary) -> void:
 				# 被拒也要回一句，免得客户端按钮灰错后一脸茫然
 				_tp.send_to(from_peer, {"t": Msg.REJECT, "reason": String(res["reason"])})
 		Msg.PING:
-			net.touch(net.seat_of_peer(from_peer), int(d.get("now_ms", 0)))
+			# ★ 用**房主本地时钟**记账（审查 N05）：客户端的 now_ms 来自另一个进程，
+			#   与我们的 Time.get_ticks_msec() 不可比。
+			net.touch(net.seat_of_peer(from_peer), _now_ms)
 
 
 func _client_handle(t: int, d: Dictionary) -> void:
@@ -441,6 +456,19 @@ func close() -> void:
 	if state != State.FAILED:
 		state = State.IDLE
 		state_changed.emit()
+
+
+## ★★ 生命周期兜底（2026-10-12 联网专项审查 N03）。
+##
+## 牌桌的「返回菜单」是直接 `change_scene_to_file()` —— 它**不会**走面板的关房入口；
+## 而 `OS.create_process()` 起的进程**不会随 Godot 一起结束**（官方 API 明确如此）。
+## 实测：把房间 `queue_free()` 之后，EasyTier 进程仍然活着（它的 RPC 端口还能连），
+## 占着 UDP 27015 ⇒ 下一次加入要么端口冲突、要么连到**旧房间的转发器**上。
+##
+## ⇒ 只要本节点被释放（场景切换 / 退出游戏 / 上层被 free）就一定停内核。
+##   `close()` 是幂等的，重复调用安全。
+func _exit_tree() -> void:
+	close()
 
 
 ## 当前玩家该看的视图（房主看自己的裁剪快照，加入者看下发的）。

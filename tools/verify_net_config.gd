@@ -190,6 +190,17 @@ func _t_android_paths() -> void:
 			"★ 安卓内核名必须是 lib*.so（否则不会被打进 jniLibs）")
 	_ok(TUN.ANDROID_SRC.find("android-arm64") > 0,
 			"安卓内核的随包源路径指向 android-arm64 目录")
+	# ★★ 系统库目录必须被排除（2026-10-12 联网专项审查）：`/vendor/lib/egl/...` 这类
+	#    同样含 `/lib/`，且通常排在应用自己的库**之前** ⇒ 只取第一个会选错。
+	var noisy := "7f00-7f01 r-xp 00000000 fd:00 1 /vendor/lib/egl/libEGL.so\n" \
+			+ "7f02-7f03 r-xp 00000000 fd:00 2 /apex/com.android.runtime/lib64/libc.so\n" \
+			+ "7f04-7f05 r-xp 00000000 fd:00 3 " \
+			+ "/data/app/~~XyZ==/com.evezzq.autochess-AbC==/lib/arm64/libgodot_android.so"
+	_ok(TUN.parse_native_lib_dir(noisy)
+			== "/data/app/~~XyZ==/com.evezzq.autochess-AbC==/lib/arm64",
+			"★ 优先取 /data/app/（跳过前面的 /vendor、/apex）")
+	_ok(TUN.parse_native_lib_dir("/vendor/lib/egl/libEGL.so\n/apex/x/lib64/libc.so") == "",
+			"★ 只有系统库目录时返回空（⛔ 不能拿系统目录当 exec 位置）")
 
 
 # ══════════════════════════════════════════════ 工具

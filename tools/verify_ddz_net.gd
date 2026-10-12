@@ -39,6 +39,7 @@ func _ready() -> void:
 	_t_peer_binding()
 	_t_input_validation()
 	_t_takeover()
+	_t_empty_seat_ai()
 	_t_wire()
 	print("═══ RESULT passed=%d failed=%d ═══" % [_pass, _fail])
 	if _fail > 0:
@@ -131,6 +132,9 @@ func _t_isolation() -> void:
 	var seed_val := 987654321
 	var net = N.new()
 	net.host_setup(["我", "下家", "上家"])
+	# ★ N04 之后：空座位开局即 AI ⇒ 本用例要模拟「三名真人」，得先绑定连接
+	net.bind_peer(1, 811)
+	net.bind_peer(2, 812)
 	net.host_start(seed_val, 0)
 	var g = net.authoritative_game()
 
@@ -435,6 +439,10 @@ func _t_takeover() -> void:
 	print("── 掉线托管 ──")
 	var net = N.new()
 	net.host_setup(["我", "下家", "上家"])
+	# ★ 2026-10-12 审查 N04 之后：**空座位（peer == NO_PEER）在开局时会当场交给 AI**，
+	#   所以「掉线托管」这个用例必须先把 1/2 号位当真人绑定（这也是房间层 approve 会做的事）。
+	net.bind_peer(1, 911)
+	net.bind_peer(2, 912)
 	net.host_start(2468, 0)
 	var g = net.authoritative_game()
 
@@ -470,8 +478,39 @@ func _t_takeover() -> void:
 	_ok(bool(back["ok"]), "PING 命令永远被接受（心跳）")
 
 
-# ══════════════════════════════════════════════════════ 8 负载序列化
+# ══════════════════════════════════════════════════════ 7.5 空座位开局托管（审查 N04）
 
+## 只剩房主 / 房主 + 1 人开局时，空位必须**当场**交给 AI，否则轮到空位那一家整局停住。
+func _t_empty_seat_ai() -> void:
+	print("── 空座位开局即托管（2026-10-12 审查 N04）──")
+	var net = N.new()
+	net.host_setup(["我", "空位A", "空位B"])
+	var r: Dictionary = net.host_start(777, 0)
+	_ok(bool(r["ok"]), "开局成功")
+	_ok(bool(net.seats[1]["ai"]) and not bool(net.seats[1]["online"]),
+			"★ 1 号空位开局即托管（online=%s ai=%s）"
+			% [str(net.seats[1]["online"]), str(net.seats[1]["ai"])])
+	_ok(bool(net.seats[2]["ai"]), "★ 2 号空位同样托管")
+	_ok(not bool(net.seats[0]["ai"]), "房主自己不是托管")
+	var g = net.authoritative_game()
+	# 复现报告里的现象：让房主当地主并出一手牌，接下来必然轮到空位
+	net.apply_command({"seat": 0, "kind": N.Kind.BID, "score": 3})
+	_ok(int(g.landlord) == 0, "房主当地主")
+	var h0: Array = g.hand_of(0)
+	net.apply_command({"seat": 0, "kind": N.Kind.PLAY, "cards": [int(h0[0])]})
+	_ok(int(g.turn) != 0, "出牌后轮到别家（= 空位）")
+	var seat_now := int(g.turn)
+	var rr: Dictionary = net.tick(9000)
+	_ok((rr["auto"] as Array).has(seat_now),
+			"★ 轮到空位时 tick 自动替它走（原来的实现会永远停在这里）")
+	_ok(int(g.turn) != seat_now, "空位走完后牌局继续（turn 变成 %d）" % int(g.turn))
+	# 真人中途坐进来 ⇒ 解除托管
+	net.bind_peer(seat_now, 4242)
+	net.reclaim(seat_now, 9999)
+	_ok(not bool(net.seats[seat_now]["ai"]), "★ 真人坐下后解除托管")
+
+
+# ══════════════════════════════════════════════════════ 8 负载序列化
 func _t_wire() -> void:
 	print("── 负载序列化 ──")
 	var net = N.new()

@@ -87,6 +87,9 @@ CN_MIRRORS = """        // %s 国内镜像优先（本机直连 Maven Central �
 """ % MARK
 
 GRADLE_PROPS = os.path.join(BUILD_DIR, "gradle.properties")
+
+## 本轮**应当**写入但还没写入的补丁（供 `--check` 当发布门槛用）
+_MISSING: list = []
 DAEMON_OFF = """# %s 关掉 gradle daemon：
 #   ① 实测（2026-10-12）daemon 会继承 gradlew 的 stdout 管道 ⇒ Godot 等不到 EOF，
 #      **导出在 APK 产出后一直不退出**（实测挂了 19 分钟）⇒ 无人值守导出必须关掉它。
@@ -139,6 +142,7 @@ def ensure_build_version(check_only: bool) -> None:
     if cur == want:
         print("· .build_version 正确（%s）" % want)
         return
+    _MISSING.append(".build_version")
     print("── .build_version 需要写为 %r（当前 %r）" % (want, cur))
     if check_only:
         print("（--check：未写盘）")
@@ -171,6 +175,7 @@ def clean_stale_tmp(check_only: bool) -> None:
     if not victims:
         print("· 没有残留 .tmp")
         return
+    _MISSING.append("残留 .tmp")
     print("── 发现 %d 个残留 .tmp（会让资源合并失败）" % len(victims))
     if check_only:
         print("（--check：未删除）")
@@ -200,6 +205,7 @@ def ensure_gradle_props(check_only: bool) -> None:
     if "org.gradle.daemon=false" in s:
         print("· gradle daemon 已关闭")
         return
+    _MISSING.append("org.gradle.daemon=false")
     print("── gradle.properties 需要 org.gradle.daemon=false（否则导出会在 gradle 之后一直挂着）")
     if check_only:
         print("（--check：未写盘）")
@@ -254,14 +260,20 @@ def main() -> int:
             # ⚠️ 模板里 `ndkVersion` 出现**两次**（android{} 开头一次、lintOptions 后又一次）
             #    ⇒ 必须全部注释掉，否则后面那处仍然生效、AGP 照样报缺 NDK。
             n = s.count("    " + NDK_LINE + "\n")
+            _MISSING.append("注释 ndkVersion")
             todo.append("注释掉 ndkVersion（本机无 NDK，共 %d 处）" % n)
-            s = s.replace("    " + NDK_LINE + "\n", NDK_OFF, 0)
+            # ⛔⛔ 绝不能写 `count=0`：Python 的 `str.replace(old, new, 0)` 是
+            #    「替换 0 次」＝一行都不改（2026-10-12 联网专项审查 N07，实测确认：
+            #    `'a\na\n'.replace('a','X',0)` 之后仍是两个 'a'）。
+            #    当时代码没生效、靠手工补救才让文件对 ⇒ 现在改为全部替换 + 后置断言。
+            s = s.replace("    " + NDK_LINE + "\n", NDK_OFF)
     else:
         print("⚠ 没找到 ndkVersion 行（可能模板已变），跳过")
 
     if "eve-patch: cleared" in s:
         print("· .tmp 清理钩子已就位")
     else:
+        _MISSING.append("gradle .tmp 钩子")
         todo.append("资源合并前清 .tmp 的 gradle 钩子")
         s = s.rstrip("\n") + "\n" + TMP_GUARD
 
@@ -270,18 +282,27 @@ def main() -> int:
     elif os.environ.get("EVE_NO_CN_MIRROR"):
         print("· EVE_NO_CN_MIRROR=1 ⇒ 跳过镜像补丁")
     elif "        google()\n" in s:
+        _MISSING.append("aliyun 镜像")
         todo.append("依赖仓库加国内镜像（maven.aliyun.com）")
         s = s.replace("        google()\n", CN_MIRRORS + "        google()\n", 1)
     else:
         print("⚠ 没找到 repositories 里的 google() 行，跳过镜像补丁")
 
+    # 后置断言：本轮打算禁用的有效声明必须真的消失（⛔ 别再靠「看起来打了补丁」）。
+    if not ndk_present() and "    " + NDK_LINE + "\n" in s:
+        print("✗ 仍有未注释的 ndkVersion 声明 ⇒ 补丁未生效，拒绝写盘")
+        return 3
+
     if s == orig:
-        print("── 无需改动（补丁已是最新）")
+        print("── 构建模板补丁已是最新")
+        if check_only and _MISSING:
+            print("✗ --check：缺 %d 项补丁（%s）⇒ 返回非零，可作发布门槛" % (len(_MISSING), "、".join(_MISSING)))
+            return 1
         return 0
     print("── 待打补丁：%s" % ("；".join(todo) if todo else "无"))
     if check_only:
         print("（--check：未写盘）")
-        return 0
+        return 1
     io.open(GRADLE, "w", encoding="utf-8", newline="").write(s)
     print("✓ 已写入 %s" % GRADLE)
     return 0

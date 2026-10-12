@@ -81,13 +81,23 @@ func host_setup(names: Array = [], host_peer: int = 1) -> void:
 
 ## 把一个连接绑定到座位。房主确认玩家加入后调用；玩家重连换了 peer id 时再调一次即可。
 ## 同一个 peer 不能同时占两个座位。
-func bind_peer(seat: int, peer: int) -> bool:
+## 把一条**活着的连接**绑到座位上。
+##
+## ★ 2026-10-12 审查 N04 的连带修正：绑定的语义就是「这个座位现在由一条真连接持有」
+##   ⇒ 必须同时 `online = true` 且**解除托管**。否则「空座位开局即 AI」之后，
+##   真人坐进来仍被当成托管座位 —— 连命令都会被 `apply_command` 那道闸拒掉。
+##   `now_ms > 0` 时顺带刷新心跳时间（免得刚坐下就被判掉线超时）。
+func bind_peer(seat: int, peer: int, now_ms: int = 0) -> bool:
 	if not _seat_ok(seat) or peer == NO_PEER:
 		return false
 	var other := seat_of_peer(peer)
 	if other >= 0 and other != seat:
 		return false
 	seats[seat]["peer"] = peer
+	seats[seat]["online"] = true
+	seats[seat]["ai"] = false
+	if now_ms > 0:
+		seats[seat]["last_seen_ms"] = now_ms
 	return true
 
 
@@ -117,10 +127,20 @@ func host_start(seed_value: int, now_ms: int = 0) -> Dictionary:
 	_game = G.new()
 	_game.start(seed_value)
 	started = true
-	for i in SEATS:
-		seats[i]["last_seen_ms"] = now_ms
 	events = []
 	passed = [false, false, false]
+	for i in SEATS:
+		seats[i]["last_seen_ms"] = now_ms
+		# ★★ 2026-10-12 联网专项审查 N04：**空座位必须当场交给 AI**。
+		#   `host_setup()` 把三个座位都标了 online=true，而下面 `tick()` 里
+		#   「online 就跳过托管」那道闸会让空位**永远**轮不到托管 ⇒ 轮到它那一家整局停住。
+		#   只剩房主、或房主 + 1 人时必现 —— 而那正是最常见的试玩场景。
+		#   ⛔ 别改成「等心跳超时」：空位压根没有连接，永远等不到心跳。
+		#   （真人中途坐进来时 `reclaim()` 会把 online 置回 true、解除托管。）
+		if int(seats[i]["peer"]) == NO_PEER:
+			seats[i]["online"] = false
+			seats[i]["ai"] = true
+			_push_log("%s 空着，由电脑托管。" % String(seats[i]["name"]))
 	_push_log("发牌完成。牌局由房主裁定（发牌种子不下发）。")
 	return {"ok": true, "reason": ""}
 

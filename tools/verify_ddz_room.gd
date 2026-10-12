@@ -200,6 +200,42 @@ func _run() -> void:
 	_ok((r["takeover"] as Array).has(c2seat) or bool(_host.net.seats[c2seat]["ai"]),
 			"★ 加入者2 掉线超时后被托管")
 
+	# ── 心跳必须用「房主本地时钟」记账（2026-10-12 审查 N05）──────
+	#   客户端 now_ms 来自另一个进程，直接写进房主的 last_seen_ms 会让托管
+	#   永不触发或过早触发（实测能差出十分钟）。
+	var c1seat := int(_c1.my_seat())
+	var bogus := 999999999
+	_c1._send_ping(bogus)
+	await _frames(30)
+	var seen := int(_host.net.seats[c1seat]["last_seen_ms"])
+	_ok(seen != bogus,
+			"★ 客户端时钟没被写进房主计时（记下 %d，客户端声称 %d）" % [seen, bogus])
+	_ok(seen > 0 and seen < bogus, "★ 记下的是房主本地时钟（%d）" % seen)
+
+	# ── 换连接重入**同一座位**必须收到完整首份快照（审查 N06）──────
+	var seat1 := int(_c1.my_seat())
+	var old_peer := int(_host.net.seats[seat1]["peer"])
+	_host._last_snap[seat1] = "STALE-SIG"          # 故意留一个「旧连接」的去重签名
+	_host.net.unbind_peer(old_peer)                 # 旧连接离开 ⇒ 座位空出
+	var spy := SpyTp.new()
+	var real_tp = _host._tp
+	_host._tp = spy
+	_host._assign(9001, "重连的人")
+	_ok(int(_host.net.seats[seat1]["peer"]) == 9001, "（前置）新连接坐回座位 %d" % seat1)
+	_ok(String(_host._last_snap.get(seat1, "")) != "STALE-SIG",
+			"★ 换连接后清掉了该座位的去重签名（审查 N06）")
+	_ok(spy.has_msg(9001, ROOM.Msg.SNAP),
+			"★ 新连接拿到首份 SNAP（不是只发 ACCEPT 就完事）")
+	_host._tp = real_tp
+
+	# ── 房间被释放（牌桌直接切场景）必须停内核（审查 N03）──────────
+	var r2 = ROOM.new()
+	add_child(r2)
+	var tun_spy := TunSpy.new()
+	r2._tun = tun_spy
+	r2.free()                                       # 立即释放 ⇒ _exit_tree 触发
+	_ok(tun_spy.stopped, "★ 房间被释放时会停内核，不留占着 27015 的残余进程")
+
 	# ── 收尾：关房必须清干净 ────────────────────────────────
 	_host.close()
 	_c1.close()
@@ -207,6 +243,37 @@ func _run() -> void:
 	await _frames(5)
 	_ok(_host.state == ROOM.State.IDLE, "关房后房主状态归位")
 	_ok(_c1.view().is_empty() or true, "关房不炸")
+
+
+# ══════════════════════════════════════════════ 测试替身
+
+## 只记录 `send_to`、不发真包 —— 用在「换连接」这类不该打扰真 ENet 的用例上。
+## ⚠️ 必须 `extends Node`：`ddz_room._tp` 声明为 `var _tp: Node`，赋值 RefCounted 会报
+##    `Invalid assignment ... on a base object of type 'Node'` ——
+##    而那会让 `_run()` 当场中断、后面的断言**一条都不跑**，却仍然打印 passed=N failed=0
+##    （最阴的一类假绿）。
+class SpyTp extends Node:
+	var sent: Array = []
+
+	func send_to(id: int, d: Dictionary) -> void:
+		sent.append({"to": id, "t": int(d.get("t", -1))})
+
+	func stop() -> void:
+		pass
+
+	func has_msg(id: int, t: int) -> bool:
+		for s in sent:
+			if int(s["to"]) == id and int(s["t"]) == t:
+				return true
+		return false
+
+
+## 记录 `stop()` 有没有被调用 —— 验证房间被释放时确实停内核（审查 N03）。
+class TunSpy:
+	var stopped := false
+
+	func stop() -> void:
+		stopped = true
 
 
 # ══════════════════════════════════════════════ 工具

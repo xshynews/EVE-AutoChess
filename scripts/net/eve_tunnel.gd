@@ -145,7 +145,12 @@ static func android_native_lib_dir() -> String:
 
 
 ## 从 `maps` 文本里挑出原生库目录。**纯函数** ⇒ 可在无头验收里喂合成样本。
+##
+## ⚠️ 只有「应用安装目录」下的那份才有意义：`/vendor/lib/egl/...`、`/system/lib64/...`
+##   这些系统库同样含 `/lib/`，而且**通常排在前面** ⇒ 只取第一个会选错目录
+##   （2026-10-12 联网专项审查用合成样本指出）。所以：优先 `/data/app/`，其余系统目录一律排除。
 static func parse_native_lib_dir(maps_text: String) -> String:
+	var fallback := ""
 	for line in maps_text.split("\n"):
 		var i := line.find("/lib/")
 		if i < 0:
@@ -158,8 +163,22 @@ static func parse_native_lib_dir(maps_text: String) -> String:
 			k -= 1
 		if k >= i:
 			continue
-		return line.substr(k, j - k)
-	return ""
+		var dir := line.substr(k, j - k)
+		if dir.begins_with("/data/app/"):
+			return dir
+		if fallback == "" and not _is_system_lib_dir(dir):
+			fallback = dir
+	return fallback
+
+
+## 系统/厂商的库目录（不是应用自己的，不能拿它当 exec 位置）。
+static func _is_system_lib_dir(dir: String) -> bool:
+	var prefixes := ["/vendor/", "/system/", "/system_ext/", "/apex/", "/product/",
+			"/odm/", "/data/dalvik-cache", "/memfd:"]
+	for p in prefixes:
+		if dir.begins_with(p):
+			return true
+	return false
 
 
 static func _read_text(path: String) -> String:

@@ -64,7 +64,13 @@ def ensure_export_dir() -> None:
     os.makedirs(EXPORT_DIR, exist_ok=True)
     root = os.path.normcase(os.path.abspath(PROJ))
     target = os.path.normcase(os.path.abspath(EXPORT_DIR))
-    if os.path.commonpath([root, target]) == root:
+    # ⚠️ Windows 上 `os.path.commonpath` 对不同盘符（如工程在 F:、导出到 D:）会**抛 ValueError**
+    #    —— 联网专项审查（2026-10-12）复现过 ⇒ 跨盘导出会直接崩。跨盘时谈不上「在工程内」，跳过即可。
+    try:
+        inside = os.path.commonpath([root, target]) == root
+    except ValueError:
+        inside = False
+    if inside:
         marker = os.path.join(EXPORT_DIR, ".gdignore")
         if not os.path.exists(marker):
             io.open(marker, "w").close()

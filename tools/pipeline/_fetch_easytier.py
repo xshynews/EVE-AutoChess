@@ -53,6 +53,21 @@ SHA256_ZIP = "27af91e270e554709b048bd32327fefd2dfce5062ae1e8701af7550c6f525f84"
 #    wintun.dll 仅房主 TUN 需要；WinDivert64.sys 体积很小，一并带上以防内核对它有运行时依赖。
 #    ⛔ 不带 easytier-web*.exe（那是它的 Web 面板，与游戏无关）
 WANT = ("easytier-core.exe", "Packet.dll", "wintun.dll", "WinDivert64.sys", "easytier-cli.exe")
+
+# ★★ 解出后每个文件的 SHA256（2026-10-12 实测值）。
+#    ⛔ 只看「文件在不在 / 多大」是不够的（2026-10-12 联网专项审查 N08）：
+#      中断解包、缓存损坏、换版本后遗留的旧文件都会让「检查通过」与实际可执行状态不一致
+#      —— 实测把全部文件做成零字节，老的 check() 仍返回 0。
+#    ⇒ 换内核版本时必须连同这里一起更新（本文件顶部 VERSION 附近有清单）。
+WANT_SHA256 = {
+    "easytier-core.exe": "da7eb2d24b5416f3d3407636949e964a0750e3f9dc53a828cb6799a57ead445d",
+    "Packet.dll": "c7c03a87eac7243ccbe331554624b18803010b740e311fc8cfddb573096eacac",
+    "wintun.dll": "e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce",
+    "WinDivert64.sys": "8da085332782708d8767bcace5327a6ec7283c17cfb85e40b03cd2323a90ddc2",
+    "easytier-cli.exe": "d8783e851e944b44a9b71b39fd02f227ec0a2a82b3165c55ead5dd32dcde53a1",
+    # Android 那份（Magisk 包里的 easytier-core，AArch64）
+    "android-arm64/easytier-core": "7bd504e87cad52edacb9ea84ece7397d0afb911101de623a3dfc4a4dbd9e6bb6",
+}
 DEST = os.path.join(ROOT, "addons", "easytier", "bin")
 
 # ── Android ───────────────────────────────────────────────────────────────
@@ -76,31 +91,57 @@ def sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
+def verify_one(path: str, key: str) -> tuple[bool, str]:
+    """按 `WANT_SHA256[key]` 校验单个文件。返回 `(ok, 说明)`。"""
+    want = WANT_SHA256.get(key)
+    if not os.path.exists(path):
+        return False, "缺失"
+    if os.path.getsize(path) == 0:
+        return False, "零字节"
+    got = sha256_file(path)
+    if want and got != want:
+        return False, "SHA256 不符（%s… != %s…）" % (got[:12], want[:12])
+    return True, ""
+
+
 def present() -> list[str]:
-    return [n for n in WANT if os.path.exists(os.path.join(DEST, n))]
+    """**已通过哈希校验**的 Windows 内核文件（⛔ 不是「文件存在」）。"""
+    return [n for n in WANT if verify_one(os.path.join(DEST, n), n)[0]]
 
 
 def android_ready() -> bool:
-    return os.path.exists(ANDROID_CORE) and os.path.exists(JNI_SO)
+    """Android 内核就位：源文件哈希正确，**且 jniLibs 那份与它逐字节一致**。"""
+    ok_core, _ = verify_one(ANDROID_CORE, "android-arm64/easytier-core")
+    if not ok_core or not os.path.exists(JNI_SO):
+        return False
+    return sha256_file(JNI_SO) == sha256_file(ANDROID_CORE)
 
 
-def check() -> int:
-    print("目标目录：%s" % DEST)
+def check(verbose: bool = True) -> int:
     ok = True
+    if verbose:
+        print("目标目录：%s" % DEST)
     for n in WANT:
-        p = os.path.join(DEST, n)
-        if os.path.exists(p):
-            print("  ✓ %-20s %10d 字节" % (n, os.path.getsize(p)))
+        good, why = verify_one(os.path.join(DEST, n), n)
+        if good:
+            if verbose:
+                print("  ✓ %-20s %10d 字节  SHA256 校验通过" % (n, os.path.getsize(os.path.join(DEST, n))))
         else:
-            print("  ✗ %-20s 缺失" % n)
+            print("  ✗ %-20s %s" % (n, why))
             ok = False
-    for label, p in (("android-arm64/easytier-core", ANDROID_CORE),
-                     ("jniLibs/arm64-v8a/libetcore.so", JNI_SO)):
-        if os.path.exists(p):
-            print("  ✓ %-28s %10d 字节" % (label, os.path.getsize(p)))
+    for label, p, key in (("android-arm64/easytier-core", ANDROID_CORE, "android-arm64/easytier-core"),
+                          ("jniLibs/arm64-v8a/libetcore.so", JNI_SO, "android-arm64/easytier-core")):
+        good, why = verify_one(p, key)
+        if good:
+            if verbose:
+                print("  ✓ %-28s %10d 字节  SHA256 校验通过" % (label, os.path.getsize(p)))
         else:
-            print("  ✗ %-28s 缺失（安卓联机需要）" % label)
+            print("  ✗ %-28s %s（安卓联机需要）" % (label, why))
             ok = False
+    # jniLibs 那份必须与源文件一致（否则「换了内核但装的是旧的」）
+    if os.path.exists(ANDROID_CORE) and os.path.exists(JNI_SO) and not android_ready():
+        print("  ✗ jniLibs 里的 libetcore.so 与 android-arm64/easytier-core 不一致 ⇒ 重跑 --force")
+        ok = False
     return 0 if ok else 1
 
 
@@ -141,6 +182,11 @@ def fetch_windows(force: bool) -> bool:
                     shutil.copyfileobj(src, out)
                 print("  解出 %s" % base)
     os.remove(zip_path)
+    # ★ 解出后**逐个按哈希校验**：解包中断/磁盘损坏都必须在这里暴露，而不是等到玩家点建房
+    bad = [n for n in WANT if not verify_one(os.path.join(DEST, n), n)[0]]
+    if bad:
+        print("✗ 解出的文件校验不通过：%s ⇒ 请重跑 --force" % ", ".join(bad))
+        return False
     return True
 
 
@@ -175,6 +221,9 @@ def fetch_android(force: bool) -> bool:
     shutil.copyfile(ANDROID_CORE, JNI_SO)
     print("  安装 %s" % JNI_SO)
     print("  ⚠️ 首次/模板重装后请再跑一次 tools/pipeline/_android_patch.py（模板会覆盖 build.gradle）")
+    if not android_ready():
+        print("✗ Android 内核校验不通过（源文件哈希不符 或 jniLibs 副本不一致）⇒ 请重跑 --force")
+        return False
     return True
 
 
