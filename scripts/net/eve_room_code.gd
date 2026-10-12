@@ -88,3 +88,30 @@ static func virtual_ip(code: String, seat: int) -> String:
 ## 房主的虚拟 IP（加入者的端口转发目标就是它）。
 static func host_virtual_ip(code: String) -> String:
 	return virtual_ip(code, 0)
+
+
+# ────────────────────────────────────────────────── 内核端口派生
+#
+# ★ 为什么端口也要从房间码派生（而不是写死 11010）：
+#   ① 玩家机器上**可能同时装着 EasyTier 的图形版**，写死 11010 会撞端口；
+#   ② 开发/测试时同一台机器要同时跑「房主 + 加入者」两个内核实例，
+#      必须让它们各用各的端口（⇒ 把座位号也掺进派生）。
+#   ⛔ 别改回固定端口 —— 撞了端口的表现是「内核起不来」，极难查。
+
+const LISTEN_BASE := 21010      ## 避开默认 11010，减少与其它 EasyTier 实例冲突
+const RPC_BASE := 26010
+const PORT_SPAN := 400
+
+
+## 该座位的内核监听端口（tcp/udp 共用这个号）。
+static func listen_port(code: String, seat: int) -> int:
+	return _port_from(code + ":listen:%d" % seat, LISTEN_BASE)
+
+
+## 该座位的管理 RPC 端口（我们靠「能不能连上它」判断内核是否就绪）。
+static func rpc_port(code: String, seat: int) -> int:
+	return _port_from(code + ":rpc:%d" % seat, RPC_BASE)
+
+
+static func _port_from(seed_text: String, base: int) -> int:
+	return base + seed_text.sha256_text().substr(0, 4).hex_to_int() % PORT_SPAN

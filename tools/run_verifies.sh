@@ -49,6 +49,7 @@ SUITE=(
   verify_window
   verify_ddz
   verify_ddz_net
+  verify_net_config
   verify_intro
   verify_audio
 )

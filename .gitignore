@@ -24,3 +24,6 @@ __pycache__/
 
 # 流水线工作目录（中间产物，⛔ 别提交）
 .pipeline_work/
+
+# 联机内核（第三方二进制，不入库；由 _fetch_easytier.py 获取）
+/addons/easytier/bin/
