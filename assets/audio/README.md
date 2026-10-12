@@ -1,6 +1,6 @@
 # assets/audio —— 音源来源与口径
 
-音源全部来自本机 EVE Online 客户端（`D:\EVE\SharedCache\ResFiles`），
+音源全部来自本机 EVE Online 客户端的 `SharedCache/ResFiles`（路径见 `tools/pipeline/_paths.py` 的 CLIENT），
 经 vgmstream 从 Wwise SoundBank 解包后压成 Ogg Vorbis。
 **是玩家在 EVE 里听到的同一批音源，不是仿制品。**
 

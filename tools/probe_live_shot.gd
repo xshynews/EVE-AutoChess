@@ -11,7 +11,7 @@ const YAW = preload("res://scripts/data/eve_ship_yaw.gd")
 ##   ⑤ 退出
 ##
 ## 用法：
-##     Godot_v4.7.1-stable_win64_console.exe --path "F:\evezzq\eve自走棋918" \
+##     "$GODOT_BIN" --path . \
 ##         --quit-after 5000 res://tools/probe_live_shot.tscn
 ##
 ## 产物：user://live_shot/  下

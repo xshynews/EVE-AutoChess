@@ -21,8 +21,8 @@ extends Node
 ##  「舰船像素」的亮度分位，不被星云干扰。
 ##
 ## ── 跑法（⚠️ 要看像素，不要加 --headless）─────────────────────────
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 1200 res://tools/probe_bench_light.tscn
+##   "$GODOT_BIN" \
+##     --path . --quit-after 1200 res://tools/probe_bench_light.tscn
 ##
 ## 产物：user://bheat_real_base.png / bheat_real_ibl.png
 ##       user://bheat_iso_base.png  / bheat_iso_ibl.png

@@ -3,8 +3,8 @@ extends Node
 ## 舰船可视节点体检 —— 量每艘船的实际世界尺寸
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 400 \
+##   "$GODOT_BIN" --headless \
+##     --path . --quit-after 400 \
 ##     res://tools/probe_ship_scale.tscn
 ##
 ## 背景：换上真实 GLB 模型后实机画面出现「一层巨大几何体罩住镜头」，

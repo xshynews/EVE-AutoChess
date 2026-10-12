@@ -21,7 +21,7 @@ extends Node
 ##  ⚠️ 红线 42：敌人恒在世界 **−Z**（`deploy_enemy_z = −45`）。
 ##
 ##  用法：
-##      Godot_v4.7.1-stable_win64_console.exe --headless \
+##      "$GODOT_BIN" --headless \
 ##          --path "<工程>" --quit-after 2400 \
 ##          res://tools/probe_prep53.tscn
 

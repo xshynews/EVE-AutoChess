@@ -2,8 +2,8 @@ extends Node
 ## 验证 settings 窗 DEBUG 块儿按钮齐全 + 发送 signal 正常
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 5000 \
+##   "$GODOT_BIN" --headless \
+##     --path . --quit-after 5000 \
 ##     res://tools/probe_settings_debug.tscn
 
 const SETTINGS_SCRIPT := preload("res://scripts/ui/panels/eve_settings.gd")

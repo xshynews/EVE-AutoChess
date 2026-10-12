@@ -17,7 +17,7 @@ extends Node3D
 ##     `AXIS_REMAP` 的 M** ⇒ 对 7 艘重映射船（myrmidon / catalyst / kestrel …）
 ##     渲出来是「完全没修过」的姿态 = **取证假阴性**（不报错，只是图骗人）。
 ##
-## ── 机位定义（与离线对照图的唯一真源 `C:\godot\_export\views6.py` 同名同序）──
+## ── 机位定义（与离线对照图脚本 `<流水线工作目录>/views6.py` 同名同序；该脚本在作者本地，未入库）──
 ##      正视图 = 相机在 +Z   · 左视图 = 相机在 −X   · 右视图 = 相机在 +X
 ##      俯视图 = 相机在 +Y   · 仰视图 = 相机在 −Y   · 后视图 = 相机在 −Z
 ##  ⚠️ 俯 / 仰两格的 `up` **不能给 (0,1,0)** —— 与视线平行 ⇒ `look_at` 退化
@@ -27,8 +27,8 @@ extends Node3D
 ##       仰视（相机在 −Y）画面上 = 世界 +Z ⇒ up = (0, 0, +1)
 ##
 ## ── 跑法（⚠️ 不要加 --headless：headless 下取不到 SubViewport 纹理）──
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 6000 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 6000 \
 ##     res://tools/probe_ship_views.tscn -- --ids=myrmidon --size=420
 ##
 ##   `--ids=a,b,c`（默认 myrmidon）· `--size=420`（单图边长）

@@ -8,8 +8,8 @@ extends Node
 ##    最小高度**恰好取决于当时拿到的宽度**（宽度越窄 ⇒ 折行越多 ⇒ 最小高度越大）。
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 3000 res://tools/probe_settings_fit.tscn
+##   "$GODOT_BIN" --headless \
+##     --path . --quit-after 3000 res://tools/probe_settings_fit.tscn
 
 const HUD_SCRIPT := preload("res://scripts/ui/eve_hud_root.gd")
 

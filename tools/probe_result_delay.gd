@@ -3,8 +3,8 @@ extends Node
 ## 结算弹窗延迟出图探针（**非无头**）—— 2026-10-01 用户要求「击毁后一秒弹出」
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 4000 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 4000 \
 ##     res://tools/probe_result_delay.tscn
 ##
 ## 产物在 `user://result_delay/`

@@ -8,8 +8,8 @@ extends Node
 ## ⛔ 必须**非无头**：分辨率块只在桌面端构建，无头下根本不建（见 `EveResolution.is_enabled`）。
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.2-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 8000 res://tools/probe_display_layout.tscn
+##   "$GODOT_BIN" \
+##     --path . --quit-after 8000 res://tools/probe_display_layout.tscn
 ## 产物：user://shot_settings_battle.png · shot_lounge_settings.png
 ##       · shot_table_43.png · shot_menu_43.png
 

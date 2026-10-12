@@ -22,14 +22,14 @@ extends Node
 ##  ③ **HUD 整层隐藏**，否则窗口边框/文字会混进掩膜。
 ##
 ## ── 跑法（⚠️ 要看像素，不要加 --headless）───────────────────────
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 4000 res://tools/probe_ship_bright.tscn
+##   "$GODOT_BIN" \
+##     --path . --quit-after 4000 res://tools/probe_ship_bright.tscn
 ##
 ##  产物：user://sbright_<id>_real.png（球幕可见）
 ##        user://sbright_<id>_iso.png （球幕隐藏 · 供建掩膜）
 ##        user://sbright_report.txt
 ##
-##  然后跑 `python C:/godot/_export/ww2ogg_py/ship_bright.py` 出统计。
+##  然后跑 `python <流水线工作目录>/ww2ogg_py/ship_bright.py`（作者本地脚本，未入库） 出统计。
 
 const SCENE_PATH := "res://scenes/battle_scene.tscn"
 

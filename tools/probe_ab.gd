@@ -14,8 +14,8 @@ extends Node
 ##  舰船同为布阵态（3 倍）**，唯一的差别就是 yaw。
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 600 res://tools/probe_ab.tscn
+##   "$GODOT_BIN" \
+##     --path . --quit-after 600 res://tools/probe_ab.tscn
 
 const SCENE_PATH := "res://scenes/battle_scene.tscn"
 

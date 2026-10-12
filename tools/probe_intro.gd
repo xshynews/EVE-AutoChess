@@ -3,8 +3,8 @@ extends Node
 ## 开场剧情出图探针（**非无头**）
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 900 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 900 \
 ##     res://tools/probe_intro.tscn
 ##
 ## 产物在 `user://`（= %APPDATA%\Godot\app_userdata\EVE自走棋918\）

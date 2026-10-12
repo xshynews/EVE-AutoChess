@@ -24,8 +24,8 @@ extends Node3D
 ##  相机 / 光照 / 正交 size 全部**照抄** probe_ship_yaw_sheet，唯一变量就是轴向。
 ##
 ## ── 跑法（非 headless：要读 SubViewport 纹理）────────────────────
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 600 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 600 \
 ##     res://tools/probe_cam_axis.tscn
 
 const OUT_DIR := "user://cam_axis"

@@ -3,8 +3,8 @@ extends Node
 ## 开场剧情自检（无头）
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 900 \
+##   "$GODOT_BIN" --headless \
+##     --path . --quit-after 900 \
 ##     res://tools/verify_intro.tscn
 ##
 ## ── 本文件里**刻意造错就必挂**的反向注入检查（没有这些等于没牙齿）──────

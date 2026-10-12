@@ -4,7 +4,7 @@ class_name EveCynoBeacon
 ## 移动式诱导信标（Mobile Cynosural Beacon）
 ##
 ## 资产与实测数据全部来自 EVE 客户端取出的模型 `pcd01_t1.gr2`
-## （graphicID 24934，见 `C:\godot\_export\_cyno_deploy\移动式诱导信标_资源清单.md`）。
+## （graphicID 24934；资源清单在作者本地的 `<流水线工作目录>/_cyno_deploy/`，未入库）。
 ##
 ## ──★ 两条必须记住的（都吃过亏）─────────────────────────
 ## 1. **模型空间 +Y 朝下** ⇒ 塔身用 R_x(180°) 立正。

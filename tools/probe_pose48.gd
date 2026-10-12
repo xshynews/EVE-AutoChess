@@ -22,8 +22,8 @@ extends Node3D
 ##  所以本探针的「正前」机位 = 从 **+Z 朝 −Z 看**（模拟玩家视角）。
 ##
 ## ── 跑法（⚠️ 不要加 --headless）──
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 1200 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 1200 \
 ##     res://tools/probe_pose48.tscn -- --ids=abaddon,kestrel
 const INDEX := preload("res://scripts/data/eve_ship_asset_index.gd")
 

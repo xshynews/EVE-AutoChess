@@ -20,7 +20,7 @@ extends Node
 ##     用的是生产代码，不是我手写的 `Basis.from_euler`。
 ##
 ##  用法（⚠️ 非 headless）：
-##      Godot_v4.7.1-stable_win64_console.exe --path "<工程>" --quit-after 9000 \
+##      "$GODOT_BIN" --path "<工程>" --quit-after 9000 \
 ##          res://tools/probe_before_after53.tscn -- --ids=kestrel,slasher --size=420
 
 const SHIP_SCRIPT := preload("res://scripts/visual/eve_ship_visual.gd")

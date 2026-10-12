@@ -43,19 +43,20 @@ export_presets.cfg  导出预设（不含签名密钥）
 
 ## 跑验收
 
-统一入口（读退出码，可直接给 CI 用）：
+统一入口（CI 用的也是它）：
 
 ```bash
 GODOT_BIN=/path/to/Godot_v4.7.2-stable_win64_console.exe tools/run_verifies.sh
 ```
 
-判据共**四条**（只靠退出码不够）：
+不设 `GODOT_BIN` 时，脚本会在 `PATH` 中查找 `godot` / `godot4` 等可执行文件。
 
-1. 退出码非 0 ⇒ 失败；
-2. 输出里出现 `SCRIPT ERROR` / `Parse Error` ⇒ 失败；
-3. 输出里**必须**出现完成标记 ⇒ 否则判「没跑完」；
-4. 输出里的**失败计数**（`failed=N` / `N 项失败`）> 0 ⇒ 失败 —— 这是最终判据，
-   因为引擎收尾异常可能把脚本的 `quit(1)` 吞掉，退出码在那时不可信（详见 `tools/run_verifies.sh` 顶注）。
+以下任一条件不满足即判失败：
+
+1. 进程退出码为 0；
+2. 输出中没有 `SCRIPT ERROR` / `Parse Error`；
+3. 输出中出现完成标记（防止脚本中途退出被当成通过）；
+4. 输出中的失败计数（`failed=N` / `N 项失败`）为 0。
 
 > 历史：`verify_run` 曾因 provider 回调以 lambda 形式存进 static var、退出时脚本先卸载而段错误
 > （退出码 139）——根因已修，现在连跑稳定 exit 0。

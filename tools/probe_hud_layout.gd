@@ -20,8 +20,8 @@ extends Node
 ##  这个探针把每个窗的「死白高度」直接量出来（还有负数 = 内容溢出窗口）。
 ##
 ## ── 跑法 ─────────────────────────────────────────────────────────
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 900 res://tools/probe_hud_layout.tscn
+##   "$GODOT_BIN" \
+##     --path . --quit-after 900 res://tools/probe_hud_layout.tscn
 ##
 ##  报告落在 user://hud_layout_report.txt（UTF-8，别经 PowerShell 管道读）。
 ##  ⚠️ 只看 stdout 的话中文会乱码，所以一律写文件。

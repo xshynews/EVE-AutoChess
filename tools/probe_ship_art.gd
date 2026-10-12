@@ -28,8 +28,8 @@ extends Control
 ##    所以最终以**人眼**为准 —— 这张图存在的意义就是让人眼做最终裁决。
 ##
 ## ── 跑法（⚠️ 不要加 --headless，headless 下截图不上报）────────────
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 240 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 240 \
 ##     res://tools/probe_ship_art.tscn
 
 const INDEX_SCRIPT := preload("res://scripts/data/eve_ship_asset_index.gd")

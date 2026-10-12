@@ -15,8 +15,8 @@ extends Node
 ##  所以只能扫。
 ##
 ## ── 跑法 ─────────────────────────────────────────────────────────
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --headless --path "F:/evezzq/eve自走棋918" --quit-after 900 \
+##   "$GODOT_BIN" \
+##     --headless --path . --quit-after 900 \
 ##     res://tools/probe_board_fit.tscn
 ##
 ##  纯数值输出 → 可以 --headless。

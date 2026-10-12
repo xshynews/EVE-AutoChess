@@ -25,8 +25,8 @@ extends Node
 ##  到底该不该把 glb 节点变换算进去，只能在这里读出来，不能推。
 ##
 ## 跑法（只读，可 headless）：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 4000 \
+##   "$GODOT_BIN" --headless \
+##     --path . --quit-after 4000 \
 ##     res://tools/probe_glb_frame.tscn
 
 const IDS := ["rifter", "catalyst", "myrmidon", "kestrel", "tristan",

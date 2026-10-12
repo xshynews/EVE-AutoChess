@@ -19,8 +19,8 @@ extends Node3D
 ##    自动判据要是哪天可靠了，也**只能**输出候选 + 置信度，不许自动写表。
 ##
 ## ── 跑法（⚠️ 不要加 --headless：headless 下取不到 SubViewport 纹理）──
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 60000 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 60000 \
 ##     res://tools/probe_bow_calib.tscn -- --ids=myrmidon,kestrel --size=360
 ##
 ##   `--ids=a,b,c`（不给 = 全库 52 艘）· `--size=360`（单格边长）

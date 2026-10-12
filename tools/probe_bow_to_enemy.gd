@@ -14,8 +14,8 @@ extends Node
 ##    bow      = R_y(total_yaw) * M * (1, 0, 0)
 ##
 ##  跑法：
-##    "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##      --path "F:/evezzq/eve自走棋918" --quit-after 3000 \
+##    "$GODOT_BIN" --headless \
+##      --path . --quit-after 3000 \
 ##      res://tools/probe_bow_to_enemy.tscn
 ##  产物：user://bow_to_enemy_report.txt
 

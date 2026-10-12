@@ -34,8 +34,8 @@ extends Node3D
 ##    （见 tools/probe_ship_art.tscn 的网格图，报序号即可）。
 ##
 ## ── 跑法（⚠️ 不要加 --headless，headless 下取不到 SubViewport 纹理）──
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 900 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 900 \
 ##     res://tools/probe_ship_render.tscn
 
 const INDEX_SCRIPT := preload("res://scripts/data/eve_ship_asset_index.gd")

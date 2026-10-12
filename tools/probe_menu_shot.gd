@@ -3,10 +3,10 @@ extends SceneTree
 ## ★ 主菜单**真实渲染截图**（不开游戏也能看）—— 非 headless 才能拿到视口纹理。
 ##
 ## 用法（⛔ 别加 `--headless`）：
-##     Godot_v4.7.2-stable_win64_console.exe --path "F:\evezzq\eve自走棋918" \
+##     "$GODOT_BIN" --path . \
 ##         --quit-after 600 --script res://tools/probe_menu_shot.gd
 ##
-## 产物：C:/godot/_export/menu_shot.png（写工程外，⛔ 别污染工程目录）
+## 产物：user://menu_shot.png（写在工程外，运行后输出里会打印实际路径）
 ##
 ## ★ 2026-10-12：加 `-- --collapsed` 可截「自走棋收起」态（两层侧栏的折叠视觉）。
 ##
@@ -16,7 +16,8 @@ extends SceneTree
 ## ⚠️ SceneTree 脚本探针的两个坑：① `_initialize()` 里 add_child 时 root 还没进树
 ##    ⇒ `_ready` 要等几帧才跑；② 必须在 `_process()` 里等帧，不能在 `_initialize()` 里截图。
 
-const SHOT := "C:/godot/_export/menu_shot.png"
+## 截图写到 user://（各平台都可写），运行后在输出里打印实际路径。
+const SHOT := "user://menu_shot.png"
 
 var _menu: Variant = null
 var _frames := 0
@@ -48,6 +49,6 @@ func _process(_d: float) -> bool:
 		return false
 	var img := root.get_viewport().get_texture().get_image()
 	var err := img.save_png(SHOT)
-	print("SHOT %s err=%d size=%s" % [SHOT, err, img.get_size()])
+	print("SHOT %s err=%d size=%s" % [ProjectSettings.globalize_path(SHOT), err, img.get_size()])
 	quit(0 if err == OK else 1)
 	return true

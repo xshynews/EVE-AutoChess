@@ -27,7 +27,7 @@ extends Node
 ##     52 艘肚皮朝天时 `bow·敌` 照样 1.000 ⇒ 必须**同时**测 `up·天`。
 ##
 ##  用法：
-##      Godot_v4.7.1-stable_win64_console.exe --headless \
+##      "$GODOT_BIN" --headless \
 ##          --path "<工程>" --quit-after 3000 \
 ##          res://tools/probe_prep_all53.tscn -- --out "<路径>"
 

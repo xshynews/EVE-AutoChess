@@ -3,7 +3,7 @@ extends Node
 ## 棋盘验收 —— 显示 11×11 棋盘并截图
 ##
 ## 跑法（⚠️ 不要加 --headless，否则拿不到像素）：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --path "F:/evezzq/eve自走棋918" \
+##   "$GODOT_BIN" --path . \
 ##     --quit-after 400 res://tools/verify_board.tscn
 ##
 ## 产物：user://board_shot.png

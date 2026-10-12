@@ -3,8 +3,8 @@ extends Node
 ## 舰船资产对账 —— 52 艘逐条核对「立绘 / 模型 / typeID / 尺寸」是否同一艘船
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 900 \
+##   "$GODOT_BIN" --headless \
+##     --path . --quit-after 900 \
 ##     res://tools/verify_ship_assets.tscn
 ##
 ## ── 为什么要有这个工具 ──────────────────────────────────────────

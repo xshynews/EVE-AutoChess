@@ -7,8 +7,8 @@ extends Node
 ##   SubViewport 锁死 1920x1080，与设计稿同口径。
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 6000 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 6000 \
 ##     res://tools/probe_main_menu.tscn
 ## 产物：user://main_menu_*.png
 

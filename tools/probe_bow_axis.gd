@@ -35,8 +35,8 @@ extends Node
 ##    · `up0 · (0,1,0) < 0.99`   ⇒ 船不是「背朝天」（侧躺 / 倒扣）
 ##
 ##  跑法：
-##    "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##      --path "F:/evezzq/eve自走棋918" --quit-after 5000 \
+##    "$GODOT_BIN" --headless \
+##      --path . --quit-after 5000 \
 ##      res://tools/probe_bow_axis.tscn
 ##  产物：user://bow_axis_report.txt
 

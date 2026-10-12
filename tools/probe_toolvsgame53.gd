@@ -20,7 +20,7 @@ extends Node
 ##  A 与 B 应**逐列相同**（差角 ≈ 0）。若 B≠A ⇒ 工具显示的船就不是实机的船。
 ##
 ##  用法：
-##      Godot_v4.7.1-stable_win64_console.exe --headless \
+##      "$GODOT_BIN" --headless \
 ##          --path "<工程>" --quit-after 9000 \
 ##          res://tools/probe_toolvsgame53.tscn
 

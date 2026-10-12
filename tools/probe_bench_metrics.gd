@@ -16,8 +16,8 @@ extends Node
 ##    ④ 量屏幕底部的空间预算（商店下沿 → 1080）。
 ##
 ## ── 跑法 ─────────────────────────────────────────────────────────
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --headless --path "F:/evezzq/eve自走棋918" --quit-after 600 \
+##   "$GODOT_BIN" \
+##     --headless --path . --quit-after 600 \
 ##     res://tools/probe_bench_metrics.tscn
 ##
 ##  纯数值输出，不需要像素 → 可以 --headless。

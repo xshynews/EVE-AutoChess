@@ -11,8 +11,8 @@ extends Node
 ##  本扫描补上中间几档，好判断「保留一点斜度」时该停在哪。
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 900 res://tools/probe_yaw_scan.tscn
+##   "$GODOT_BIN" \
+##     --path . --quit-after 900 res://tools/probe_yaw_scan.tscn
 
 const SCENE_PATH := "res://scenes/battle_scene.tscn"
 

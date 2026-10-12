@@ -30,7 +30,7 @@ extends Node
 ##     探针只负责取景与出图，不碰任何一个旋转量。
 ##
 ##  用法（⚠️ **必须非 headless**）：
-##      Godot_v4.7.1-stable_win64_console.exe --path "<工程>" --quit-after 60000 \
+##      "$GODOT_BIN" --path "<工程>" --quit-after 60000 \
 ##          res://tools/probe_fleet_view53.tscn -- --size=260
 
 const YAW := preload("res://scripts/data/eve_ship_yaw.gd")

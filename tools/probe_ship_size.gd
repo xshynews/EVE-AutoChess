@@ -23,7 +23,7 @@ extends Node
 ##     （侧视、舰艏朝画面右），列头标吨位名与等级。
 ##
 ##  跑法：
-##    "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
+##    "$GODOT_BIN" --headless \
 ##      --path "<工程>" --quit-after 12000 res://tools/probe_ship_size.tscn
 ##    （去掉 --headless 则额外出图）
 

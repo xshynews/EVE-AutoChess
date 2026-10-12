@@ -24,7 +24,7 @@ extends Node
 ##     「沿 X 轴转 180°」的等价判据在下面 `_rot_x_180_of()` 里显式写出。
 ##
 ##  用法：
-##      Godot_v4.7.1-stable_win64_console.exe --headless \
+##      "$GODOT_BIN" --headless \
 ##          --path "<工程>" --quit-after 900 \
 ##          res://tools/probe_kestrel53.tscn
 

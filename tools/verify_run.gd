@@ -20,8 +20,7 @@ extends Node
 ##     每步都断言「状态机的数字」与「HUD 上的字 / 3D 的位置」一致。
 ##
 ## ── 跑法（⚠️ 第二段要看像素，所以【不要加 --headless】）──────────
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 900 res://tools/verify_run.tscn
+##   "$GODOT_BIN" --path . --quit-after 900 res://tools/verify_run.tscn
 ##
 ## 产物：user://run_prep_1.png / run_prep_bought.png / run_battle_1.png /
 ##       run_resolve_1.png / run_node2_prep.png /
@@ -4186,8 +4185,8 @@ func _shot(path: String, note: String) -> void:
 ##    用户当年是对着 `yaw_sheet.png` 上那支**画反了的**「前方 →」箭头逐格判的
 ##    （判据「船头朝右的算对」，而实测 +Z 投在屏幕**左侧**）。
 ##    新判据 = `_e` 自发光贴图里「法线平行于舰艏轴」的自发光面聚在哪一端（那一端就是船尾）；
-##    52 艘判得動 44，重建后与本表**零分歧**。证据全文：
-##    `F:\evezzq\接手手册-2026-09-24\09_朝向问题盘点-2026-09-26.md`。
+##    52 艘判得動 44，重建后与本表**零分歧**。证据全文见
+##    作者本地资料《09_朝向问题盘点-2026-09-26》（未入库）。
 ##    ⚠️ 因此下面 ② 里 abaddon / algos 两条锚点的「翻 / 不翻」是**互换过**的 —— 不是笔误。
 func _t_ship_yaw() -> void:
 	# ★ 47 轮：**先注入 `mesh_rot` provider，再 validate()**。

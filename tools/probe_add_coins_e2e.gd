@@ -2,8 +2,8 @@ extends Node
 ## 端到端：跑主场景，模拟点 +100/300/999，验是否真闪退
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 8000 \
+##   "$GODOT_BIN" --headless \
+##     --path . --quit-after 8000 \
 ##     res://tools/probe_add_coins_e2e.tscn
 
 const BATTLE_SCENE := preload("res://scripts/eve_battle_scene.gd")

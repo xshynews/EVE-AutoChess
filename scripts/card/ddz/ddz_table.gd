@@ -51,7 +51,7 @@ const T := preload("res://scripts/core/eve_text.gd")
 ## （唯一真相源；id 除以 4 的余数：0=黑桃 1=红桃 2=方块 3=梅花；rank=3+id/4
 ## ⇒ id 0~51 普通牌、52=小王 53=大王）。值 = 整张牌面贴图（自带角标 / 立绘 / 派系名，
 ## 角标已由 10-08 管线归一放大、圆角已烘 alpha）。
-## 生成链：F:\EVE自走棋\牌面\牌面 → tools/pipeline/card_face_pipeline.py
+## 生成链：卡牌原图（`_paths.CARD_SRC`）→ tools/pipeline/card_face_pipeline.py
 ## ⛔ 别按「点数」当键 —— 同一点数有 4 张花色。
 const CARD_FACES := {
 	0: preload("res://assets/cards/card_0.png"),

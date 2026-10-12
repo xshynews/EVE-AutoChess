@@ -31,7 +31,7 @@ extends Node
 ##    不自己乘矩阵复刻。
 ##
 ##  用法：
-##      Godot_v4.7.1-stable_win64_console.exe --headless \
+##      "$GODOT_BIN" --headless \
 ##          --path "<工程>" --quit-after 1400 \
 ##          res://tools/probe_jump53.tscn
 

@@ -15,7 +15,7 @@ extends Node
 ##      → 这个探针【必须非 headless 跑】，否则输入那几项会假 FAIL。
 ##
 ## 跑法（注意：不加 --headless）：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --path "F:/evezzq/eve自走棋918" \
+##   "$GODOT_BIN" --path . \
 ##     --quit-after 400 res://tools/probe_grip.tscn
 
 const SHOP_SCRIPT := preload("res://scripts/ui/panels/eve_shop.gd")

@@ -72,8 +72,8 @@ extends Node3D
 ##       ⇒ SHIP_AXES[id] = "bow:-X up:+Z"（带符号 = 视图的"+端"对应哪个模型轴）
 ##
 ##  跑法（交互工具不要加 --headless，也不要加 --quit-after）：
-##    "C:/godot/Godot_v4.7.1-stable_win64.exe" \
-##      --path "F:/evezzq/eve自走棋918" res://tools/probe_bow_box.tscn -- --ids=burst,myrmidon
+##    "$GODOT_BIN" \
+##      --path . res://tools/probe_bow_box.tscn -- --ids=burst,myrmidon
 ##    不给 --ids = 全库 52 艘。
 ##  结果：写入 user://bow_calib/ship_axes.json；每次按确定追加一条并自动跳下一艘。
 

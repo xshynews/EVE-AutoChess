@@ -41,8 +41,8 @@ extends Node
 ##  ⚠️ 只看 1 帧会误判成"船头没对上" —— 那只是**还没转过去**。
 ##
 ##  跑法：
-##    "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##      --path "F:/evezzq/eve自走棋918" --quit-after 9000 \
+##    "$GODOT_BIN" --headless \
+##      --path . --quit-after 9000 \
 ##      res://tools/probe_bow_align.tscn
 ##  产物：user://bow_align_report.txt
 
