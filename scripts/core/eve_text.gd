@@ -61,6 +61,22 @@ const STORE := preload("res://scripts/core/eve_settings_store.gd")
 
 static var _locale: String = DEFAULT_LOCALE
 
+## ★★ 2026-10-12：**类一加载就把 locale 钉到 `DEFAULT_LOCALE`**（冻结期恒 zh_CN）。
+##
+## 为什么必须做这一步：`TranslationServer` 的初始 locale = **操作系统语言**，
+## 而我们**没有任何地方**在启动时设置它（只在 UI 走到 `apply_saved()` 时才设）。
+## ⇒ 在英文系统上，任何"早于 UI 初始化"的取词都会命中 CSV 的 **en 列**。
+##
+## 实测（CI，英文系统 runner）：`EveShipDatabase` 的舰船中文名取到 `"Executioner"`、
+## 羁绊数值不生效 —— 而本地（中文系统）永远是绿的，**这类 bug 只会在别人机器上出现**。
+## ⇒ 用 static var 的初始化器把它变成"类被引用就一定已生效"，⛔ 不依赖调用顺序。
+static var _bootstrapped := _bootstrap_locale()
+
+
+static func _bootstrap_locale() -> bool:
+	TranslationServer.set_locale(DEFAULT_LOCALE)
+	return true
+
 
 ## 当前 locale（"zh_CN" / "en"）。
 static func current() -> String:
