@@ -26,6 +26,7 @@ func _ready() -> void:
 	_t_args_client()
 	_t_args_host()
 	_t_files()
+	_t_android_paths()
 	print("═══ RESULT passed=%d failed=%d ═══" % [_pass, _fail])
 	if _fail > 0:
 		print("⚠️ 有失败项")
@@ -168,6 +169,27 @@ func _t_files() -> void:
 			"解包清单含 core / Packet.dll / wintun.dll")
 	_ok(TUN.SRC_DIR.begins_with("res://"), "解包源目录指向包内资源（导出时才拿得到）")
 	print("  内核路径：%s" % p)
+
+
+# ══════════════════════════════════════════════ 安卓路径反解
+
+func _t_android_paths() -> void:
+	print("── 安卓原生库目录反解（纯函数，可无头验） ──")
+	var sample := "7f1c2b3d4000-7f1c2b3d5000 r--p 00000000 fd:04 1234 /system/framework/boot.art\n" \
+			+ "7f1c2b600000-7f1c2b700000 r-xp 00000000 fd:04 5678 " \
+			+ "/data/app/~~AbC==/com.evezzq.autochess-XyZ==/lib/arm64/libgodot_android.so\n" \
+			+ "7f1c2b800000-7f1c2b900000 rw-p 00000000 00:00 0 [anon]"
+	var got := TUN.parse_native_lib_dir(sample)
+	_ok(got == "/data/app/~~AbC==/com.evezzq.autochess-XyZ==/lib/arm64",
+			"★ 从 /proc/self/maps 反解出原生库目录（得到「%s」）" % got)
+	_ok(TUN.parse_native_lib_dir("") == "", "空输入 → 空（不崩）")
+	_ok(TUN.parse_native_lib_dir("no lib here\nnothing") == "", "没有 /lib/ 的行不影响")
+	_ok(TUN.parse_native_lib_dir("/a/lib/arm64/x.so (deleted)") == "/a/lib/arm64",
+			"带 (deleted) 后缀也能解出")
+	_ok(TUN.ANDROID_CORE.begins_with("lib") and TUN.ANDROID_CORE.ends_with(".so"),
+			"★ 安卓内核名必须是 lib*.so（否则不会被打进 jniLibs）")
+	_ok(TUN.ANDROID_SRC.find("android-arm64") > 0,
+			"安卓内核的随包源路径指向 android-arm64 目录")
 
 
 # ══════════════════════════════════════════════ 工具

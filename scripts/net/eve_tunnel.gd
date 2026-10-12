@@ -40,6 +40,16 @@ const FILES: Array[String] = [CORE, PACKET_DLL, WINTUN, WINDIVERT_SYS, CLI]
 ## `include_filter="addons/easytier/bin/*"` 进包 —— 这些是**非资源文件**，
 ## `all_resources` 不会自动带上）。
 const SRC_DIR := "res://addons/easytier/bin"
+
+# ── Android 专有 ──────────────────────────────────────────────────────────
+## ★★ 安卓上**只能执行 APK 原生库目录里的文件**（Android 10+ 禁止在应用数据目录 exec），
+##   所以内核在 APK 里必须以 `lib/<abi>/lib*.so` 的形式存在、并开启 `extractNativeLibs`。
+##   ⇒ 构建模板里放 `android/build/src/main/jniLibs/arm64-v8a/libetcore.so`；
+##     入包与补丁见 `tools/pipeline/_android_patch.py` 与 `_fetch_easytier.py`。
+const ANDROID_CORE := "libetcore.so"
+const ANDROID_ABI := "arm64-v8a"
+## 安卓内核的随包源文件（由 `_fetch_easytier.py` 从 Easytier-Magisk 包解出）。
+const ANDROID_SRC := "res://addons/easytier/bin/android-arm64/easytier-core"
 ## 就绪判定超时（毫秒）：起不来的话 UI 得给玩家一个说法，别无限转圈
 const READY_TIMEOUT_MS := 20000
 
@@ -117,6 +127,50 @@ static func log_dir() -> String:
 	return ProjectSettings.globalize_path("user://logs/easytier")
 
 
+# ══════════════════════════════════════════════════════════════ 平台判定
+
+static func is_android() -> bool:
+	return OS.get_name() == "Android"
+
+
+## 安卓：算出 APK 的**原生库目录**（唯一允许 exec 的目录）。
+##
+## ⚠️ Godot 没有暴露 `ApplicationInfo.nativeLibraryDir`，所以从 `/proc/self/maps`
+##   反推：已加载的引擎库一定出现在
+##   `/data/app/~~<hash>/<包名>-<hash>/lib/arm64/libgodot_android.so`，
+##   取到 `/lib/<abi>` 为止的目录即可。
+##   （应用读自己的 `/proc/self/maps` 是被允许的；拿不到时返回 ""，由上层给人话报错。）
+static func android_native_lib_dir() -> String:
+	return parse_native_lib_dir(_read_text("/proc/self/maps"))
+
+
+## 从 `maps` 文本里挑出原生库目录。**纯函数** ⇒ 可在无头验收里喂合成样本。
+static func parse_native_lib_dir(maps_text: String) -> String:
+	for line in maps_text.split("\n"):
+		var i := line.find("/lib/")
+		if i < 0:
+			continue
+		var j := line.find("/", i + 5)          # `/lib/` 之后的下一个斜杠 = abi 目录结尾
+		if j < 0:
+			continue
+		var k := i
+		while k > 0 and line[k - 1] != " " and line[k - 1] != "\t":
+			k -= 1
+		if k >= i:
+			continue
+		return line.substr(k, j - k)
+	return ""
+
+
+static func _read_text(path: String) -> String:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return ""
+	var t := f.get_as_text()
+	f.close()
+	return t
+
+
 # ══════════════════════════════════════════════════════════════ 二进制定位
 
 ## 内核可执行文件路径。找不到返回 ""。
@@ -134,6 +188,13 @@ static func log_dir() -> String:
 ##   ⇒ 统一做法：把内核从包里**解到 `user://easytier/<版本>/`**（幂等，按大小判新旧），
 ##     再执行解出来的那份。开发期走同一条路径 ⇒ 这段代码本身也被日常验收覆盖。
 static func core_path() -> String:
+	# ① 安卓：只能用 APK 原生库目录里的那份（其他位置 exec 会被系统拒绝）
+	if is_android():
+		var nd := android_native_lib_dir()
+		if nd == "":
+			return ""
+		var ap := nd.path_join(ANDROID_CORE)
+		return ap if FileAccess.file_exists(ap) else ""
 	var extracted := user_dir().path_join(CORE)
 	if FileAccess.file_exists(extracted) and _size_matches_pack(extracted, CORE):
 		return extracted
@@ -198,7 +259,10 @@ static func missing_files(is_host: bool) -> Array[String]:
 	var out: Array[String] = []
 	var exe := core_path()
 	if exe == "":
-		out.append(CORE)
+		out.append(ANDROID_CORE if is_android() else CORE)
+		return out
+	# 安卓：内核本身就是那个 lib*.so，没有 Packet.dll / wintun.dll 这回事
+	if is_android():
 		return out
 	var dir := exe.get_base_dir()
 	var need: Array[String] = [CORE, PACKET_DLL]
@@ -244,6 +308,12 @@ func start(code_text: String, seat_no: int, is_host: bool,
 	code = code_text
 	seat = seat_no
 	role = Role.HOST if is_host else Role.CLIENT
+	# ★ 安卓**只能加入**：房主必须建虚拟网卡（TUN），而安卓上 TUN = VpnService（我们没做）。
+	#   ⛔ 别静默失败 —— 给玩家一句能照做的原因。
+	if is_android() and is_host:
+		state = State.FAILED
+		last_error = "安卓版暂不支持创建房间（房主需要虚拟网卡）。请让 Windows 的队友建房，你再输房间码加入。"
+		return false
 	var exe := core_path()
 	if exe == "":
 		state = State.FAILED

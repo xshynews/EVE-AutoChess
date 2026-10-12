@@ -10,7 +10,9 @@ project.godot*.tmp
 project.godot.bak*
 
 # Local build & internal verification artifacts (not source)
-/android/
+# Android 构建模板（Godot「安装 Android 构建模板」生成；含两个 103MB AAR，207MB）
+# ⛔ 只忽略 build/ 子目录；README.md / .build_version / .gdignore 要入库（见 android/README.md）
+/android/build/
 _验收/
 _logs_backup_*/
 QQ图片*
@@ -36,3 +38,4 @@ build/
 
 # 流水线本机路径配置（模板见 tools/pipeline/paths.local.example.json）
 tools/pipeline/paths.local.json
+

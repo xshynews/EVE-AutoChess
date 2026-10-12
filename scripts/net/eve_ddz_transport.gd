@@ -77,7 +77,9 @@ func host_start(port: int) -> bool:
 	peer = ENetMultiplayerPeer.new()
 	var err := peer.create_server(port, MAX_CLIENTS)
 	if err != OK:
-		last_error = "端口 %d 被占用或不可用（%d）" % [port, err]
+		# ★ 实测最常见的成因：**同一个机器上已经开着另一个游戏实例**（哪怕是忘了关的旧窗口），
+		#   它把 UDP 27015 占住了。光说「被占用」玩家不知道怎么办 ⇒ 直接给出可照做的动作。
+		last_error = "本地端口 %d 被占用：请先关掉另一个正在联机/残留的游戏窗口，再重新创建房间（%d）" % [port, err]
 		peer = null
 		return false
 	is_server = true
