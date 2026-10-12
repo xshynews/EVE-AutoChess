@@ -14,7 +14,8 @@
     python tools/pipeline/export_release.py windows    # 只导 Windows
     python tools/pipeline/export_release.py android
 
-导出目标路径**不写死** —— 从 export_presets.cfg 的 `export_path` 读（升版本只改预设）。
+导出目标：文件名取自 export_presets.cfg 的 `export_path`，目录取 `_paths.EXPORT_DIR`
+（默认 `<仓库根>/build`，可用环境变量 EVE_EXPORT_DIR 或 paths.local.json 修改）。
 """
 import io
 import os
@@ -22,7 +23,7 @@ import re
 import subprocess
 import sys
 
-from _paths import ROOT, godot_bin
+from _paths import EXPORT_DIR, ROOT, godot_bin
 
 PROJ = ROOT
 GODOT = godot_bin()
@@ -43,15 +44,30 @@ PLATFORMS = {"windows": "Windows", "android": "Android"}
 
 
 def preset_export_path(preset_name: str) -> str:
-    """从 export_presets.cfg 里取某个预设的 export_path（相对工程目录）。"""
+    """某个预设的导出目标。
+
+    文件名取自 export_presets.cfg 的 `export_path`（升版本只改预设），
+    目录取 `_paths.EXPORT_DIR`（默认 `<仓库根>/build`，可用 EVE_EXPORT_DIR 或
+    paths.local.json 的 export_dir 改到别处）。
+    """
     src = io.open(PRESETS, encoding="utf-8").read()
-    blocks = src.split("[preset.")
-    for b in blocks:
+    for b in src.split("[preset."):
         if 'name="%s"' % preset_name in b:
             m = re.search(r'export_path="([^"]+)"', b)
             if m:
-                return os.path.normpath(os.path.join(PROJ, m.group(1)))
+                return os.path.join(EXPORT_DIR, os.path.basename(m.group(1)))
     raise SystemExit("✗ export_presets.cfg 里找不到预设 %s" % preset_name)
+
+
+def ensure_export_dir() -> None:
+    """创建导出目录。目录在工程内时放一个 .gdignore，避免 Godot 编辑器扫描导出的包。"""
+    os.makedirs(EXPORT_DIR, exist_ok=True)
+    root = os.path.normcase(os.path.abspath(PROJ))
+    target = os.path.normcase(os.path.abspath(EXPORT_DIR))
+    if os.path.commonpath([root, target]) == root:
+        marker = os.path.join(EXPORT_DIR, ".gdignore")
+        if not os.path.exists(marker):
+            io.open(marker, "w").close()
 
 
 def main() -> None:
@@ -71,6 +87,7 @@ def main() -> None:
         print("⚠ project.godot 里没有 MCP autoload 条目，跳过摘除")
     # B-R02（2026-10-11 审查）：失败必须传播 —— 否则 CI / 调用方拿 0 当成功
     failed = []
+    ensure_export_dir()
     try:
         io.open(PROJECT, "w", encoding="utf-8", newline="").write(work)
         for name in targets:

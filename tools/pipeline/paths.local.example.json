@@ -1,0 +1,11 @@
+{
+  "_说明": "复制为 paths.local.json（已在 .gitignore 中）后按本机情况修改；只需保留要改的项，其余删掉即可。下面的值是作者原先的本机路径，仅作示例。",
+  "work_dir": "C:/godot/_export",
+  "client_dir": "D:/EVE/SharedCache",
+  "card_src": "F:/EVE自走棋/牌面/牌面",
+  "export_dir": "F:/EVE自走棋/游戏版本",
+  "godot_bin": "C:/godot/Godot_v4.7.2-stable_win64_console.exe",
+  "texconv": "C:/godot/_export/_tools/texconv.exe",
+  "python": "",
+  "godot_user_name": ""
+}

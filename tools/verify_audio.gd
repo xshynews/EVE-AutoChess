@@ -11,8 +11,8 @@ extends Node
 ##   · 命中音色按真实受击层优先（hit_shield/armor/structure），层未知退回品质
 ##
 ## 跑法（无头，不需要像素）：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --headless --path "F:/evezzq/eve自走棋918" --quit-after 60 res://tools/verify_audio.tscn
+##   "$GODOT_BIN" \
+##     --headless --path . --quit-after 60 res://tools/verify_audio.tscn
 ##
 ## 退出码：0 = 全过；1 = 有断言失败（失败项逐条打进 stdout）
 

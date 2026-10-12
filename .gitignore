@@ -22,8 +22,17 @@ Thumbs.db
 # Python bytecode (export pipeline)
 __pycache__/
 
-# 流水线工作目录（中间产物，⛔ 别提交）
+# 流水线工作目录（中间产物）
 .pipeline_work/
 
 # 联机内核（第三方二进制，不入库；由 _fetch_easytier.py 获取）
 /addons/easytier/bin/
+
+# 卡牌原图默认目录（tools/pipeline/_paths.py 的 CARD_SRC）
+.incoming/
+
+# 发布包默认输出目录（tools/pipeline/_paths.py 的 EXPORT_DIR）
+build/
+
+# 流水线本机路径配置（模板见 tools/pipeline/paths.local.example.json）
+tools/pipeline/paths.local.json

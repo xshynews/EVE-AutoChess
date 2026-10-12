@@ -11,7 +11,7 @@ class_name EveAudio
 ##  副作用：玩家感知不到「打得多狠」—— 7 档命中品质（MISS→WRECKING）在
 ##  视觉上只差别在爆点大小，而声音是**瞬间**传达量级的通道。
 ##
-##  音源全部来自本机 EVE Online 客户端（`D:\EVE`）解包，
+##  音源全部来自本机 EVE Online 客户端解包（客户端路径见 `tools/pipeline/_paths.py` 的 CLIENT），
 ##  用 vgmstream 从 Wwise SoundBank 导出 —— 也就是**玩家在 EVE 里听到的
 ##  同一个音源**，不是仿制品。
 ##

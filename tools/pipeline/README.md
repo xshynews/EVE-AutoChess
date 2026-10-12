@@ -1,28 +1,35 @@
 # tools/pipeline —— 数据与美术资产生成脚本（离线，Python）
 
-> ⚠️ **这些脚本不在游戏里跑**，也不参与导出。它们是"资产是怎么来的"的留档 ——
-> 没有它们，别人 clone 仓库后**没法重新生成**舰船表、朝向标定、牌面、天空盒、立绘。
->
-> ✅ **2026-10-12：路径已全部外置** —— 脚本里**不再有**任何硬编码的绝对路径。
-> 所有路径由 [`_paths.py`](./_paths.py) 解析，**每一项都能用环境变量覆盖**：
->
-> | 环境变量 | 用途 | 默认（本机没有就落到仓库内） |
-> |---|---|---|
-> | `EVE_PROJECT_ROOT` | Godot 工程根 | 本文件上溯两级（= 仓库根） |
-> | `EVE_WORK_DIR` | 工作目录（中间产物） | 旧 `C:\godot\_export`（存在时）否则 `<仓库根>/.pipeline_work` |
-> | `EVE_CLIENT_DIR` | EVE 客户端 `SharedCache` | 旧 `D:/EVE/SharedCache`（存在时）否则未设置 |
-> | `EVE_CARD_SRC` | 卡牌正面原图 | 旧 `F:/EVE自走棋/牌面/牌面`（存在时）否则 `<仓库根>/.incoming/cards` |
-> | `EVE_GODOT_BIN` | Godot 可执行文件 | `C:/godot/Godot_v4.7.2-stable_win64_console.exe` 等 |
-> | `EVE_TEXCONV` | `texconv.exe`（DirectXTex，**不入库**） | `<工作目录>/_tools/texconv.exe` → `PATH` |
-> | `EVE_PYTHON` | 子进程用的解释器 | 当前解释器 |
->
-> 先跑 `python tools/pipeline/_paths.py` 可以打印解析结果自查。
->
-> ⚠️ 少数脚本依赖**本机 EVE 客户端**（音频 / 星云 / 官方渲染图）与 `texconv.exe`
-> —— 这两类原始资源**不能随仓库分发**（版权 / 第三方二进制），需要自备。
->
-> ⚠️ 3D 建模的清单与核心脚本已随仓库提供：`_manifest/`（清单，含**已知偏差说明**）
-> + [`eve_ship_build.py`](./eve_ship_build.py) + [`blender_project.py`](./blender_project.py)。
+这些脚本不在游戏里运行，也不参与导出。它们记录了资产是怎么生成的：舰船表、朝向标定、
+牌面、天空盒、立绘都可以用它们重新生成。
+
+## 路径配置
+
+脚本里没有硬编码的绝对路径，所有路径由 [`_paths.py`](./_paths.py) 解析。
+优先级：环境变量 > 本机配置 `paths.local.json` > 仓库内默认值。
+
+本机配置：把 [`paths.local.example.json`](./paths.local.example.json) 复制为
+`paths.local.json`（已在 .gitignore 中），只保留需要改的项。
+
+| 环境变量 | 配置文件键 | 用途 | 默认值 |
+|---|---|---|---|
+| `EVE_PROJECT_ROOT` | `project_root` | Godot 工程根 | 仓库根 |
+| `EVE_WORK_DIR` | `work_dir` | 工作目录（中间产物） | `<仓库根>/.pipeline_work` |
+| `EVE_CLIENT_DIR` | `client_dir` | EVE 客户端 `SharedCache` | 未设置 |
+| `EVE_CARD_SRC` | `card_src` | 卡牌正面原图 | `<仓库根>/.incoming/cards` |
+| `EVE_EXPORT_DIR` | `export_dir` | 发布包输出目录 | `<仓库根>/build` |
+| `EVE_GODOT_BIN` | `godot_bin` | Godot 可执行文件 | 在 `PATH` 中查找 |
+| `EVE_TEXCONV` | `texconv` | `texconv.exe`（DirectXTex，不入库） | `<工作目录>/_tools/texconv.exe`，再查 `PATH` |
+| `EVE_PYTHON` | `python` | 子进程使用的解释器 | 当前解释器 |
+| `EVE_GODOT_USER_NAME` | `godot_user_name` | `user://` 目录名 | 自动探测 |
+
+运行 `python tools/pipeline/_paths.py` 可以打印当前解析结果。
+
+部分脚本依赖本机 EVE 客户端（音频、星云、官方渲染图）与 `texconv.exe`。
+这两类资源因版权或第三方授权不能随仓库分发，需要自备。
+
+3D 建模的清单与核心脚本已随仓库提供：`_manifest/`（清单，含已知偏差说明）、
+[`eve_ship_build.py`](./eve_ship_build.py)、[`blender_project.py`](./blender_project.py)。
 
 ## 数据表 / 索引
 
@@ -33,7 +40,7 @@
 | `_build_all_ships.py` | 批量建模 52 艘 | EVE 客户端资源 → `<工作目录>/_ship3d/<id>/` |
 | `eve_ship_build.py` | **核心**：单个 typeID → OBJ + 官方贴图（一条命令） | gamemodels3d 官方资产 → `<out>/<Model>.obj` |
 | `blender_project.py` | 用 Blender 打开构建结果做人工复核 | 上述 OBJ |
-| `_paths.py` | **路径唯一真源**（环境变量可覆盖） | — |
+| `_paths.py` | 路径解析（环境变量 / 本机配置可覆盖） | — |
 
 > ✅ 索引生成器**可复现**：用仓库里的清单重跑 `_gen_ship_index.py`，产物与
 > `scripts/data/eve_ship_asset_index.gd` **逐字节一致**（CI 每次提交都会验这条）。

@@ -24,6 +24,7 @@ CSV 表头（14 列，第一列带 BOM）：
 与 `eve_ship_table.gd` 的 `COLUMNS` 一一对应（顺序、类型都一致）。
 """
 import argparse
+import csv
 import io
 import os
 import re
@@ -59,17 +60,17 @@ def pad(s, width):
 
 
 def read_csv():
-    rows = []
-    with io.open(CSV, encoding="utf-8-sig") as f:
-        lines = [l.rstrip("\n") for l in f if l.strip()]
-    head = lines[0].split(",")
+    """读取设计表。用 csv 模块解析，支持带引号与逗号的单元格。"""
+    with io.open(CSV, encoding="utf-8-sig", newline="") as f:
+        lines = [r for r in csv.reader(f) if any(c.strip() for c in r)]
+    head = lines[0]
     if head[:2] != ["船ID", "中文名"]:
         raise SystemExit("✗ CSV 表头不对：%s" % head[:3])
-    for ln in lines[1:]:
-        c = ln.split(",")
-        if len(c) < 14:
-            raise SystemExit("✗ CSV 行不足 14 列：%s" % ln)
-        rows.append(c[:14])
+    rows = []
+    for k, c in enumerate(lines[1:], start=2):
+        if len(c) < len(COLS):
+            raise SystemExit("✗ CSV 第 %d 行不足 %d 列：%s" % (k, len(COLS), c))
+        rows.append(c[:len(COLS)])
     return rows
 
 
@@ -88,29 +89,44 @@ def to_typed(cells):
     return out
 
 
+def _split_gd_row(line):
+    """把一行 `[ "a", 1, true ],  # 注释` 拆成单元格列表。
+
+    只取第一个方括号内的内容（忽略行尾逗号与注释），引号内的逗号不作分隔。
+    """
+    body, q, depth = "", False, 0
+    for ch in line[line.index("[") + 1:]:
+        if ch == '"':
+            q = not q
+        elif not q and ch == "[":
+            depth += 1
+        elif not q and ch == "]":
+            if depth == 0:
+                break
+            depth -= 1
+        body += ch
+    cells, cur, q = [], "", False
+    for ch in body:
+        if ch == '"':
+            q = not q
+            cur += ch
+        elif ch == "," and not q:
+            cells.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        cells.append(cur.strip())
+    return [c[1:-1] if len(c) >= 2 and c[0] == c[-1] == '"' else c for c in cells]
+
+
 def parse_gd_rows():
-    """解析 .gd 里 `const ROWS` 的 52 行（宽松：只取 `\t[` 开头的行）。"""
+    """解析 .gd 里 `const ROWS` 的数据行（以 `[` 开头的行）。"""
     txt = io.open(GD, encoding="utf-8").read()
     i = txt.index(MARK_HEAD)
     j = txt.index(MARK_END, i)
-    body = txt[i:j]
-    rows = []
-    for ln in body.splitlines():
-        s = ln.strip()
-        if not s.startswith("["):
-            continue
-        cells, cur, q = [], "", False
-        for ch in s[1:-2]:
-            if ch == '"':
-                q = not q
-                cur += ch
-            elif ch == "," and not q:
-                cells.append(cur.strip())
-                cur = ""
-            else:
-                cur += ch
-        cells.append(cur.strip())
-        rows.append([c.strip('"') if c.startswith('"') else c for c in cells])
+    body = txt[i + len(MARK_HEAD):j]
+    rows = [_split_gd_row(ln) for ln in body.splitlines() if ln.strip().startswith("[")]
     return rows, txt, i, j
 
 
@@ -131,6 +147,9 @@ def diff_rows(csv_rows, gd_rows):
         out.append("行数不同：CSV %d / .gd %d" % (len(csv_rows), len(gd_rows)))
     for k, (a, b) in enumerate(zip(csv_rows, gd_rows)):
         ta = to_typed(a)
+        if len(b) != len(COLS):
+            out.append("第 %d 行 %s：.gd 有 %d 列，应为 %d 列" % (k + 1, ta[0], len(b), len(COLS)))
+            continue
         for idx, (v0, v1) in enumerate(zip(ta, b)):
             # .gd 侧统一转成与 CSV 同类型再比
             name, t = COLS[idx]

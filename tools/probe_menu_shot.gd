@@ -16,7 +16,8 @@ extends SceneTree
 ## ⚠️ SceneTree 脚本探针的两个坑：① `_initialize()` 里 add_child 时 root 还没进树
 ##    ⇒ `_ready` 要等几帧才跑；② 必须在 `_process()` 里等帧，不能在 `_initialize()` 里截图。
 
-const SHOT := "C:/godot/_export/menu_shot.png"
+## 截图写到 user://（各平台都可写），运行后在输出里打印实际路径。
+const SHOT := "user://menu_shot.png"
 
 var _menu: Variant = null
 var _frames := 0
@@ -48,6 +49,6 @@ func _process(_d: float) -> bool:
 		return false
 	var img := root.get_viewport().get_texture().get_image()
 	var err := img.save_png(SHOT)
-	print("SHOT %s err=%d size=%s" % [SHOT, err, img.get_size()])
+	print("SHOT %s err=%d size=%s" % [ProjectSettings.globalize_path(SHOT), err, img.get_size()])
 	quit(0 if err == OK else 1)
 	return true

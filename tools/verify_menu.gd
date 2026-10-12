@@ -8,8 +8,8 @@ const RUN_STORE := preload("res://scripts/core/eve_run_store.gd")
 ## 主界面自检（无头）
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 600 \
+##   "$GODOT_BIN" --headless \
+##     --path . --quit-after 600 \
 ##     res://tools/verify_menu.tscn
 ##
 ## ── 为什么必须有一条"反向注入"的断言 ──────────────────────────────

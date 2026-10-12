@@ -3,8 +3,8 @@ extends Node
 ## 权威数值表自检 —— 无头跑，把派生结果打出来对照 CSV
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 200 \
+##   "$GODOT_BIN" --headless \
+##     --path . --quit-after 200 \
 ##     res://tools/verify_ship_table.tscn
 ##
 ## 有失败项时以退出码 1 结束（可接 CI）。

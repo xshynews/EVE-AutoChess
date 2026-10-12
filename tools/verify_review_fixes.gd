@@ -25,8 +25,8 @@ const DEPLOY := preload("res://scripts/scene/eve_deploy_controller.gd")
 ##   FIRE 连射循环内目标死亡后立即停手（kills 不重复、unit_destroyed 只发一次）
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.2-stable_win64_console.exe" --headless \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 4000 \
+##   "$GODOT_BIN" --headless \
+##     --path . --quit-after 4000 \
 ##     res://tools/verify_review_fixes.tscn
 
 var _pass := 0
