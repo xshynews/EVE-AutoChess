@@ -30,7 +30,7 @@ python tools/pipeline/_fetch_easytier.py
 python tools/pipeline/_android_patch.py          # 幂等，可反复跑；--check 只看不改
 ```
 
-第 3 步补了四件事（细节见 `tools/pipeline/_android_patch.py` 顶部注释）：
+第 3 步补了七件事（细节见 `tools/pipeline/_android_patch.py` 顶部注释）：
 
 | 补丁 | 不加会怎样 |
 |---|---|
@@ -38,6 +38,23 @@ python tools/pipeline/_android_patch.py          # 幂等，可反复跑；--che
 | 无条件 `keepDebugSymbols += '**/*.so'` | AGP 会调 NDK 的 `llvm-strip` 剥离符号 ⇒ 没装 NDK 就报错 |
 | 注释掉 `ndkVersion`（本机无 NDK 时） | AGP 配置阶段可能直接报 `No version of NDK matched ...` |
 | 写对 `android/.build_version` | 值必须**精确等于**导出模板目录名（如 `4.7.2.stable`，⛔ 不是 `4.7.2.stable.official`），且位置在 **`android/`** 而不是 `android/build/`；错一个字导出就被拒：`Android build template is outdated ... Requested version: …` |
+| 资源合并前清 `*.tmp` 的 gradle 钩子 | Godot 写 `res/` 资源会留下 `<名>.<随机数>.tmp` 副本，AAPT2 不认 `.tmp` ⇒ `mergeStandardReleaseResources` 失败：`The file name must end with .xml` |
+| 依赖仓库加 `maven.aliyun.com` 镜像 | 本机直连 Maven Central 的 TLS 握手会被干扰 ⇒ 单个 jar 拉不下来就整个构建失败（`Remote host terminated the handshake`）。⛔ 想用原样仓库：`EVE_NO_CN_MIRROR=1` 再跑脚本 |
+| `org.gradle.daemon=false` | daemon 继承 gradlew 的 stdout 管道 ⇒ Godot 等不到 EOF，**APK 产出后导出进程一直不退出**（实测挂 19 分钟）⇒ 无人值守导出会被卡死 |
+
+### 本机专属设置（不入库，`android/build/` 已忽略）
+
+Gradle 拉依赖走本地代理（V2RAYN）。这两项写在 `android/build/gradle.properties`：
+
+```properties
+org.gradle.jvmargs=-Xmx4536m -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=10808 -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=10808
+systemProp.http.proxyHost=127.0.0.1
+systemProp.http.proxyPort=10808
+systemProp.https.proxyHost=127.0.0.1
+systemProp.https.proxyPort=10808
+```
+
+⚠️ 重装模板会覆盖它们 ⇒ 重装后按上面这段重新填一次。
 
 ## 与导出预设的配合（已配好，别手改）
 

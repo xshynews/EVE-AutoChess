@@ -75,6 +75,25 @@ tasks.configureEach { t ->
 }
 """ % MARK
 
+# 5) 依赖仓库加国内镜像。
+#    实测（2026-10-12）：本机直连 `repo.maven.apache.org` 的 TLS 握手会被干扰
+#    （"Remote host terminated the handshake"）⇒ 单个 jar 拉不下来，整个构建失败。
+#    镜像走的是国内 CDN，不受影响；放在 google()/mavenCentral() **之前** 优先命中。
+#    ⛔ 想用原样仓库（比如在墙外）：设环境变量 EVE_NO_CN_MIRROR=1 再跑本脚本。
+CN_MIRRORS = """        // %s 国内镜像优先（本机直连 Maven Central 的 TLS 握手会被干扰）
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+""" % MARK
+
+GRADLE_PROPS = os.path.join(BUILD_DIR, "gradle.properties")
+DAEMON_OFF = """# %s 关掉 gradle daemon：
+#   ① 实测（2026-10-12）daemon 会继承 gradlew 的 stdout 管道 ⇒ Godot 等不到 EOF，
+#      **导出在 APK 产出后一直不退出**（实测挂了 19 分钟）⇒ 无人值守导出必须关掉它。
+#   ② 不用 daemon 时，`org.gradle.jvmargs` 里的 `-D…proxyHost` 才会真正生效。
+org.gradle.daemon=false
+""" % MARK
+
 
 def ndk_present() -> bool:
     """本机 SDK 里有没有模板要求的那个 NDK 版本。"""
@@ -166,10 +185,35 @@ def clean_stale_tmp(check_only: bool) -> None:
     print("✓ 已清理 %d 个" % n)
 
 
+def ensure_gradle_props(check_only: bool) -> None:
+    """gradle.properties 里必须关掉 daemon。
+
+    ★ 踩过（2026-10-12）：daemon 会**继承** gradlew 的 stdout 管道 ⇒ Godot 读不到 EOF，
+      于是「APK 早已产出、导出进程却 19 分钟不退出」——无人值守导出直接会被卡死。
+      顺带一个好处：不用 daemon 时，`org.gradle.jvmargs` 里的 `-D…proxyHost` 才会真正生效
+      （daemon JVM 的参数来自它自己的注册表，项目里的改动到不了它）。
+    """
+    if not os.path.exists(GRADLE_PROPS):
+        print("⚠ 找不到 %s，跳过（模板结构可能变了）" % GRADLE_PROPS)
+        return
+    s = io.open(GRADLE_PROPS, encoding="utf-8").read()
+    if "org.gradle.daemon=false" in s:
+        print("· gradle daemon 已关闭")
+        return
+    print("── gradle.properties 需要 org.gradle.daemon=false（否则导出会在 gradle 之后一直挂着）")
+    if check_only:
+        print("（--check：未写盘）")
+        return
+    s = s.rstrip("\n") + "\n\n" + DAEMON_OFF
+    io.open(GRADLE_PROPS, "w", encoding="utf-8", newline="").write(s)
+    print("✓ 已写入 %s" % GRADLE_PROPS)
+
+
 def main() -> int:
     check_only = "--check" in sys.argv
     ensure_build_version(check_only)
     clean_stale_tmp(check_only)
+    ensure_gradle_props(check_only)
     if not os.path.exists(GRADLE):
         print("✗ 找不到 %s（先在 Godot 里安装 Android 构建模板）" % GRADLE)
         return 2
@@ -220,6 +264,16 @@ def main() -> int:
     else:
         todo.append("资源合并前清 .tmp 的 gradle 钩子")
         s = s.rstrip("\n") + "\n" + TMP_GUARD
+
+    if MARK + " 国内镜像优先" in s:
+        print("· 国内 Maven 镜像已就位")
+    elif os.environ.get("EVE_NO_CN_MIRROR"):
+        print("· EVE_NO_CN_MIRROR=1 ⇒ 跳过镜像补丁")
+    elif "        google()\n" in s:
+        todo.append("依赖仓库加国内镜像（maven.aliyun.com）")
+        s = s.replace("        google()\n", CN_MIRRORS + "        google()\n", 1)
+    else:
+        print("⚠ 没找到 repositories 里的 google() 行，跳过镜像补丁")
 
     if s == orig:
         print("── 无需改动（补丁已是最新）")
