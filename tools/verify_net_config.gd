@@ -110,7 +110,9 @@ func _t_args_client() -> void:
 	_ok(peers_n == RELAY.peers().size(), "每个会合节点一个 -p（%d）" % peers_n)
 	_ok(_has(a, "-r"), "带管理 RPC 端口（就绪判定靠它）")
 	_ok(_value_of(a, "-r") == "127.0.0.1:%d" % RC.rpc_port(CODE, 2), "RPC 只监听本机")
-	_ok(_value_of(a, "-i") == RC.virtual_ip(CODE, 2), "自己的虚拟 IP = 座位 2")
+	# ★ 加入者用 DHCP 自动取址：⛔ 不能自己指定 IP（两个加入者会撞同一个）
+	_ok(_has(a, "-d"), "★ 用 DHCP 自动取址（实测落在房主声明的网段内）")
+	_ok(not _has(a, "-i"), "⛔ 加入者不写死虚拟 IP（写死 ⇒ 两个加入者撞同一个 IP）")
 
 
 # ══════════════════════════════════════════════ 房主参数
@@ -120,7 +122,10 @@ func _t_args_host() -> void:
 	var a := TUN.build_args(CODE, 0, true, RELAY.peers(), "云南我")
 	_ok(not _has(a, "--no-tun"), "★ 房主**不加** --no-tun（要建虚拟网卡才能被连）")
 	_ok(not _has(a, "--port-forward"), "房主不需要端口转发（它是被连的一方）")
-	_ok(_value_of(a, "-i") == RC.host_virtual_ip(CODE), "房主的虚拟 IP = .1")
+	# ★ 房主必须声明 /24：加入者的 DHCP 靠它确定网段（不带前缀 ⇒ 落到默认网段 ⇒ 通不了）
+	_ok(_value_of(a, "-i") == RC.host_virtual_ip(CODE) + "/24",
+			"★ 房主虚拟 IP 带 /24 前缀（%s）" % _value_of(a, "-i"))
+	_ok(not _has(a, "-d"), "房主不用 DHCP（IP 必须可预测，加入者要转发到它）")
 	_ok(_value_of(a, "--network-name") == RC.network_name(CODE), "和加入者同一个网络名")
 	_ok(_value_of(a, "--network-secret") == RC.network_secret(CODE), "和加入者同一个密钥")
 	# 房主与加入者的网络身份必须一致，否则根本进不了同一张网

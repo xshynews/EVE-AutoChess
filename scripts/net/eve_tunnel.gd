@@ -50,15 +50,26 @@ var _started_ms := 0
 ## 生成内核命令行参数（**纯函数**，可无头验收）。
 ##
 ## `relays` = 会合节点 uri 列表（全员必须同一份，见 `eve_relay_list.gd`）。
+## `seat_no` —— ★ **只有房主用它定位虚拟 IP**；加入者用 DHCP，`seat_no` 仅用于派生
+##   端口与实例名（所以同一台机器上跑多个加入者时，传不同的 slot 就能错开端口）。
 static func build_args(code_text: String, seat_no: int, is_host: bool,
 		relays: Array, display_name: String) -> Array[String]:
 	var a: Array[String] = []
 	var vip := RC.virtual_ip(code_text, seat_no)
 	var lp := RC.listen_port(code_text, seat_no)
 	var rp := RC.rpc_port(code_text, seat_no)
-	a.append("-i")
-	a.append(vip)
-	# 监听端口由房间码 + 座位派生 ⇒ 同机跑「房主 + 加入者」也不会撞端口
+	if is_host:
+		# ★★ 房主的 IP **必须带 `/24` 前缀**：加入者的 DHCP 靠它确定自己落在哪个网段。
+		#    实测：房主 `-i 10.201.7.1/24` ⇒ 加入者 DHCP 拿到 `10.201.7.2`（同网段）；
+		#    不带前缀时 DHCP 会给到默认的 `10.126.126.x` ⇒ **两边不在一个子网，通不了**。
+		a.append("-i")
+		a.append(vip + "/24")
+	else:
+		# ★★ 加入者用 **DHCP 自动取址**，⛔ 不要自己指定 IP：
+		#    加入者在收到房主分配座位之前**并不知道自己是几号位**，
+		#    若写死 `-i 10.x.y.2`，第二个加入者会撞同一个 IP（实测会冲突）。
+		#    交给 DHCP 就不会撞，也顺手省掉「猜座位」这一步。
+		a.append("-d")
 	a.append("-l")
 	a.append("tcp://0.0.0.0:%d" % lp)
 	a.append("-l")

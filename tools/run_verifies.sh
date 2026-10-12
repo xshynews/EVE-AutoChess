@@ -50,6 +50,7 @@ SUITE=(
   verify_ddz
   verify_ddz_net
   verify_net_config
+  verify_ddz_room
   verify_intro
   verify_audio
 )
