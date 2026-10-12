@@ -8,7 +8,7 @@
 
 产物：
   <工程>/addons/easytier/bin/easytier-core.exe   ← 必需
-  <工程>/addons/easytier/bin/wintun.dll          ← 仅房主（TUN 模式）需要
+  <工程>/addons/easytier/bin/Packet.dll          ← 必需（内核加载期依赖）
   <工程>/addons/easytier/bin/easytier-cli.exe    ← 排障用（游戏运行时不依赖）
 
 用法：
@@ -41,10 +41,11 @@ ASSET = "easytier-windows-x86_64-v%s.zip" % VERSION
 URL = "https://github.com/EasyTier/EasyTier/releases/download/v%s/%s" % (VERSION, ASSET)
 # 2026-10-12 实测下载所得；⛔ 换版本必须同步换哈希，否则本脚本会拒绝安装
 SHA256_ZIP = "27af91e270e554709b048bd32327fefd2dfce5062ae1e8701af7550c6f525f84"
-# ⚠️ Packet.dll 是**加载期硬依赖**（缺了内核 100ms 静默退出，实测）；
-#    wintun.dll 仅房主 TUN 需要；WinDivert64.sys 体积很小，一并带上以防内核对它有运行时依赖。
-#    ⛔ 不带 easytier-web*.exe（那是它的 Web 面板，与游戏无关）
-WANT = ("easytier-core.exe", "Packet.dll", "wintun.dll", "WinDivert64.sys", "easytier-cli.exe")
+# Packet.dll 是加载期依赖（缺了内核约 100 ms 静默退出）。
+# 所有节点都以 no-TUN 运行，不需要 wintun.dll（虚拟网卡驱动）与 WinDivert64.sys；
+# 已实测仅有 easytier-core.exe + Packet.dll 时内核可正常启动，见 docs/联机方案.md。
+# 不带 easytier-web*.exe（Web 面板，与游戏无关）。
+WANT = ("easytier-core.exe", "Packet.dll", "easytier-cli.exe")
 DEST = os.path.join(ROOT, "addons", "easytier", "bin")
 
 

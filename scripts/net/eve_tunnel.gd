@@ -1,21 +1,19 @@
 extends RefCounted
-## 联机 · 内置 EasyTier 内核的**进程管理**（起 / 停 / 就绪判定 / 降级）。
+## 联机：内置 EasyTier 内核的进程管理（启动、停止、就绪判定、失败原因）。
 ##
-## 配套设计：作者本地文档《联机方案-内置EasyTier-工程设计-2026-10-12》（未入库）。
+## 整体方案见 `docs/联机方案.md`。
 ##
-## ★★ 为什么用**命令行参数**而不是 TOML 配置文件（2026-10-12 定）：
-##    `-i / -l / -r / -m / -p / --network-name / --network-secret / --no-tun /
-##     --port-forward / --file-log-dir` **全部在本机实机跑通过**；
-##    而 TOML 里 `no_tun`、`port_forwards` 这些**字段名是从文档推断的、没验过**
-##     —— 猜错的表现是「内核静默起不来」，排查成本极高。
-##     ⇒ 先用确定能跑的形态；将来真要配置文件，必须对着内核实测字段名再换。
+## 参数用命令行传递，不用 TOML 配置文件：命令行参数都实机跑通过，TOML 字段名没有验证过，
+## 猜错的表现是内核静默退出，排查成本很高。网络密钥例外，通过环境变量 `ET_NETWORK_SECRET`
+## 传递（见 `build_env()`），避免出现在进程列表的命令行里。
 ##
-## ★ 权限策略（非对称）：
-##    · 房主 = `no_tun = false`（**要建虚拟网卡**）⇒ 需要管理员权限一次；
-##    · 加入者 = `--no-tun` + `--port-forward` ⇒ **不需要任何权限、不装驱动**。
-##    依据：实测「无 TUN 模式无法 bind 虚拟 IP ⇒ 只有『被连接』的一方需要虚拟网卡」。
+## 所有节点都使用 `--no-tun`：不创建虚拟网卡，不需要管理员权限，也不需要 wintun 驱动。
+## - 加入者：`--port-forward` 把本机 127.0.0.1:27015 转发到房主的虚拟 IP。
+## - 房主：no-TUN 节点仍可经虚拟 IP 被访问，内核把收到的流量交给本机端口。
+##   游戏服务器必须监听 127.0.0.1（或 0.0.0.0），不能绑定虚拟 IP（无 TUN 时该地址不存在，
+##   绑定会报 WSAEADDRNOTAVAIL）。实测记录见 `docs/联机方案.md`。
 ##
-## ⛔ 铁律：只杀**自己启动的那个 PID**（`OS.kill(pid)`），绝不做按进程名批量杀。
+## 只结束自己启动的那个 PID（`OS.kill(pid)`），不要按进程名批量结束。
 
 const RC := preload("res://scripts/net/eve_room_code.gd")
 
@@ -25,12 +23,11 @@ enum State { IDLE, STARTING, UP, FAILED, STOPPED }
 ## 内核版本（与 `tools/pipeline/_fetch_easytier.py` 和许可声明必须同号）
 const VERSION := "2.6.4"
 const CORE := "easytier-core.exe"
-## ★ `Packet.dll`（WinDivert 的用户态库）是**加载期硬依赖**：缺了它内核
-##   **约 100 ms 就静默退出**，而报错只打在它自己的 stdout 上（`create_process`
-##   读不到）⇒ 现象是「内核起不来、原因未知」。这个坑实测踩过一次，补依赖时别忘了它。
+## `Packet.dll` 是内核的加载期依赖：缺了它内核约 100 ms 就静默退出，报错只打在内核自己的
+## 标准输出上（`create_process` 读不到）。no-TUN 模式只需要内核与它，不需要 wintun.dll。
 const PACKET_DLL := "Packet.dll"
-## 只有房主（TUN 模式，要建虚拟网卡）才需要。
-const WINTUN := "wintun.dll"
+## 传递网络密钥的环境变量（内核 `--network-secret` 对应的 env，见 `easytier-core --help`）。
+const ENV_SECRET := "ET_NETWORK_SECRET"
 ## 就绪判定超时（毫秒）：起不来的话 UI 得给玩家一个说法，别无限转圈
 const READY_TIMEOUT_MS := 20000
 
@@ -82,15 +79,14 @@ static func build_args(code_text: String, seat_no: int, is_host: bool,
 	a.append("eve-%s" % ("host" if is_host else "guest%d" % seat_no))
 	a.append("--network-name")
 	a.append(RC.network_name(code_text))
-	a.append("--network-secret")
-	a.append(RC.network_secret(code_text))
+	# 网络密钥不放在命令行里，由 build_env() 经环境变量传递。
 	for uri in relays:
 		a.append("-p")
 		a.append(String(uri))
+	# 所有节点都不建虚拟网卡（见文件头说明）。
+	a.append("--no-tun")
 	if not is_host:
-		a.append("--no-tun")
-		# ★ 加入者的关键一步：把本地 27015 映射到房主的虚拟 IP
-		#   ⇒ 游戏侧**所有人**都只连 127.0.0.1:27015，一行代码不用分叉
+		# 加入者把本机 27015 转发到房主的虚拟 IP，所以游戏里所有人都连 127.0.0.1:27015。
 		a.append("--port-forward")
 		a.append("udp://127.0.0.1:%d/%s:%d" % [
 				RC.DEFAULT_PORT, RC.host_virtual_ip(code_text), RC.DEFAULT_PORT])
@@ -101,6 +97,12 @@ static func build_args(code_text: String, seat_no: int, is_host: bool,
 	a.append("--file-log-dir")
 	a.append(log_dir())
 	return a
+
+
+## 启动内核时需要设置的环境变量。目前只有网络密钥：放在命令行里会出现在进程列表中，
+## 同一台机器上的其他程序都能看到。
+static func build_env(code_text: String) -> Dictionary:
+	return {ENV_SECRET: RC.network_secret(code_text)}
 
 
 ## 内核日志目录（给玩家报障用）。
@@ -127,29 +129,19 @@ static func core_path() -> String:
 	return ""
 
 
-## 缺哪些文件（缺了就别启动 —— 否则现象是「静默退出、原因未知」）。
-static func missing_files(is_host: bool) -> Array[String]:
+## 缺哪些文件。缺文件时不要启动，否则现象是内核静默退出、原因未知。
+## 房主与加入者都是 no-TUN，依赖相同；`is_host` 参数保留以兼容现有调用。
+static func missing_files(_is_host: bool = false) -> Array[String]:
 	var out: Array[String] = []
 	var exe := core_path()
 	if exe == "":
 		out.append(CORE)
 		return out
 	var dir := exe.get_base_dir()
-	var need: Array[String] = [CORE, PACKET_DLL]
-	if is_host:
-		need.append(WINTUN)          # 房主要建虚拟网卡
-	for n in need:
+	for n in [CORE, PACKET_DLL]:
 		if not FileAccess.file_exists(dir.path_join(n)):
 			out.append(n)
 	return out
-
-
-## 房主侧还需要 `wintun.dll`（TUN 模式要它）；加入者不需要。
-static func has_wintun() -> bool:
-	var exe := core_path()
-	if exe == "":
-		return false
-	return FileAccess.file_exists(exe.get_base_dir().path_join(WINTUN))
 
 
 static func available() -> bool:
@@ -194,7 +186,13 @@ func start(code_text: String, seat_no: int, is_host: bool,
 	# ⛔⛔ **不要**自己给参数加引号！`OS.create_process` 已经会替含空格的参数加引号，
 	#   再加一层变成 `""C:/…EVE 自走棋…""` ⇒ 内核认不出这个参数 ⇒ **约 190 ms 静默退出**。
 	#   （实测踩过：一度以为是内部日志目录带空格的问题。）
+	# 子进程在创建时继承当前环境变量，所以只在 create_process 前后短暂设置，随即清除。
+	var env := build_env(code_text)
+	for k in env:
+		OS.set_environment(String(k), String(env[k]))
 	pid = OS.create_process(exe, args, false)
+	for k in env:
+		OS.unset_environment(String(k))
 	if pid <= 0:
 		state = State.FAILED
 		last_error = "内核启动失败（可能被安全软件拦截）"
@@ -259,10 +257,6 @@ func _exit_reason() -> String:
 	if tail.is_empty():
 		return "联机内核启动后立刻退出（原因未知，可能被安全软件拦截）"
 	var t := tail.to_lower()
-	if t.find("wintun") >= 0 or t.find("adapter") >= 0:
-		return "创建虚拟网卡失败（需要允许管理员权限）"
-	if t.find("administrator") >= 0 or t.find("permission") >= 0:
-		return "权限不足（需要允许管理员权限）"
 	if t.find("addr") >= 0 and t.find("use") >= 0:
 		return "端口被占用（可能有其它联机工具在运行）"
 	return "联机内核启动失败：" + tail.split("\n")[-1].substr(0, 120)

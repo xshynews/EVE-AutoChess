@@ -7,14 +7,14 @@ extends Node
 ##   `eve_tunnel`（连通层：内置 EasyTier 内核）
 ##   `eve_room_code`（房间码 → 网络名/密钥/网段/端口）
 ##
-## 配套设计：`F:\EVE自走棋\牌面\牌面\联机方案-内置EasyTier-工程设计-2026-10-12.md`
+## 整体方案见 `docs/联机方案.md`。
 ##
-## ★ 三条产品规则（都来自实测/用户决定）：
-##   ① **全员连同一个地址** `127.0.0.1:27015`：房主是本地直连，加入者由内核转发。
-##      ⇒ 游戏侧没有「联机逻辑」和「单机逻辑」两套。
-##   ② **房主确认加入**：8 位房间码 + 房主点「允许」（`needs_approval`）。默认开。
-##   ③ **降级**：内核起不来 / 玩家拒绝权限 ⇒ `skip_tunnel = true` 走局域网直连，
-##      或者用 `peer_ip` 指定一个已知 IP。⛔ 任何情况下都**不能静默失败**。
+## 三条产品规则：
+## 1. 全员连同一个地址 `127.0.0.1:27015`：房主的服务器只在本机监听，加入者由内核转发。
+##    游戏侧没有「联机逻辑」和「单机逻辑」两套。
+## 2. 房主确认加入：8 位房间码 + 房主点「允许」（`needs_approval`），默认开启。
+## 3. 降级：内核起不来（缺文件、被安全软件拦截）时，可设 `skip_tunnel = true` 走局域网直连，
+##    或用 `peer_ip` 指定已知 IP。任何情况下都不能静默失败。
 
 signal state_changed()
 signal join_requested(peer_id: int, player_name: String)
@@ -173,7 +173,9 @@ func send_command(kind: int, payload: Dictionary = {}) -> Dictionary:
 
 
 func _start_net_host() -> void:
-	if not _tp.host_start(RC.DEFAULT_PORT):
+	# 走隧道时只在本机监听；局域网直连时才对所有网卡开放。
+	var bind_ip := "*" if skip_tunnel else "127.0.0.1"
+	if not _tp.host_start(RC.DEFAULT_PORT, bind_ip):
 		_fail(_tp.last_error)
 		return
 	state = State.LISTENING

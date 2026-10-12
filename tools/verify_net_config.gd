@@ -101,7 +101,9 @@ func _t_args_client() -> void:
 	_ok(pf.find(RC.virtual_ip(CODE, 2)) < 0, "⛔ 不会错指到自己")
 	_ok(_has(a, "--network-name"), "带网络名")
 	_ok(_value_of(a, "--network-name") == RC.network_name(CODE), "网络名由房间码派生")
-	_ok(_value_of(a, "--network-secret") == RC.network_secret(CODE), "密钥由房间码派生")
+	_ok(not _has(a, "--network-secret"), "密钥不出现在命令行（进程列表里看得到）")
+	_ok(String(TUN.build_env(CODE).get(TUN.ENV_SECRET, "")) == RC.network_secret(CODE),
+			"密钥经环境变量 %s 传递，由房间码派生" % TUN.ENV_SECRET)
 	_ok(_has(a, "-p"), "带上会合节点")
 	var peers_n := 0
 	for i in a.size():
@@ -118,22 +120,22 @@ func _t_args_client() -> void:
 # ══════════════════════════════════════════════ 房主参数
 
 func _t_args_host() -> void:
-	print("── 房主参数（TUN，要建虚拟网卡）──")
+	print("── 房主参数（no-TUN，不建虚拟网卡）──")
 	var a := TUN.build_args(CODE, 0, true, RELAY.peers(), "云南我")
-	_ok(not _has(a, "--no-tun"), "★ 房主**不加** --no-tun（要建虚拟网卡才能被连）")
+	_ok(_has(a, "--no-tun"), "房主也带 --no-tun（不建虚拟网卡、不需要管理员；实测见 docs/联机方案.md）")
 	_ok(not _has(a, "--port-forward"), "房主不需要端口转发（它是被连的一方）")
 	# ★ 房主必须声明 /24：加入者的 DHCP 靠它确定网段（不带前缀 ⇒ 落到默认网段 ⇒ 通不了）
 	_ok(_value_of(a, "-i") == RC.host_virtual_ip(CODE) + "/24",
 			"★ 房主虚拟 IP 带 /24 前缀（%s）" % _value_of(a, "-i"))
 	_ok(not _has(a, "-d"), "房主不用 DHCP（IP 必须可预测，加入者要转发到它）")
 	_ok(_value_of(a, "--network-name") == RC.network_name(CODE), "和加入者同一个网络名")
-	_ok(_value_of(a, "--network-secret") == RC.network_secret(CODE), "和加入者同一个密钥")
+	_ok(not _has(a, "--network-secret"), "房主的密钥也不出现在命令行")
 	# 房主与加入者的网络身份必须一致，否则根本进不了同一张网
 	var c := TUN.build_args(CODE, 1, false, RELAY.peers(), "杭州B")
 	_ok(_value_of(a, "--network-name") == _value_of(c, "--network-name"),
 			"★★ 房主与加入者网络名一致（不一致就看不见对方）")
-	_ok(_value_of(a, "--network-secret") == _value_of(c, "--network-secret"),
-			"★★ 房主与加入者密钥一致")
+	_ok(TUN.build_env(CODE)[TUN.ENV_SECRET] == RC.network_secret(CODE),
+			"★★ 房主与加入者使用同一个密钥（同一房间码派生）")
 	var peers_a := RELAY.peers()
 	var peers_c := RELAY.peers()
 	_ok(str(peers_a) == str(peers_c),
@@ -152,8 +154,8 @@ func _t_files() -> void:
 		return
 	_ok(TUN.available(), "内核可执行文件在位")
 	_ok(TUN.missing_files(false).is_empty(), "加入者侧依赖齐全（core + Packet.dll）")
-	_ok(TUN.missing_files(true).is_empty() or not TUN.has_wintun(),
-			"房主侧依赖：缺 wintun.dll 时会被 missing_files 报出来")
+	_ok(TUN.missing_files(true) == TUN.missing_files(false),
+			"房主与加入者依赖相同（no-TUN 不需要 wintun.dll）")
 	_ok(TUN.missing_files(false).find(TUN.PACKET_DLL) == -1,
 			"★ Packet.dll 在依赖清单里（缺它内核 100ms 静默退出）")
 	print("  内核路径：%s" % TUN.core_path())

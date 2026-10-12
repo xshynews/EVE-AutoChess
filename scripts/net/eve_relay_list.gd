@@ -13,6 +13,7 @@ extends RefCounted
 ##    · 曾经的官方节点 `public.easytier.cn:11010` **已于 2026-02 停服**
 ##      （DNS 已不存在）⇒ ⛔ 绝不能写进代码；
 ##    · 长期方案是自建（军团一台小机器即可，只做会合与中继，不存数据）。
+##      部署配置见 `tools/server/easytier-relay/`，整体方案见 `docs/联机方案.md`。
 ##
 ## 下表由 `tools/probe_eve_relay.gd` 在 2026-10-12 实测（TCP 可达 + 延迟）得出。
 

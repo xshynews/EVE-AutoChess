@@ -1,7 +1,7 @@
 extends Node
 ## 联机 · 传输层（ENet + 自定义消息）。
 ##
-## 配套设计：`F:\EVE自走棋\牌面\牌面\联机方案-内置EasyTier-工程设计-2026-10-12.md`
+## 整体方案见 `docs/联机方案.md`。
 ##
 ## ★ 为什么**不用 RPC**：
 ##   ① 本项目的会话层（`ddz_net.gd`）是 `RefCounted` 不是 `Node`，而 `@rpc` 只能挂在 Node 上；
@@ -73,8 +73,13 @@ func poll() -> void:
 
 
 ## 开服务器。端口 = 「所有人统一连 127.0.0.1:27015」里的那个 27015。
-func host_start(port: int) -> bool:
+##
+## `bind_ip`：走内置隧道时传 "127.0.0.1"，只在本机监听。房主的内核是 no-TUN，会把加入者的
+## 流量交给本机端口，所以不需要对局域网开放，也不会触发 Windows 防火墙提示。
+## 跳过隧道、局域网直连时传 "*"，监听所有网卡。不要传虚拟 IP：no-TUN 下该地址不存在。
+func host_start(port: int, bind_ip: String = "*") -> bool:
 	peer = ENetMultiplayerPeer.new()
+	peer.set_bind_ip(bind_ip)
 	var err := peer.create_server(port, MAX_CLIENTS)
 	if err != OK:
 		last_error = "端口 %d 被占用或不可用（%d）" % [port, err]
