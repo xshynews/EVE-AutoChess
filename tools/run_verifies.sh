@@ -86,6 +86,10 @@ for t in "${SUITE[@]}"; do
   if [ -n "${fnum}" ] && [ "${fnum}" -gt 0 ]; then
     echo "✗ ${t}：输出判据 failed=${fnum}（退出码 ${code}）"
     grep -E 'failed=[0-9]+|失败项|项失败' "${out}" | tail -3 | sed 's/^/    /'
+    # ★ 2026-10-12：直接把**失败的断言**打出来 —— 否则在 CI 日志里只看到一个数字，
+    #   还得去翻 runner 临时目录里的 per-suite log。最多 10 条，够定位。
+    grep -m10 -E '\[FAIL\]|✗ ' "${out}" | sed 's/^/    /'
+    echo "    （完整输出：${out}）"
     fail=1
     continue
   fi
