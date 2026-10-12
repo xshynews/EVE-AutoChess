@@ -22,7 +22,9 @@ jobs:
     runs-on: windows-latest
     env:
       GODOT_VERSION: 4.7.2
-      GODOT_ZIP: Godot_v4.7.2-stable_win64_console.exe
+      # ⚠️ 官方发布**没有**独立的 console exe 资产 —— Windows 版是个 zip，
+      #    解开后同时有 `Godot_v4.7.2-stable_win64.exe` 与 `..._console.exe`。
+      GODOT_ZIP: Godot_v4.7.2-stable_win64.exe.zip
       GODOT_BIN: ${{ github.workspace }}\godot\Godot_v4.7.2-stable_win64_console.exe
 
     steps:
@@ -35,7 +37,7 @@ jobs:
           path: godot
           key: godot-${{ env.GODOT_ZIP }}
 
-      - name: Download Godot ${{ env.GODOT_VERSION }} (console build)
+      - name: Download Godot ${{ env.GODOT_VERSION }} (win64, console 版在 zip 里)
         if: steps.godot-cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
@@ -44,6 +46,8 @@ jobs:
           url="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/${GODOT_ZIP}"
           echo "downloading $url"
           curl -fL --retry 3 -o "godot/${GODOT_ZIP}" "$url"
+          # ⚠️ 用 PowerShell 解压：Git Bash 不保证带 unzip
+          powershell -NoProfile -Command "Expand-Archive -Path 'godot/${GODOT_ZIP}' -DestinationPath 'godot' -Force"
           ls -la godot
 
       - name: Show engine version
