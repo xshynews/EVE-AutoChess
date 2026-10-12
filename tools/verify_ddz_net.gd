@@ -20,6 +20,7 @@ const R := preload("res://scripts/card/ddz/ddz_rules.gd")
 
 ## 下发负载允许出现的字段（白名单）。新增字段必须同步修改这里。
 const SNAP_KEYS := ["seat", "phase", "turn", "landlord", "base_score", "pass_streak",
+		"passed",
 		"bombs", "spring", "winner", "multiplier", "counts", "your_hand",
 		"last_play", "played", "bottom", "log", "seats"]
 ## 单局自检的步数上限。一局跑不完说明驱动卡住了。

@@ -44,6 +44,8 @@ const SETTINGS_SCRIPT := preload("res://scripts/ui/panels/eve_settings.gd")
 const AUDIO_SCRIPT := preload("res://scripts/core/eve_audio.gd")
 ## 设置存档（读音量 / 字号 / 分辨率的初值）
 const STORE := preload("res://scripts/core/eve_settings_store.gd")
+const ONLINE := preload("res://scripts/ui/panels/eve_ddz_online.gd")
+const NET := preload("res://scripts/net/ddz_net.gd")
 ## ★ 2026-10-10 i18n：文案取词入口（见 eve_text.gd 顶注）。
 const T := preload("res://scripts/core/eve_text.gd")
 
@@ -122,7 +124,8 @@ const BASE := Vector2(1920.0, 1080.0)
 
 const MAIN_MENU := "res://scenes/main_menu.tscn"
 
-## 玩家打的座位。⛔ 只改这里 —— `HUMAN_SEAT` 是唯一真相源，
+## 玩家打的座位（**单机**）。⛔ 单机的唯一真相源；
+## 联机的座位由房主分配，所有「我的座位」判断一律走 `_my_seat()`。
 ## 别在别处再写死一个 0（那就会两处不一致，而且不报错）。
 const HUMAN_SEAT := 0
 
@@ -260,6 +263,13 @@ var _seed := 0
 var _timer := 0.0
 var _shown: Array = [{}, {}, {}]      ## 每家最近出的牌（牌 id 数组；{} = 没出）
 var _passed := [false, false, false]  ## 这家最近是不是「不要」
+## 联机房间（`ddz_room`）。null = 单机。★ 由联机面板建，牌桌只**读**它。
+var _room = null
+## 最近一次应用的联机快照（用来判断「有没有变」，避免每帧重建渲染对象）
+var _online_view: Dictionary = {}
+## 联机时的座位昵称（房主/好友自己的名字，来自快照的 `seats`）
+var _online_names: Array = []
+var _online: Control = null
 var _status := ""
 var _feed: Array[String] = []         ## 对局记录（人读的，越往下越新）
 var _sel: Array[int] = []             ## 玩家已选中的牌 id
@@ -320,6 +330,7 @@ func _ready() -> void:
 	COIN.load_it()          ## 娱乐币（方案 A：纯记分；字段已按 B/C 留好）
 	_build_audio()
 	_build_settings()
+	_build_online()
 	# ★ 2026-10-07：进牌桌**不自动开局**（用户：「不能直接开始，还需要点击一下开始游戏」）。
 	#   ⇒ 这里只清状态、**不建局**：`game == null` 就是「还没开始」的唯一判据。
 	_reset_state()
@@ -478,6 +489,13 @@ func _process(delta: float) -> void:
 	#   ⚠️ 与「轮到玩家就一直等」同一条思路：节奏由玩家控。
 	if _settings != null and _settings.visible:
 		return
+	# ★★ 联机：局面**全部由房主裁定**，本地一步都不推 —— 只把最新快照搬进渲染用的 `game`。
+	#    心跳/托管/裁决都在房主侧；这里连 AI 都不跑（托管由房主做）。
+	if _is_online():
+		_pull_online_view()
+		if game != null and game.is_over() and not _settled:
+			_settle()
+		return
 	# ★★ 发牌动画进行中 ⇒ **一步都不许走**（包含 AI）。
 	#    否则 AI 会在你还在看发牌的时候就把地主叫完了 —— 发牌与叫分叠在一起，很乱。
 	if _dealing:
@@ -525,7 +543,7 @@ func _settle() -> void:
 			gain = (-stake) if ll_won else stake
 		_floaters.append({"seat": seat, "text": "%+d" % gain,
 				"col": C_GOLD if gain > 0 else C_WARN, "t": 0.0})
-		if seat == HUMAN_SEAT:
+		if seat == _my_seat():
 			_my_delta = gain
 			COIN.record(gain, _human_won())
 
@@ -535,7 +553,11 @@ func _is_human_turn() -> bool:
 	#    这比在每个按钮上单独加判断可靠（少一处漏判就少一个 bug）。
 	if game == null or game.is_over() or _auto or _dealing:
 		return false
-	return int(game.turn) == HUMAN_SEAT
+	# ★ 联机：**还没收到第一份快照**时一律不给操作（占位 game 的 turn 是 0，
+	#   不加这道闸会在「连接中」闪出一排叫分按钮，点了也只会被房主拒掉）
+	if _is_online() and _online_view.is_empty():
+		return false
+	return int(game.turn) == _my_seat()
 
 
 ## 让「当前该动的那家 AI」走一步。
@@ -561,6 +583,9 @@ func _ai_step() -> void:
 ## ── 三个动作（玩家与 AI **共用**，所以记录与状态只有一份口径）──
 
 func _do_bid(seat: int, score: int) -> bool:
+	# ★ 联机：**发给房主**，本地不动权威状态（快照回来才算数）
+	if _is_online():
+		return _online_send(NET.Kind.BID, {"score": score})
 	var res: Dictionary = game.bid(seat, score)
 	if not bool(res.get("ok", false)):
 		_reject(String(res.get("reason", "")))
@@ -579,7 +604,7 @@ func _do_bid(seat: int, score: int) -> bool:
 		_push(T.t("DDZ_LOG_LANDLORD", "★ 地主 = %s · 底牌 %s") % [_seat_name(int(game.landlord)),
 				_cards_text(game.bottom)])
 		# ★ 新到的底牌抬起高亮一会儿（用户：「新底牌抬起提示」）
-		if int(game.landlord) == HUMAN_SEAT:
+		if int(game.landlord) == _my_seat():
 			_new_ids = (game.bottom as Array).duplicate()
 			_new_t = NEW_HL_SEC
 	_timer = STEP_SECONDS
@@ -588,6 +613,10 @@ func _do_bid(seat: int, score: int) -> bool:
 
 
 func _do_play(seat: int, cards: Array) -> bool:
+	if _is_online():
+		_sel = []
+		_hint_i = -1
+		return _online_send(NET.Kind.PLAY, {"cards": (cards as Array).duplicate()})
 	var res: Dictionary = game.play(seat, cards)
 	if not bool(res.get("ok", false)):
 		_reject(String(res.get("reason", "")))
@@ -612,6 +641,8 @@ func _do_play(seat: int, cards: Array) -> bool:
 
 
 func _do_pass(seat: int) -> bool:
+	if _is_online():
+		return _online_send(NET.Kind.PASS)
 	var res: Dictionary = game.pass_turn(seat)
 	if not bool(res.get("ok", false)):
 		_reject(String(res.get("reason", "")))
@@ -658,8 +689,8 @@ func _refresh_status() -> void:
 		return
 	var seat: int = int(game.turn)
 	var n: int = (game.hand_of(seat) as Array).size()
-	if seat == HUMAN_SEAT and not _auto:
-		if game.last_play.is_empty() or int(game.last_play["seat"]) == HUMAN_SEAT:
+	if seat == _my_seat() and not _auto:
+		if game.last_play.is_empty() or int(game.last_play["seat"]) == _my_seat():
 			_status = T.t("DDZ_STATUS_LEAD", "轮到你了 —— 新一轮，你随意出")
 		else:
 			_status = T.t("DDZ_STATUS_FOLLOW", "轮到你了 —— 要压过 %s 的 %s") % [
@@ -674,6 +705,10 @@ func _refresh_status() -> void:
 # ══════════════════════════════════════════════════════════════════
 
 func _gui_input(event: InputEvent) -> void:
+	# ★ 联机面板开着 ⇒ 牌桌不吃输入（面板自己是 PanelContainer，会拦住它上面的点击，
+	#   但桌面空白处的点击仍会落到这里 —— 那道闸必须在这儿）
+	if _online != null and _online.visible:
+		return
 	# ★ 非 16:9 分辨率下内容整体平移过（见 _ui_origin）⇒ 输入要先**减掉偏移**，
 	#   否则就是「看到的牌在那里、点的却是别处」。绘制与输入**用同一个偏移**
 	#   就是本工程「画与点同源」那条红线在这里的落点。
@@ -758,7 +793,7 @@ func _on_click(p: Vector2) -> void:
 		return
 	if not _can_pick():
 		return
-	var my: Array = game.hand_of(HUMAN_SEAT)
+	var my: Array = game.hand_of(_my_seat())
 	# ⚠️ 从右往左判：右边的牌画在上层，点重叠处应该选中**看得见的那张**。
 	for i in range(my.size() - 1, -1, -1):
 		if _hand_card_rect(i, my.size(), int(my[i])).has_point(p):
@@ -839,6 +874,11 @@ func _on_button(id: String) -> void:
 			_refresh_status()
 			_push(T.t("DDZ_AUTO", "托管%s") % (T.t("DDZ_AUTO_ON", "已开 —— 你的座位交给电脑") if _auto
 						else T.t("DDZ_AUTO_OFF", "已关")))
+		"online":
+			# ★ 权限就是在**这一刻**才申请（见 `eve_ddz_online` 的说明）
+			if _online != null:
+				_online.open_panel()
+			return
 		"start", "again":
 			# ★「再来一局」走同一条路 ⇒ **重发一次牌**（真实牌局每局都有发牌过程）
 			_start_game()
@@ -862,7 +902,7 @@ func _try_bid(score: int) -> void:
 	if score != 0 and score <= int(game.bid_best):
 		_reject(T.t("DDZ_TOAST_BID_LOW", "叫分要高于当前最高分（现在是 %d 分）") % int(game.bid_best))
 		return
-	_do_bid(HUMAN_SEAT, score)
+	_do_bid(_my_seat(), score)
 
 
 func _try_play() -> void:
@@ -876,7 +916,7 @@ func _try_play() -> void:
 	if R.classify(_sel).is_empty():
 		_reject(T.t("DDZ_TOAST_BAD_TYPE", "这几张凑不成合法牌型"))
 		return
-	_do_play(HUMAN_SEAT, _sel)
+	_do_play(_my_seat(), _sel)
 
 
 func _try_pass() -> void:
@@ -887,7 +927,7 @@ func _try_pass() -> void:
 		# ⛔ 不能静默什么都不干：玩家必须知道「新一轮必须出牌」这条规则。
 		_reject(T.t("DDZ_TOAST_MUST_PLAY", "新一轮由你先出，不能不要"))
 		return
-	_do_pass(HUMAN_SEAT)
+	_do_pass(_my_seat())
 
 
 ## 「提示」：在**能压过上一手的候选**里循环（每按一次换一手）。
@@ -898,7 +938,7 @@ func _hint() -> void:
 	if not _is_human_turn() or int(game.phase) != int(G.Phase.PLAY):
 		_reject(T.t("DDZ_TOAST_NOT_HINT", "现在不是你的出牌回合"))
 		return
-	var cands: Array = game.legal_now(HUMAN_SEAT)
+	var cands: Array = game.legal_now(_my_seat())
 	if cands.is_empty():
 		_reject(T.t("DDZ_TOAST_NO_BEAT", "没有能压过的牌 —— 只能「不要」"))
 		return
@@ -951,11 +991,20 @@ func _buttons() -> Array:
 	out.append({"id": "settings", "rect": Rect2(w - 328.0, 8.0, 88.0, 28.0),
 			"label": T.t("DDZ_BTN_SETTINGS", "设置"), "on": true})
 	if game == null:
+		# ★ 联机面板开着 ⇒ 空桌这两个大按钮**不画**：面板是半透明的，画在下面会透出来、
+		#   和面板内容叠成一片；而且面板盖不住它们上面的点击（会穿透到牌桌）。
+		if _online != null and _online.visible:
+			return out
 		# ★ 进牌桌**不自动开局** ⇒ 空桌正中一个大按钮（用户：「还需要点击一下开始游戏」）。
 		#   位置放**桌面圆心** —— 参考录像里「开始游戏」就浮在桌面上，而不是挤在按钮栏。
+		# ★ 联机：并排放两个主按钮 —— 「开始游戏」（本地，带 AI）与「联机对战」。
+		#   两个都是**进入一局的入口**，所以同等尺寸、同等位置层级，只是主动作偏左。
 		out.append({"id": "start",
-				"rect": Rect2(w * 0.5 - 108.0, h * TABLE_CY - 27.0, 216.0, 54.0),
+				"rect": Rect2(w * 0.5 - 222.0, h * TABLE_CY - 27.0, 210.0, 54.0),
 				"label": T.t("DDZ_BTN_START", "开始游戏"), "on": true, "primary": true})
+		out.append({"id": "online",
+				"rect": Rect2(w * 0.5 + 12.0, h * TABLE_CY - 27.0, 210.0, 54.0),
+				"label": T.t("DDZ_ON_TITLE", "联机对战  ONLINE"), "on": true})
 		return out
 	if game.is_over():
 		# ⚠️ 挪到**底部操作栏**的位置：原来在 h*0.6+100 会跟正下方的**玩家块**撞上
@@ -1177,7 +1226,7 @@ func _table_pt(dir: int, k: float) -> Vector2:
 
 ## 某座位在桌面上的方位点（出牌 / 亮牌 / 飘字都用它 —— 单一真相源）。
 func _seat_pt(seat: int, k: float = PLAY_OUT) -> Vector2:
-	return _table_pt(int(SEAT_DIR[seat]), k)
+	return _table_pt(_dir_of(seat), k)
 
 
 ## 居中画一行文字（`pos` = 水平中心 + 基线）。
@@ -1301,7 +1350,7 @@ func _draw_seat(seat: int) -> void:
 	# ★ 座位面板贴**左右两侧、与圆心同高**（不再挤在顶角）——
 	#   用户 2026-10-06：「位置也不对，需要更靠近自己的位置一些」。
 	var cy := BASE.y * TABLE_CY
-	var x: float = 28.0 if int(SEAT_DIR[seat]) == DIR_LEFT else w - 28.0 - SEAT_W
+	var x: float = 28.0 if _dir_of(seat) == DIR_LEFT else w - 28.0 - SEAT_W
 	var r := Rect2(x, cy - SEAT_H * 0.5, SEAT_W, SEAT_H)
 	var active: bool = int(game.turn) == seat and not game.is_over()
 	_round_rect(r, C_PANEL, 10.0)
@@ -1369,11 +1418,11 @@ func _draw_me() -> void:
 	_round_rect(box, C_PANEL, 10.0)
 	var edge := C_ACCENT if not mine else Color(C_ACCENT, 0.45 + 0.55 * _pulse())
 	_round_rect(box, edge, 10.0, false, 2.0 if mine else 1.0)
-	_draw_avatar(Vector2(p.x + 12.0, p.y + 22.0), AVATAR, HUMAN_SEAT)
+	_draw_avatar(Vector2(p.x + 12.0, p.y + 22.0), AVATAR, _my_seat())
 	var tx := p.x + 12.0 + AVATAR + 12.0
 	_draw_text(Vector2(tx, p.y + 34.0), T.t("DDZ_SEAT_0", "你"), 15, C_HI)
 	if game.landlord >= 0:
-		var is_ll := int(game.landlord) == HUMAN_SEAT
+		var is_ll := int(game.landlord) == _my_seat()
 		_round_rect(Rect2(tx, p.y + 44.0, 52.0, 20.0), C_GOLD if is_ll else C_ACCENT, 4.0)
 		_draw_text(Vector2(tx + 10.0, p.y + 59.0), (T.t("DDZ_ROLE_LANDLORD", "地主") if is_ll
 				else T.t("DDZ_ROLE_FARMER", "农民")), 12, C_BG)
@@ -1411,8 +1460,14 @@ func _draw_shown(seat: int) -> void:
 	if note != "" and not over:
 		_draw_center_text(c + Vector2(0.0, PLAY_CARD_H * 0.5 + 36.0), note, 30,
 				C_GOLD if note == pass_t else C_TEXT)
-	if over and seat != HUMAN_SEAT:
-		_show_leftover(seat, c)
+	if over and seat != _my_seat():
+		if _is_online():
+			# ⛔ 联机时**本来就没有别人的手牌**（服务端只发你一个人的）——
+			#    所以这里只报张数，⛔ 绝不摊牌（摊出来的是占位用的 -1）
+			_draw_center_text(c, T.t("DDZ_LEFT_N", "剩 %d 张")
+					% int(game.hand_of(seat).size()), 20, C_DIM)
+		else:
+			_show_leftover(seat, c)
 	elif (_shown[seat] is Array) and not (_shown[seat] as Array).is_empty():
 		var cards: Array = _shown[seat]
 		_draw_card_row(cards, c, PLAY_CARD_W, PLAY_CARD_H, _play_overlap(cards.size()),
@@ -1436,10 +1491,10 @@ func _show_leftover(seat: int, c: Vector2) -> void:
 ##   ⚠️⚠️ 动画**只影响「画」** —— `game.hand_of()` 从头到尾都是 17 张。
 ##   ⛔ 别用「边发边往手里塞牌」来实现：规则/AI 会读到半副牌，P2P 还会两边分叉（见 `_start_game`）。
 func _draw_hand() -> void:
-	var my: Array = game.hand_of(HUMAN_SEAT)
+	var my: Array = game.hand_of(_my_seat())
 	var n := my.size()
 	var hp := _hand_pos(n)
-	var is_ll := int(game.landlord) == HUMAN_SEAT
+	var is_ll := int(game.landlord) == _my_seat()
 	# ⚠️ 叫分阶段地主还没定 ⇒ ⛔ 不能显示「农民」—— 那是一个**没有依据的身份**
 	var role := (T.t("DDZ_ROLE_NONE", "身份未定") if int(game.landlord) < 0
 			else (T.t("DDZ_ROLE_LANDLORD", "地主") if is_ll
@@ -1521,7 +1576,7 @@ func _seat_count(seat: int) -> int:
 	var real: int = (game.hand_of(seat) as Array).size()
 	if not _dealing:
 		return real
-	if seat == HUMAN_SEAT:
+	if seat == _my_seat():
 		return mini(real, int(_deal_progress()))
 	var off := 2.0 if seat == 1 else 4.0
 	return mini(real, maxi(0, int(_deal_progress() + off)))
@@ -1747,7 +1802,7 @@ func _hand_hover_index(p: Vector2) -> int:
 		return -1
 	if int(game.phase) != int(G.Phase.PLAY):
 		return -1
-	var my: Array = game.hand_of(HUMAN_SEAT)
+	var my: Array = game.hand_of(_my_seat())
 	for i in range(my.size() - 1, -1, -1):
 		if _hand_base_rect(i, my.size()).has_point(p):
 			return i
@@ -1758,7 +1813,7 @@ func _hand_id_at_base(p: Vector2) -> int:
 	# ⚠️ 用**未抬起**的基准矩形判定：选中的牌会抬起半截，拿抬起后的框去判会让
 	#    光标「划到哪儿牌就从哪儿滑走」（与 _hand_hover_index 是同一个坑）。
 	#   调用方（_drag_paint）已保证 game 非空且轮到你出牌。
-	var my: Array = game.hand_of(HUMAN_SEAT)
+	var my: Array = game.hand_of(_my_seat())
 	for i in range(my.size() - 1, -1, -1):
 		if _hand_base_rect(i, my.size()).has_point(p):
 			return int(my[i])
@@ -1809,15 +1864,20 @@ func _human_won() -> bool:
 	if game == null or game.winner < 0:
 		return false
 	# 地主赢了 ⇒ 我是地主才算赢；农民赢了 ⇒ 我不是地主就算赢
-	return (game.winner == int(game.landlord)) == (int(game.landlord) == HUMAN_SEAT)
+	return (game.winner == int(game.landlord)) == (int(game.landlord) == _my_seat())
 
 
 func _seat_name(seat: int) -> String:
 	# ⚠️ 座位 1 在**你之后**出牌 ⇒ 下家（2026-10-07 起在**右**）；座位 2 在**你之前**
 	#    出牌 ⇒ 上家（在**左**）。方位由 `SEAT_DIR` 定，这里只写名字。
 	#   ⛔ 上一版两个名字正好写反了（用户 2026-10-06 指出）。
+	# ★ 联机时**按我的位置旋转**：+1 是下家、+2 是上家（方位由 `_dir_of()` 同步旋转）
+	var rel := (seat - _my_seat() + 3) % 3
 	var who: String = [T.t("DDZ_SEAT_0", "你"), T.t("DDZ_SEAT_1", "下家"),
-			T.t("DDZ_SEAT_2", "上家")][seat]
+			T.t("DDZ_SEAT_2", "上家")][rel]
+	# 联机：优先显示玩家自己的昵称（军团里得认得出谁是谁）
+	if _is_online() and seat < _online_names.size() and String(_online_names[seat]) != "":
+		who = String(_online_names[seat])
 	if game != null and game.landlord >= 0:
 		who += (T.t("DDZ_SEAT_LL", "（地主）") if seat == int(game.landlord)
 				else T.t("DDZ_SEAT_FA", "（农民）"))
@@ -1845,3 +1905,149 @@ func _font() -> Font:
 
 func _draw_text(pos: Vector2, text: String, px: int, col: Color) -> void:
 	draw_string(_font(), pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT.s(px), col)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  联机（房主权威）：本文件只做两件事 —— **渲染快照** + **把操作发出去**
+# ══════════════════════════════════════════════════════════════════
+#
+# ★ 分层：`eve_ddz_online`（面板）管建房/加入/权限/房间码；`ddz_room`（协调器）管
+#   协议与连接；**本文件只管画**。三方各管一件事，⛔ 别把协议塞进这里。
+
+const N_SEATS := 3
+
+
+func _build_online() -> void:
+	_online = ONLINE.new()
+	_online.name = "DdzOnline"
+	add_child(_online)
+	_online.place(_ui_origin())
+	_online.panel_closed.connect(func():
+		_leave_online()
+		queue_redraw())
+	_online.match_started.connect(_on_match_started)
+	_online.match_ended.connect(func():
+		_leave_online()
+		queue_redraw())
+
+
+## 联机对局开始 ⇒ 切成「渲染快照」模式。
+func _on_match_started() -> void:
+	_room = _online.room
+	_online_view = {}
+	_online_names = []
+	_reset_state()
+	_auto = false
+	_dealing = false           # 联机不发本地发牌动画（牌来自快照，动画只会和真实状态打架）
+	_started = true
+	# 先放一个**空的**渲染占位对象：第一份快照到来前的这一小段，界面不该读到 null。
+	# ⚠️ 它是空的 ⇒ `_is_human_turn()` 里有一道「还没有快照就别给按钮」的闸兜着。
+	var blank := G.new()
+	game = blank
+	_refresh_status()
+	queue_redraw()
+
+
+func _leave_online() -> void:
+	if _online != null:
+		_online.visible = false
+	_room = null
+	_online_view = {}
+	_online_names = []
+	game = null
+	_started = false
+	_reset_state()
+	_refresh_status()
+
+
+## 当前是不是在**联机对局中**（不是「面板开着」，是对局进行中）。
+func _is_online() -> bool:
+	return _room != null and _online != null and _online.phase == ONLINE.Phase.PLAYING
+
+
+## 本地玩家的座位。★ 联机时由房主分配，单机时恒为 `HUMAN_SEAT`。
+## ⛔ 所有「我的座位」的判断都必须走这里 —— 直接写 HUMAN_SEAT 在联机时是错的。
+func _my_seat() -> int:
+	if _is_online() and _room.net != null:
+		return int(_room.my_seat())
+	return HUMAN_SEAT
+
+
+## 该座位在屏幕上的方位。★ 联机时**把自己转到正下方**：否则你会看到自己坐在左边/右边，
+## 而手牌却画在底下 —— 一眼就乱。
+func _dir_of(seat: int) -> int:
+	return int(SEAT_DIR[(seat - _my_seat() + N_SEATS) % N_SEATS])
+
+
+## 拉一次房主的快照。**只在真的变了的时候**重建渲染对象。
+func _pull_online_view() -> void:
+	if _room == null:
+		return
+	var v: Dictionary = _room.view()
+	if v.is_empty():
+		return
+	var sig := str(v)
+	if sig == str(_online_view):
+		return
+	_online_view = v
+	_apply_online_view(v)
+	_refresh_status()
+	queue_redraw()
+
+
+## 把「按座位裁剪的快照」变成本文件认识的 `game` 形状（**只用于渲染**）。
+##
+## ★★ 关键：**别人的手牌用 -1 占位，长度对得上就行** —— 界面只读张数。
+##    ⛔ 绝不把别人的真牌搬进来：那些牌压根没发给我们（这是手牌隔离的下游效果），
+##    在这里「补全」等于把服务端辛苦守住的东西在客户端凭空造出来。
+func _apply_online_view(v: Dictionary) -> void:
+	# ★ 统一写入点：应用与「已应用哪份快照」必须同步，否则 `_is_human_turn()` 里
+	#   那道「还没收到快照」的闸会误判（实测踩过：直接调本函数时它还是空的）
+	_online_view = v
+	var g := G.new()
+	var counts: Array = v.get("counts", [0, 0, 0])
+	var hands: Array = [[], [], []]
+	for s in N_SEATS:
+		var n := int(counts[s]) if s < counts.size() else 0
+		var h: Array = []
+		for i in n:
+			h.append(-1)
+		hands[s] = h
+	hands[_my_seat()] = (v.get("your_hand", []) as Array).duplicate()
+	g.hands = hands
+	g.bottom = (v.get("bottom", []) as Array).duplicate()
+	g.played = (v.get("played", []) as Array).duplicate()
+	g.phase = int(v.get("phase", 0))
+	g.turn = int(v.get("turn", 0))
+	g.landlord = int(v.get("landlord", -1))
+	g.winner = int(v.get("winner", -1))
+	g.base_score = int(v.get("base_score", 1))
+	g.pass_streak = int(v.get("pass_streak", 0))
+	g.bombs = int(v.get("bombs", 0))
+	g.spring = bool(v.get("spring", false))
+	var lp: Dictionary = v.get("last_play", {})
+	g.last_play = {} if lp.is_empty() else {
+		"seat": int(lp.get("seat", -1)),
+		"cards": (lp.get("cards", []) as Array).duplicate(),
+		"info": (lp.get("info", {}) as Dictionary).duplicate(),
+	}
+	game = g
+	# 出牌托盘：联机时不跑 `_do_play` ⇒ 得自己从快照里填
+	_shown = [] if false else [{}, {}, {}]
+	if not g.last_play.is_empty():
+		_shown[int(g.last_play["seat"])] = (g.last_play["cards"] as Array).duplicate()
+	# 「不要」标记（公开信息，服务端会下发）
+	_passed = (v.get("passed", [false, false, false]) as Array).duplicate()
+	# 座位昵称
+	_online_names = []
+	for entry in v.get("seats", []):
+		_online_names.append(String((entry as Dictionary).get("name", "")))
+
+
+## 联机出招：**发给房主**，本地不改任何权威状态（快照回来才算数）。
+## 返回 true 表示「已经发出去了」，⛔ 不代表已经生效。
+func _online_send(kind: int, payload: Dictionary = {}) -> bool:
+	if _room == null:
+		return false
+	_room.send_command(kind, payload)
+	return true

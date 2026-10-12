@@ -79,6 +79,7 @@ SUITE=(
   verify_ddz_net
   verify_net_config
   verify_ddz_room
+  verify_ddz_online_ui
   verify_intro
   verify_audio
 )

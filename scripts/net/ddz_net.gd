@@ -49,6 +49,9 @@ var started := false
 var view: Dictionary = {}
 ## 公开日志。不含发牌种子。
 var events: Array[String] = []
+## 这一轮谁按了「不要」（公开信息，界面要画标记）。
+## ⚠️ 会话层自己维护，⛔ 别指望 `ddz_game` 有 —— 它只记 `pass_streak`。
+var passed: Array = [false, false, false]
 
 ## 权威对局对象。`preload(...).new()` 推断不出类型，所以这里用动态类型。
 var _game = null
@@ -117,6 +120,7 @@ func host_start(seed_value: int, now_ms: int = 0) -> Dictionary:
 	for i in SEATS:
 		seats[i]["last_seen_ms"] = now_ms
 	events = []
+	passed = [false, false, false]
 	_push_log("发牌完成。牌局由房主裁定（发牌种子不下发）。")
 	return {"ok": true, "reason": ""}
 
@@ -184,6 +188,7 @@ func snapshot_for(seat: int) -> Dictionary:
 		"winner": int(_game.winner),
 		"multiplier": int(_game.multiplier()),
 		"counts": counts,
+		"passed": passed.duplicate(),
 		"your_hand": (_game.hands[seat] as Array).duplicate(),
 		"last_play": lp,
 		"played": _game.played.duplicate(),
@@ -418,6 +423,7 @@ func _apply_bid(seat: int, score: int) -> Dictionary:
 	_push_log("%s %s" % [_who(seat),
 			("叫 %d 分" % score) if score > 0 else "不叫"])
 	if bool(res.get("done", false)):
+		passed = [false, false, false]
 		_push_log("地主 = %s" % _who(int(_game.landlord)))
 	return {"ok": true, "reason": "", "result": res}
 
@@ -426,6 +432,7 @@ func _apply_play(seat: int, cards: Array) -> Dictionary:
 	var res: Dictionary = _game.play(seat, cards)
 	if not bool(res.get("ok", false)):
 		return _deny(String(res.get("reason", "出牌被拒")))
+	passed[seat] = false          # 出了牌 ⇒ 这一家的「不要」标记清掉
 	_push_log("%s 出牌" % _who(seat))
 	if bool(res.get("over", false)):
 		_push_log("对局结束，%s 获胜。" % _who(int(_game.winner)))
@@ -433,9 +440,15 @@ func _apply_play(seat: int, cards: Array) -> Dictionary:
 
 
 func _apply_pass(seat: int) -> Dictionary:
+	# ⚠️ 先记下过牌前的手数：`pass_turn()` 在「其余两家都过」时会把 streak 归零并重开一轮。
+	var streak_before := int(_game.pass_streak)
 	var res: Dictionary = _game.pass_turn(seat)
 	if not bool(res.get("ok", false)):
 		return _deny(String(res.get("reason", "过牌被拒")))
+	passed[seat] = true
+	if streak_before >= SEATS - 2 and int(_game.pass_streak) == 0:
+		# 重新开轮 ⇒ 三家的「不要」标记一起清掉
+		passed = [false, false, false]
 	_push_log("%s 过牌" % _who(seat))
 	return {"ok": true, "reason": "", "result": res}
 
