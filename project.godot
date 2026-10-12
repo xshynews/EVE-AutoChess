@@ -17,6 +17,10 @@ run/main_scene="res://scenes/main_menu.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://icon.png"
 
+[autoload]
+
+EveBoot="*res://scripts/core/eve_boot.gd"
+
 [display]
 
 window/size/viewport_width=1920

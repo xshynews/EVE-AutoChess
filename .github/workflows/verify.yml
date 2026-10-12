@@ -3,7 +3,7 @@ name: verify
 # 2026-10-12：把「无头验收套件」搬进 CI。
 #
 # 为什么用 windows-latest 而不是 ubuntu：
-#   · 套件与工程都在 Windows 上开发、跑绿（`tools/run_verifies.sh` 的默认引擎路径也是 Windows）；
+#   · 套件与工程都在 Windows 上开发与验证；
 #   · 部分验收断言对**字体/路径语义**敏感（UI 缩放、窗口、中文文案渲染）；
 #   · GitHub 的 Windows runner 自带 Git Bash ⇒ 直接跑同一份 `.sh`，与本地完全同构。
 #
