@@ -54,6 +54,21 @@ jobs:
         shell: bash
         run: '"$GODOT_BIN" --version'
 
+      # ── ⚠️ 必须先生成导入缓存 ─────────────────────────────────────────
+      #   `.godot/` 不入库（正确做法），但**全新克隆里没有它** ⇒ 全局
+      #   `class_name`（EveShipTable / EveRunState…）与 `res://` 导入资源都还
+      #   不存在，验收脚本会在 **Parse Error** 上倒下（首次 CI 实测如此）。
+      #   所以先跑一遍 `--import`（等价于本地"编辑器打开一次项目"）。
+      #   ⚠️ 引擎收尾时可能报 "resources still in use at exit" 之类的噪音并返回非 0
+      #      —— 那是引擎退出期的已知噪声，**真正的判据是下面的验收步骤**。
+      - name: Import project assets (fresh clone has no .godot cache)
+        shell: bash
+        run: |
+          set +e
+          "$GODOT_BIN" --headless --path . --import
+          echo "import exit=$?（噪声可忽略，下面才是判据）"
+          ls -d .godot && ls .godot/imported | head -3
+
       # ── ① 无头验收套件（判据见 tools/run_verifies.sh 顶注：退出码 / 无 SCRIPT ERROR /
       #      完成标记 / 失败计数）───────────────────────────────────────────
       - name: Run headless verify suite
