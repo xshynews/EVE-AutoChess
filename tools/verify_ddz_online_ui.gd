@@ -128,6 +128,13 @@ func _run() -> void:
 	# ⑥ 回合判断：轮到我就该给按钮
 	_ok(table._is_human_turn(), "★ 快照说轮到我 ⇒ `_is_human_turn()` 为真")
 
+	# ⑥b ★ 联机**不摆「托管」按钮** —— 它只改本地 `_auto`，房主不知情 ⇒ 牌局会卡住
+	var has_auto := false
+	for b in table._buttons():
+		if String(b["id"]) == "auto":
+			has_auto = true
+	_ok(not has_auto, "★ 联机模式不出现「托管」按钮（本地托管会让房主那边的牌局卡住）")
+
 	# ⑦ 占位期（还没收到快照）**不该**给任何操作
 	table._online_view = {}
 	var blank := G.new()

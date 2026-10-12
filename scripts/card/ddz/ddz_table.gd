@@ -982,9 +982,14 @@ func _buttons() -> Array:
 	var h := BASE.y
 	out.append({"id": "back", "rect": Rect2(w - 112.0, 8.0, 88.0, 28.0),
 			"label": T.t("DDZ_BTN_BACK", "← 返回"), "on": true})
-	out.append({"id": "auto", "rect": Rect2(w - 224.0, 8.0, 104.0, 28.0),
-			"label": (T.t("DDZ_BTN_AUTO_ON", "托管：开") if _auto
-						else T.t("DDZ_BTN_AUTO_OFF", "托管：关")), "on": true})
+	# ★ 联机**不摆托管按钮**（2026-10-12）：联机的「托管」必须由**房主侧**执行
+	#   （牌局在房主手里），而这个按钮只改本地的 `_auto` —— 点了的后果是
+	#   **本地不再出牌、房主却不知道**⇒ 牌局当场卡住，而且看不出是谁的问题。
+	#   ⇒ 先隐藏；要真做，得加一条「请求托管」的协议让房主把该座位交给 AI。
+	if not _is_online():
+		out.append({"id": "auto", "rect": Rect2(w - 224.0, 8.0, 104.0, 28.0),
+				"label": (T.t("DDZ_BTN_AUTO_ON", "托管：开") if _auto
+							else T.t("DDZ_BTN_AUTO_OFF", "托管：关")), "on": true})
 	# ★ 设置（2026-10-07）。放「随时可用但不常用」那一簇的最左（右上角），
 	#   与「返回 / 托管」同一排 —— 不跟桌面的主动作抢注意力。
 	#   设置窗一开，`_process` 就停推 AI（见那里的守卫）。
