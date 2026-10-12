@@ -15,6 +15,8 @@ const ROOM := preload("res://scripts/net/ddz_room.gd")
 const N := preload("res://scripts/net/ddz_net.gd")
 const G := preload("res://scripts/card/ddz/ddz_game.gd")
 const AI := preload("res://scripts/card/ddz/ddz_ai.gd")
+const TP := preload("res://scripts/net/eve_ddz_transport.gd")
+const RC := preload("res://scripts/net/eve_room_code.gd")
 
 const SEED_VAL := 20261012
 const MAX_STEPS := 400
@@ -59,6 +61,28 @@ func _run() -> void:
 	_ok(_host.code.length() == 8, "房间码 8 位（%s）" % _host.code)
 	await _frames(4)
 	_ok(_host.state == ROOM.State.LISTENING, "房主进入等待加入")
+
+	# ── 协议版本握手 ────────────────────────────────────────
+	# 用裸传输层发 HELLO：协议版本不一致或缺失都要被拒，且不进入房主的确认队列
+	for case in [["协议版本不一致", {"name": "旧版本", "proto": ROOM.PROTOCOL_VERSION + 1}],
+			["缺少协议版本", {"name": "无版本"}]]:
+		var raw: Node = TP.new()
+		add_child(raw)
+		var reason := [""]
+		raw.packet.connect(func(_from: int, d: Dictionary):
+			if int(d.get("t", -1)) == ROOM.Msg.REJECT:
+				reason[0] = String(d.get("reason", "")))
+		raw.connected_ok.connect(func():
+			var hello: Dictionary = (case[1] as Dictionary).duplicate()
+			hello["t"] = ROOM.Msg.HELLO
+			raw.send_to(TP.SERVER_ID, hello))
+		raw.join("127.0.0.1", RC.DEFAULT_PORT, Time.get_ticks_msec())
+		await _wait(func(): return reason[0] != "", 4000)
+		_ok(String(reason[0]).find("版本") >= 0, "%s ⇒ 被拒（%s）" % [case[0], reason[0]])
+		raw.stop()
+		raw.queue_free()
+		await _frames(4)
+	_ok(approved.is_empty(), "版本不符的连接没有进入房主确认队列")
 
 	# ── 两个加入者 ──────────────────────────────────────────
 	_c1 = ROOM.new()
@@ -192,6 +216,20 @@ func _run() -> void:
 		victim.send_command(N.Kind.PLAY, {"cards": [int(hand_v[0])]})
 		await _frames(40)
 		_ok(int(g.turn) == turn_now, "★ 非当前回合（或已结束）的出牌不生效（turn 仍是 %d）" % turn_now)
+
+	# ── 心跳用房主时钟 ──────────────────────────────────────
+	# 模拟加入者的时钟与房主差很多（例如它的游戏比房主早开了很久）：发一个自报时间极大的心跳。
+	# 房主必须记录自己的时间；否则掉线后「当前时间 - 最后心跳」为负，座位永远不会被托管。
+	var c1seat := int(_c1.my_seat())
+	_c1._tp.send_to(TP.SERVER_ID, {"t": ROOM.Msg.PING, "now_ms": 1000000000000})
+	await _frames(10)
+	var seen := int(_host.net.seats[c1seat]["last_seen_ms"])
+	_ok(seen <= Time.get_ticks_msec() + 1000,
+			"★ 心跳记录的是房主时间，不是客户端自报的时间（%d）" % seen)
+	_host.net.mark_offline(c1seat)
+	var r1: Dictionary = _host.net.tick(Time.get_ticks_msec() + _host.net.TAKEOVER_MS + 3000)
+	_ok((r1["takeover"] as Array).has(c1seat) or bool(_host.net.seats[c1seat]["ai"]),
+			"★ 时钟偏差的加入者掉线后照常被托管")
 
 	# ── 掉线托管（房主侧判定）───────────────────────────────
 	var c2seat := int(_c2.my_seat())

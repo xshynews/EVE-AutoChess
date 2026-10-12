@@ -369,6 +369,14 @@ func _t_peer_binding() -> void:
 	_ok(net.seat_of_peer(201) < 0, "解绑后连接 201 不对应任何座位")
 	_ok(not bool(net.apply_remote(201, {"kind": N.Kind.PING})["ok"]), "解绑后的连接命令被拒")
 
+	# 心跳时间以房主时钟为准：客户端的计时从它自己的进程启动算起，与房主不可比较
+	net.bind_peer(2, 102)
+	var hb: Dictionary = net.apply_remote(102, {"kind": N.Kind.PING, "now_ms": 999999999}, 5000)
+	_ok(bool(hb["ok"]) and int(net.seats[2]["last_seen_ms"]) == 5000,
+			"心跳记录房主时间 5000，忽略客户端自报的时间（得到 %d）" % int(net.seats[2]["last_seen_ms"]))
+	_ok(not bool(net.apply_remote(102, {"kind": N.Kind.PING, "now_ms": 1})["ok"]),
+			"远端心跳不带房主时间时被拒")
+
 
 # ══════════════════════════════════════════════════════ 6 输入校验
 

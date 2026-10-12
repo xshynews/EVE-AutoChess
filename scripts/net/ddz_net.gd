@@ -122,8 +122,10 @@ func host_start(seed_value: int, now_ms: int = 0) -> Dictionary:
 
 
 ## 网络命令入口。座位号由 `peer` 决定，忽略 `cmd` 里的 `seat` 字段。
+## `now_ms` 是房主自己的时钟，同样忽略 `cmd` 里的 `now_ms`：各端的计时都从自己的进程
+## 启动算起，客户端的时间与房主不可比较。心跳命令（PING）必须提供 `now_ms`。
 ## 返回 `{"ok": bool, "reason": String, "result": Dictionary}`。
-func apply_remote(peer: int, cmd) -> Dictionary:
+func apply_remote(peer: int, cmd, now_ms: int = -1) -> Dictionary:
 	if typeof(cmd) != TYPE_DICTIONARY:
 		return _deny("命令格式错误")
 	var seat := seat_of_peer(peer)
@@ -131,6 +133,11 @@ func apply_remote(peer: int, cmd) -> Dictionary:
 		return _deny("该连接没有入座")
 	var c: Dictionary = (cmd as Dictionary).duplicate()
 	c["seat"] = seat
+	c.erase("now_ms")
+	if now_ms >= 0:
+		c["now_ms"] = now_ms
+	elif typeof(c.get("kind")) == TYPE_INT and int(c["kind"]) == Kind.PING:
+		return _deny("心跳缺少房主时间")
 	return apply_command(c)
 
 

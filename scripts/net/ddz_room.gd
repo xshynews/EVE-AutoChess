@@ -30,6 +30,11 @@ const TP := preload("res://scripts/net/eve_ddz_transport.gd")
 enum State { IDLE, TUNNEL, LISTENING, CONNECTING, PLAYING, FAILED }
 enum Msg { HELLO, ACCEPT, REJECT, SNAP, CMD, PING }
 
+## 联机协议版本。消息格式（Msg 的种类或字段）一有改动就加 1。
+## 握手时双方必须一致：不同版本的消息格式可能不兼容，连上之后才出错更难排查。
+## 注意不要拿内核版本（TUN.VERSION）代替它：内核版本相同不代表游戏协议相同。
+const PROTOCOL_VERSION := 1
+
 ## 房主是否要手动确认每个加入者（2026-10-12 用户定：要）
 var needs_approval := true
 ## 跳过内核，直接用 ENet 连（局域网模式 / 无头验收）
@@ -55,6 +60,9 @@ var _pending := {}          ## peer_id → 名字（等房主确认）
 var _last_snap := {}        ## seat → 上次下发的负载（避免无变化时反复发）
 var _last_ping_ms := -99999 ## ⚠️ 心跳限流：⛔ 别每帧发（60 包/秒纯属浪费）
 const PING_INTERVAL_MS := 1000
+## 最近一次 tick() 的时间（本机时钟）。房主记录心跳时用它，不用客户端发来的时间：
+## 各端的 Time.get_ticks_msec() 都从自己的进程启动算起，彼此不能比较。
+var _now_ms := 0
 
 
 func _ready() -> void:
@@ -67,6 +75,7 @@ func _process(_d: float) -> void:
 
 ## 每帧推进（也由无头验收手动调；本类不读时钟，now_ms 外部传入）。
 func tick(now_ms: int) -> void:
+	_now_ms = now_ms
 	if _tun != null and state == State.TUNNEL:
 		if _tun.poll(now_ms) == TUN.State.FAILED:
 			_fail(_tun.last_error)
@@ -224,7 +233,7 @@ func _host_apply(cmd: Dictionary) -> Dictionary:
 func _host_apply_remote(peer: int, cmd) -> Dictionary:
 	if net == null:
 		return {"ok": false, "reason": "尚未开局", "result": {}}
-	var res: Dictionary = net.apply_remote(peer, cmd)
+	var res: Dictionary = net.apply_remote(peer, cmd, _now_ms)
 	if bool(res.get("ok", false)):
 		_push_all()
 		state_changed.emit()
@@ -310,7 +319,7 @@ func _start_net_client(now_ms: int) -> void:
 
 func _send_hello() -> void:
 	_tp.send_to(TP.SERVER_ID, {"t": Msg.HELLO, "name": display_name,
-			"ver": TUN.VERSION})
+			"proto": PROTOCOL_VERSION})
 
 
 func _send_ping(now_ms: int) -> void:
@@ -375,8 +384,11 @@ func _host_handle(from_peer: int, t: int, d: Dictionary) -> void:
 	match t:
 		Msg.HELLO:
 			var nm := String(d.get("name", "玩家"))
-			if String(d.get("ver", TUN.VERSION)) != TUN.VERSION:
-				_tp.send_to(from_peer, {"t": Msg.REJECT, "reason": "游戏版本不一致"})
+			# 协议版本必须显式给出且一致；缺字段视为旧版本客户端。
+			var proto = d.get("proto")
+			if typeof(proto) != TYPE_INT or int(proto) != PROTOCOL_VERSION:
+				_tp.send_to(from_peer, {"t": Msg.REJECT,
+						"reason": "游戏版本不一致，请双方更新到同一版本"})
 				return
 			if _free_seat() < 0:
 				_tp.send_to(from_peer, {"t": Msg.REJECT, "reason": "房间满了"})
@@ -395,7 +407,9 @@ func _host_handle(from_peer: int, t: int, d: Dictionary) -> void:
 				# 被拒也要回一句，免得客户端按钮灰错后一脸茫然
 				_tp.send_to(from_peer, {"t": Msg.REJECT, "reason": String(res["reason"])})
 		Msg.PING:
-			net.touch(net.seat_of_peer(from_peer), int(d.get("now_ms", 0)))
+			# 用房主自己的时钟记录心跳。客户端发来的 now_ms 是它自己进程的计时，
+			# 与房主的时钟不可比较：直接用的话，掉线后可能立刻被托管，也可能永远不被托管。
+			net.touch(net.seat_of_peer(from_peer), _now_ms)
 
 
 func _client_handle(t: int, d: Dictionary) -> void:
