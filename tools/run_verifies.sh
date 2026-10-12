@@ -3,7 +3,7 @@
 #  统一运行全部无头验收。
 #
 #  用法：
-#     tools/run_verifies.sh                          # 引擎路径取 GODOT_BIN，或在 PATH 中查找
+#     tools/run_verifies.sh                          # 引擎路径：GODOT_BIN → 本机配置 → PATH
 #     GODOT_BIN=/path/to/godot tools/run_verifies.sh
 #     tools/run_verifies.sh /path/to/godot /path/to/project
 #
@@ -11,6 +11,9 @@
 #     GODOT_BIN    Godot 可执行文件（Windows 上用 console 版，否则看不到输出）
 #     QUIT_AFTER   单套验收的帧数上限，默认 9000
 #     LOG_DIR      日志目录，默认 ${TMPDIR:-/tmp}/eve_verify_logs
+#
+#  本机引擎路径也可以写进 tools/pipeline/paths.local.json 的 `godot_bin`
+#  （该文件未入库；仓库里不写死任何机器路径）。
 #
 #  退出码：0 = 全部通过；1 = 至少一套失败。
 #
@@ -23,9 +26,22 @@
 # =============================================================================
 set -u
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# 从本机配置读引擎路径（`tools/pipeline/paths.local.json`，未入库）。
+# ★ 2026-10-12 集成 PR#3 时补：PR 把「默认引擎路径」去掉了（仓库里不该写死任何机器路径），
+#   但那样本机 `bash tools/run_verifies.sh` 就必须先设 GODOT_BIN 才能跑。
+#   这里让 runner 也认同一份本机配置 ⇒ 仓库保持机器无关，本机依然开箱可用。
+local_cfg_godot() {
+  local f="${SCRIPT_DIR}/pipeline/paths.local.json"
+  [ -f "${f}" ] || return 1
+  sed -n 's/.*"godot_bin"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${f}" | head -1
+}
+
 find_godot() {
   local c
-  for c in "${GODOT_BIN:-}" godot godot4 Godot_v4.7.2-stable_win64_console.exe \
+  for c in "${GODOT_BIN:-}" "$(local_cfg_godot)" godot godot4 \
+           Godot_v4.7.2-stable_win64_console.exe \
            Godot_v4.7.2-stable_linux.x86_64; do
     [ -z "${c}" ] && continue
     if [ -x "${c}" ] || command -v "${c}" >/dev/null 2>&1; then
@@ -38,10 +54,9 @@ find_godot() {
 
 GODOT="${1:-$(find_godot)}" || true
 if [ -z "${GODOT}" ]; then
-  echo "找不到 Godot 可执行文件：请设置 GODOT_BIN，或作为第一个参数传入。" >&2
+  echo "找不到 Godot 可执行文件：请设置 GODOT_BIN、传入第一个参数，或写进 tools/pipeline/paths.local.json 的 godot_bin。" >&2
   exit 2
 fi
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJ="${2:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 QUIT_AFTER="${QUIT_AFTER:-9000}"
 

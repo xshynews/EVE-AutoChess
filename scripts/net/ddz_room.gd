@@ -49,9 +49,8 @@ var net = null
 var _tp: Node = null
 var _tun = null
 ## 房主侧：peer_id → {"name":String, "seat":int}
-var players := {}
-var seat_of_peer := {}
-var peer_of_seat := {}
+## ⚠️ 座位↔连接的唯一真相在会话层（`net.seats[i]["peer"]` / `net.seat_of_peer(peer)`）——
+##   本类**不再自己维护第二份映射**（两份迟早会漂移，而漂移的后果是「发给错的人」）。
 var _pending := {}          ## peer_id → 名字（等房主确认）
 var _last_snap := {}        ## seat → 上次下发的负载（避免无变化时反复发）
 var _last_ping_ms := -99999 ## ⚠️ 心跳限流：⛔ 别每帧发（60 包/秒纯属浪费）
@@ -100,10 +99,9 @@ func create_room(name: String, now_ms: int, seed_for_code: int = 0) -> bool:
 	display_name = name
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_for_code if seed_for_code != 0 else int(Time.get_unix_time_from_system() * 1000.0)
-	code = RC.generate(rng)
-	players = {}
-	seat_of_peer = {}
-	peer_of_seat = {}
+	# ★ 房间码是那条虚拟网络的密码 ⇒ 用密码学安全随机数（传 null 走 Crypto）。
+	#   仅在验收需要复现时才传固定种子的 rng。
+	code = RC.generate(rng if seed_for_code != 0 else null)
 	_pending = {}
 	_last_snap = {}
 	net = N.new()
@@ -146,7 +144,7 @@ func start_game(seed_value: int) -> bool:
 	if not is_host or net == null:
 		return false
 	# 人没到齐也能开（空座位由托管接手），但要给房主一句实话
-	var humans := 1 + peer_of_seat.size()
+	var humans := _bound_seats()
 	if humans < N.SEATS:
 		log_line.emit("还有 %d 个座位空着，将由电脑托管" % (N.SEATS - humans))
 	var r: Dictionary = net.host_start(seed_value, Time.get_ticks_msec())
@@ -188,11 +186,13 @@ func _assign(peer_id: int, nm: String) -> void:
 	if seat < 0:
 		_tp.send_to(peer_id, {"t": Msg.REJECT, "reason": "房间满了"})
 		return
-	players[peer_id] = {"name": nm, "seat": seat}
-	seat_of_peer[peer_id] = seat
-	peer_of_seat[seat] = peer_id
 	net.seats[seat]["name"] = nm
 	net.seats[seat]["online"] = true
+	# ★ 把连接绑到座位：此后该连接发来的命令，座位号由会话层按 peer 查得，
+	#   ⛔ 命令里自称的 seat 一律被忽略（防冒充他人）。
+	if not net.bind_peer(seat, peer_id):
+		_tp.send_to(peer_id, {"t": Msg.REJECT, "reason": "座位已被占用"})
+		return
 	net.reclaim(seat, Time.get_ticks_msec())
 	_tp.send_to(peer_id, {"t": Msg.ACCEPT, "seat": seat,
 			"needs_approval": needs_approval})
@@ -204,7 +204,7 @@ func _assign(peer_id: int, nm: String) -> void:
 ## 空座位：1..2（0 是房主自己）
 func _free_seat() -> int:
 	for s in range(1, N.SEATS):
-		if not peer_of_seat.has(s):
+		if int(net.seats[s]["peer"]) == N.NO_PEER:
 			return s
 	return -1
 
@@ -217,14 +217,38 @@ func _host_apply(cmd: Dictionary) -> Dictionary:
 	return res
 
 
+## 网络来的命令：**座位由连接决定**（会话层按 peer 查得，命令里自称的 seat 被忽略），
+## 本类只负责「转发 + 成功后广播」。
+func _host_apply_remote(peer: int, cmd) -> Dictionary:
+	if net == null:
+		return {"ok": false, "reason": "尚未开局", "result": {}}
+	var res: Dictionary = net.apply_remote(peer, cmd)
+	if bool(res.get("ok", false)):
+		_push_all()
+		state_changed.emit()
+	return res
+
+
+## 已入座的玩家数（含房主自己）。
+func _bound_seats() -> int:
+	var n := 1                      ## 座位 0 恒为房主
+	for s in range(1, N.SEATS):
+		if int(net.seats[s]["peer"]) != N.NO_PEER:
+			n += 1
+	return n
+
+
 ## 把「按座位裁剪」的快照发给对应的玩家。**变化了才发**（省流量、也少一次出错机会）。
 func _push_all() -> void:
-	for s in peer_of_seat.keys():
-		_push_seat(int(s))
+	for s in range(1, N.SEATS):
+		_push_seat(s)
 
 
 func _push_seat(seat: int) -> void:
-	if not peer_of_seat.has(seat) or _tp == null:
+	if _tp == null or seat < 0 or seat >= N.SEATS:
+		return
+	var holder := int(net.seats[seat]["peer"])
+	if holder == N.NO_PEER:
 		return
 	var snap: Dictionary = net.snapshot_for(seat)
 	if snap.is_empty():
@@ -240,7 +264,7 @@ func _push_seat(seat: int) -> void:
 	if String(_last_snap.get(seat, "")) == sig:
 		return
 	_last_snap[seat] = sig
-	_tp.send_to(int(peer_of_seat[seat]), {"t": Msg.SNAP, "d": snap})
+	_tp.send_to(holder, {"t": Msg.SNAP, "d": snap})
 
 
 # ══════════════════════════════════════════════════════════ 加入者
@@ -317,14 +341,13 @@ func _on_peer_left(peer_id: int) -> void:
 		if state == State.PLAYING:
 			_fail("房主已离开，牌局结束")
 		return
-	var seat := int(seat_of_peer.get(peer_id, -1))
+	# ⚠️ 显式标注：`net` 是动态类型，`:=` 推不出返回类型（实测 Parse Error）
+	var seat: int = net.seat_of_peer(peer_id)
 	if seat < 0:
 		# 可能还在等确认阶段就断了
 		_pending.erase(peer_id)
 		return
-	seat_of_peer.erase(peer_id)
-	peer_of_seat.erase(seat)
-	players.erase(peer_id)
+	net.unbind_peer(peer_id)
 	net.mark_offline(seat)
 	log_line.emit("座位 %d 掉线，稍后由电脑托管" % seat)
 	for line in net.events.slice(maxi(0, net.events.size() - 1)):
@@ -363,17 +386,14 @@ func _host_handle(from_peer: int, t: int, d: Dictionary) -> void:
 			else:
 				_assign(from_peer, nm)
 		Msg.CMD:
-			var seat := int(seat_of_peer.get(from_peer, -1))
-			if seat < 0:
-				return
-			var cmd: Dictionary = (d.get("d", {}) as Dictionary).duplicate(true)
-			cmd["seat"] = seat          # ★ 用「连接身份」覆盖座位，⛔ 不许客户端自称是谁
-			var res := _host_apply(cmd)
+			# ★★ 走 `apply_remote()`：座位由连接查得，命令里自称的 seat 被忽略。
+			#   本类**不再**自己覆盖 seat —— 那道防线现在在会话层里，离数据更近。
+			var res := _host_apply_remote(from_peer, d.get("d", {}))
 			if not bool(res["ok"]):
 				# 被拒也要回一句，免得客户端按钮灰错后一脸茫然
 				_tp.send_to(from_peer, {"t": Msg.REJECT, "reason": String(res["reason"])})
 		Msg.PING:
-			net.touch(int(seat_of_peer.get(from_peer, -1)), int(d.get("now_ms", 0)))
+			net.touch(net.seat_of_peer(from_peer), int(d.get("now_ms", 0)))
 
 
 func _client_handle(t: int, d: Dictionary) -> void:
