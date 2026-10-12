@@ -37,17 +37,19 @@ import sys
 import numpy as np
 from PIL import Image, ImageDraw
 
-sys.path.insert(0, r'C:\godot\_export')
+sys.path.insert(0, WORK)
 from glow_probe import gather, load_glb                                  # noqa: E402
 from pose_sheet import (parse_table, spec_rows, ry, tri_area, dom_axis,   # noqa: E402
                         GLB_DIR, MODEL_YAW_FIX, font)
 from review_sheet import parse_index                                     # noqa: E402
 
+from _paths import WORK
+
 W = 460                # 轮廓画布宽
 COARSE = 0.50          # 粗扫步长（度）
 FINE = 0.02            # 精扫步长（度）
 GOOD = 1.20            # |Δ| ≤ 此值 ⇒ 判「正」（1.2° 是肉眼看不出的量级）
-OUT = r'C:\godot\_export\_sym'
+OUT = os.path.join(WORK, "_sym")
 
 
 def footprint(Q):

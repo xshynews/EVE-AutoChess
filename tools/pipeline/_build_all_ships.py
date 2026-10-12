@@ -28,11 +28,13 @@ import subprocess
 import sys
 import time
 
-PY = r"C:\Users\Administrator\.workbuddy\binaries\python\envs\default\Scripts\python.exe"
-BUILD = r"C:\Users\Administrator\.workbuddy\skills\eve-ship-3d-pipeline\scripts\eve_ship_build.py"
-MANIFEST = r"C:\godot\_export\_ship_manifest.json"
-ROOT = r"C:\godot\_export\_ship3d"
-LOG = r"C:\godot\_export\_ship3d\_build_log.txt"
+from _paths import SHIP_BUILD_SCRIPT, SHIP_MANIFEST, WORK, python_bin
+
+PY = python_bin()
+BUILD = SHIP_BUILD_SCRIPT
+MANIFEST = SHIP_MANIFEST
+ROOT = os.path.join(WORK, "_ship3d")
+LOG = os.path.join(WORK, "_ship3d", "_build_log.txt")
 
 
 def main():
@@ -121,7 +123,7 @@ def main():
         for r in bad:
             say("   %s [%s] %s" % (r["id"], r["status"], r.get("err", "")[:120]))
 
-    json.dump(results, io.open(r"C:\godot\_export\_ship3d\_build_result.json", "w",
+    json.dump(results, io.open(os.path.join(WORK, "_ship3d", "_build_result.json"), "w",
                                encoding="utf-8"), ensure_ascii=False, indent=1)
     io.open(LOG, "w", encoding="utf-8").write("\n".join(log))
     return 0 if not bad else 1

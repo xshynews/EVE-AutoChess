@@ -44,14 +44,16 @@ import sys
 import numpy as np
 from PIL import Image, ImageDraw
 
-sys.path.insert(0, r'C:\godot\_export')
+sys.path.insert(0, WORK)
 from glow_probe import gather, load_glb, font          # noqa: E402
 
-GLB_DIR = r'F:\evezzq\eve自走棋918\assets\ships3d'
-SRC_DIR = r'C:\godot\_export\_ship3d'
-SRC_DIR2 = r'C:\godot\_export\_models'
-YAW_GD = r'F:\evezzq\eve自走棋918\scripts\data\eve_ship_yaw.gd'
-OUT = r'C:\godot\_export\_pose'
+from _paths import GLB_DIR, WORK, YAW_GD
+
+
+SRC_DIR = os.path.join(WORK, "_ship3d")
+SRC_DIR2 = os.path.join(WORK, "_models")
+
+OUT = os.path.join(WORK, "_pose")
 
 MODEL_YAW_FIX = -90.0
 AXES = {'X': 0, 'Y': 1, 'Z': 2}
@@ -437,10 +439,10 @@ def main():
     if len(tiles) > 8:
         grid([(t[1], '%s  %s rz=%+.2f' % (t[0], t[3], t[4])) for t in tiles], 7,
              320, 250, '游戏姿态 · 站在船尾(-Z)看 —— 应该看到喷口红块', 
-             os.path.join(r'C:\godot\_export', '_pose_sheet_stern.png'))
+             os.path.join(WORK, "_pose_sheet_stern.png"))
         grid([(t[2], '%s' % t[0]) for t in tiles], 7,
              320, 250, '游戏姿态 · 站在船艏(+Z)看 —— 不该有喷口',
-             os.path.join(r'C:\godot\_export', '_pose_sheet_bow.png'))
+             os.path.join(WORK, "_pose_sheet_bow.png"))
         print('[JUDGE] 总览图：_pose_sheet_stern.png / _pose_sheet_bow.png')
     print('[JUDGE] ==== DONE ====')
 

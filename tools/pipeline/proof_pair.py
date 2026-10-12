@@ -11,17 +11,19 @@
 import os
 import sys
 
+from _paths import WORK
+
 import numpy as np
 from PIL import Image, ImageDraw
 
-sys.path.insert(0, r'C:\godot\_export')
+sys.path.insert(0, WORK)
 from glow_probe import gather, load_glb, font                      # noqa: E402
 from pose_sheet import (parse_table, spec_rows, ry, src_texture,   # noqa: E402
                         uv_sample, render, OUT, GLB_DIR, THR)
 
 SHIPS = sys.argv[1:] or ['rifter', 'punisher', 'executioner',
                          'hyperion', 'typhoon', 'megathron']
-RES = r'C:\godot\_export\_proof.png'
+RES = os.path.join(WORK, "_proof.png")
 
 
 def pose(P, NR, yaw, M):

@@ -2,9 +2,9 @@
 """解析 EVE resfileindex.txt，建立音频资源的 原始路径 -> 哈希文件 映射。"""
 import sys, os, json
 
-IDX = r"D:\EVE\SharedCache\serenity\resfileindex.txt"
-RES = r"D:\EVE\SharedCache\ResFiles"
-OUT = r"C:\godot\_export"
+IDX = os.path.join(CLIENT, "serenity", "resfileindex.txt")
+RES = os.path.join(CLIENT, "ResFiles")
+OUT = WORK
 
 audio = []
 total = 0
@@ -34,6 +34,9 @@ with open(os.path.join(OUT, "_eve_audio_manifest.json"), "w", encoding="utf-8") 
 
 # 统计
 import collections
+
+import os
+from _paths import CLIENT, WORK
 ext = collections.Counter()
 tree = collections.Counter()
 for a in audio:

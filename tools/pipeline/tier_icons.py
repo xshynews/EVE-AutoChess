@@ -45,8 +45,10 @@ import os
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-OUT_DIR = r"F:\evezzq\eve自走棋918\assets\ui\tier"
-PREV_DIR = r"C:\godot\_export\_tier_icons"
+from _paths import TIER_DIR, WORK, fonts
+
+OUT_DIR = TIER_DIR
+PREV_DIR = os.path.join(WORK, "_tier_icons")
 SS = 16                      # 超采样倍率
 W_PX = 24                    # 输出纹理宽（= 符号外框宽 = 显示宽 12px 的 2 倍，见头注释）
 
@@ -149,8 +151,8 @@ for c in sorted(SYMS):
              "%dx%d" % (a.width, a.height), SYMS[c]["note"], mid, ink))
 
 # ── 预览：1x 原生 / 12px 实际显示 / 24px，各放大 12 倍 ──
-FB = r"C:\Windows\Fonts\msyhbd.ttc"
-FR = r"C:\Windows\Fonts\msyh.ttc"
+FB = fonts()[0]
+FR = fonts()[1]
 SIZES = [24, 12, 48]
 ZM = 12
 PAD = 18

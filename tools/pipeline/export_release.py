@@ -22,8 +22,10 @@ import re
 import subprocess
 import sys
 
-PROJ = "F:/evezzq/eve自走棋918"
-GODOT = "C:/godot/Godot_v4.7.2-stable_win64_console.exe"
+from _paths import ROOT, godot_bin
+
+PROJ = ROOT
+GODOT = godot_bin()
 PRESETS = os.path.join(PROJ, "export_presets.cfg")
 PROJECT = os.path.join(PROJ, "project.godot")
 

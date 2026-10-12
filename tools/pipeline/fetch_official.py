@@ -4,8 +4,11 @@
 """
 import json, os, time, urllib.request, urllib.error
 
-SRC = r"C:\godot\_export\_52ships.txt"
-OUT = r"C:\godot\_export\_official_all"
+import os
+from _paths import WORK
+
+SRC = os.path.join(WORK, "_52ships.txt")
+OUT = os.path.join(WORK, "_official_all")
 UA = "EVEChess-art-probe (non-commercial fan project)"
 HDR = {"User-Agent": UA}
 
@@ -74,7 +77,7 @@ if fail:
     log.append("失败清单: " + ", ".join(fail))
 
 json.dump({"typeid": {k: v for k, v in idmap.items()}, "key": keys},
-          open(r"C:\godot\_export\_official_all\_typeids.json", "w", encoding="utf-8"),
+          open(os.path.join(WORK, "_official_all", "_typeids.json"), "w", encoding="utf-8"),
           ensure_ascii=False, indent=1)
-open(r"C:\godot\_export\_fetch_official.txt", "w", encoding="utf-8").write("\n".join(log))
+open(os.path.join(WORK, "_fetch_official.txt"), "w", encoding="utf-8").write("\n".join(log))
 print("OK %d/%d" % (len(ok), len(names)))

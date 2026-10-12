@@ -7,7 +7,9 @@ import numpy as np
 import onnxruntime as ort
 from PIL import Image
 
-MDIR = r"C:\godot\_export\_models"
+from _paths import WORK
+
+MDIR = os.path.join(WORK, "_models")
 # (文件名, 输入边长, 预处理)
 #   rembg = (x/mean - 1)/std     —— u2net 系
 #   raw   = 直接 [0,1]           —— isnet 系（归一化已烤进计算图）

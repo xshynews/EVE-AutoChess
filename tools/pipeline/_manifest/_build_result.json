@@ -1,0 +1,755 @@
+[
+ {
+  "id": "condor",
+  "typeid": 583,
+  "status": "skip",
+  "model_name": "Condor"
+ },
+ {
+  "id": "bantam",
+  "typeid": 582,
+  "status": "ok",
+  "model_name": "Bantam",
+  "verts": 7814,
+  "faces": 6174,
+  "dims": [
+   66.398,
+   70.701,
+   78.597
+  ],
+  "sec": 14.9,
+  "obj": "Bantam.obj"
+ },
+ {
+  "id": "kestrel",
+  "typeid": 602,
+  "status": "ok",
+  "model_name": "Kestrel",
+  "verts": 3732,
+  "faces": 3964,
+  "dims": [
+   99.72,
+   24.95,
+   78.552
+  ],
+  "sec": 16.4,
+  "obj": "Kestrel.obj"
+ },
+ {
+  "id": "incursus",
+  "typeid": 594,
+  "status": "ok",
+  "model_name": "Incursus",
+  "verts": 4935,
+  "faces": 5206,
+  "dims": [
+   29.102,
+   29.341,
+   68.857
+  ],
+  "sec": 18.0,
+  "obj": "Incursus.obj"
+ },
+ {
+  "id": "tristan",
+  "typeid": 593,
+  "status": "ok",
+  "model_name": "Tristan",
+  "verts": 5051,
+  "faces": 6652,
+  "dims": [
+   49.34,
+   75.54,
+   47.99
+  ],
+  "sec": 17.0,
+  "obj": "Tristan.obj"
+ },
+ {
+  "id": "navitas",
+  "typeid": 592,
+  "status": "ok",
+  "model_name": "Navitas",
+  "verts": 6967,
+  "faces": 7978,
+  "dims": [
+   50.688,
+   38.34,
+   90.675
+  ],
+  "sec": 15.6,
+  "obj": "Navitas.obj"
+ },
+ {
+  "id": "slasher",
+  "typeid": 585,
+  "status": "ok",
+  "model_name": "Slasher",
+  "verts": 10006,
+  "faces": 8440,
+  "dims": [
+   172.264,
+   35.9,
+   81.606
+  ],
+  "sec": 18.4,
+  "obj": "Slasher.obj"
+ },
+ {
+  "id": "burst",
+  "typeid": 599,
+  "status": "ok",
+  "model_name": "Burst",
+  "verts": 6699,
+  "faces": 4514,
+  "dims": [
+   105.758,
+   17.912,
+   124.301
+  ],
+  "sec": 15.7,
+  "obj": "Burst.obj"
+ },
+ {
+  "id": "rifter",
+  "typeid": 587,
+  "status": "ok",
+  "model_name": "Rifter",
+  "verts": 89663,
+  "faces": 69144,
+  "dims": [
+   98.318,
+   28.756,
+   120.612
+  ],
+  "sec": 23.2,
+  "obj": "Rifter.obj"
+ },
+ {
+  "id": "punisher",
+  "typeid": 597,
+  "status": "skip",
+  "model_name": "Punisher"
+ },
+ {
+  "id": "inquisitor",
+  "typeid": 590,
+  "status": "ok",
+  "model_name": "Inquisitor",
+  "verts": 3101,
+  "faces": 4382,
+  "dims": [
+   20.684,
+   52.896,
+   100.451
+  ],
+  "sec": 15.1,
+  "obj": "Inquisitor.obj"
+ },
+ {
+  "id": "executioner",
+  "typeid": 589,
+  "status": "ok",
+  "model_name": "Executioner",
+  "verts": 8784,
+  "faces": 8230,
+  "dims": [
+   41.868,
+   18.766,
+   71.691
+  ],
+  "sec": 14.3,
+  "obj": "Executioner.obj"
+ },
+ {
+  "id": "cormorant",
+  "typeid": 16238,
+  "status": "ok",
+  "model_name": "Cormorant",
+  "verts": 9304,
+  "faces": 8822,
+  "dims": [
+   161.706,
+   43.022,
+   247.486
+  ],
+  "sec": 18.6,
+  "obj": "Cormorant.obj"
+ },
+ {
+  "id": "corax",
+  "typeid": 32876,
+  "status": "ok",
+  "model_name": "Corax",
+  "verts": 7022,
+  "faces": 6409,
+  "dims": [
+   98.141,
+   53.621,
+   258.165
+  ],
+  "sec": 18.0,
+  "obj": "Corax.obj"
+ },
+ {
+  "id": "catalyst",
+  "typeid": 16240,
+  "status": "ok",
+  "model_name": "Catalyst",
+  "verts": 6133,
+  "faces": 5608,
+  "dims": [
+   284.115,
+   72.965,
+   88.596
+  ],
+  "sec": 18.2,
+  "obj": "Catalyst.obj"
+ },
+ {
+  "id": "algos",
+  "typeid": 32872,
+  "status": "ok",
+  "model_name": "Algos",
+  "verts": 5720,
+  "faces": 6744,
+  "dims": [
+   106.826,
+   49.485,
+   238.791
+  ],
+  "sec": 26.0,
+  "obj": "Algos.obj"
+ },
+ {
+  "id": "talwar",
+  "typeid": 32878,
+  "status": "ok",
+  "model_name": "Talwar",
+  "verts": 10324,
+  "faces": 9643,
+  "dims": [
+   106.106,
+   46.763,
+   262.976
+  ],
+  "sec": 19.7,
+  "obj": "Talwar.obj"
+ },
+ {
+  "id": "thrasher",
+  "typeid": 16242,
+  "status": "ok",
+  "model_name": "Thrasher",
+  "verts": 7144,
+  "faces": 4685,
+  "dims": [
+   67.718,
+   61.981,
+   266.654
+  ],
+  "sec": 15.9,
+  "obj": "Thrasher.obj"
+ },
+ {
+  "id": "coercer",
+  "typeid": 16236,
+  "status": "ok",
+  "model_name": "Coercer",
+  "verts": 6410,
+  "faces": 5324,
+  "dims": [
+   114.951,
+   48.165,
+   281.35
+  ],
+  "sec": 17.8,
+  "obj": "Coercer.obj"
+ },
+ {
+  "id": "dragoon",
+  "typeid": 32874,
+  "status": "ok",
+  "model_name": "Dragoon",
+  "verts": 8290,
+  "faces": 8306,
+  "dims": [
+   96.885,
+   44.202,
+   255.578
+  ],
+  "sec": 16.6,
+  "obj": "Dragoon.obj"
+ },
+ {
+  "id": "moa",
+  "typeid": 623,
+  "status": "skip",
+  "model_name": "Moa"
+ },
+ {
+  "id": "caracal",
+  "typeid": 621,
+  "status": "ok",
+  "model_name": "Caracal",
+  "verts": 8738,
+  "faces": 8444,
+  "dims": [
+   317.64,
+   148.524,
+   435.665
+  ],
+  "sec": 14.1,
+  "obj": "Caracal.obj"
+ },
+ {
+  "id": "osprey",
+  "typeid": 620,
+  "status": "ok",
+  "model_name": "Osprey",
+  "verts": 22045,
+  "faces": 17629,
+  "dims": [
+   239.394,
+   159.504,
+   367.764
+  ],
+  "sec": 17.5,
+  "obj": "Osprey.obj"
+ },
+ {
+  "id": "thorax",
+  "typeid": 627,
+  "status": "ok",
+  "model_name": "Thorax",
+  "verts": 44875,
+  "faces": 48101,
+  "dims": [
+   139.934,
+   83.925,
+   306.742
+  ],
+  "sec": 92.6,
+  "obj": "Thorax.obj"
+ },
+ {
+  "id": "vexor",
+  "typeid": 626,
+  "status": "ok",
+  "model_name": "Vexor",
+  "verts": 10623,
+  "faces": 11662,
+  "dims": [
+   118.484,
+   188.315,
+   223.259
+  ],
+  "sec": 19.6,
+  "obj": "Vexor.obj"
+ },
+ {
+  "id": "exequror",
+  "typeid": 634,
+  "status": "ok",
+  "model_name": "Exequror",
+  "verts": 6537,
+  "faces": 7945,
+  "dims": [
+   134.186,
+   88.174,
+   291.474
+  ],
+  "sec": 14.2,
+  "obj": "Exequror.obj"
+ },
+ {
+  "id": "stabber",
+  "typeid": 622,
+  "status": "ok",
+  "model_name": "Stabber",
+  "verts": 9626,
+  "faces": 8080,
+  "dims": [
+   57.884,
+   95.402,
+   347.131
+  ],
+  "sec": 46.6,
+  "obj": "Stabber.obj"
+ },
+ {
+  "id": "rupture",
+  "typeid": 629,
+  "status": "ok",
+  "model_name": "Rupture",
+  "verts": 18234,
+  "faces": 11722,
+  "dims": [
+   79.728,
+   186.547,
+   274.992
+  ],
+  "sec": 26.0,
+  "obj": "Rupture.obj"
+ },
+ {
+  "id": "scythe",
+  "typeid": 631,
+  "status": "ok",
+  "model_name": "Scythe",
+  "verts": 105259,
+  "faces": 75720,
+  "dims": [
+   196.962,
+   112.948,
+   339.79
+  ],
+  "sec": 84.3,
+  "obj": "Scythe.obj"
+ },
+ {
+  "id": "omen",
+  "typeid": 2006,
+  "status": "ok",
+  "model_name": "Omen",
+  "verts": 96058,
+  "faces": 66219,
+  "dims": [
+   125.538,
+   102.126,
+   296.536
+  ],
+  "sec": 69.9,
+  "obj": "Omen.obj"
+ },
+ {
+  "id": "augoror",
+  "typeid": 625,
+  "status": "ok",
+  "model_name": "Augoror",
+  "verts": 6898,
+  "faces": 5622,
+  "dims": [
+   76.634,
+   110.795,
+   174.506
+  ],
+  "sec": 17.9,
+  "obj": "Augoror.obj"
+ },
+ {
+  "id": "arbitrator",
+  "typeid": 628,
+  "status": "ok",
+  "model_name": "Arbitrator",
+  "verts": 3963,
+  "faces": 4742,
+  "dims": [
+   163.666,
+   39.022,
+   326.242
+  ],
+  "sec": 16.4,
+  "obj": "Arbitrator.obj"
+ },
+ {
+  "id": "drake",
+  "typeid": 24698,
+  "status": "ok",
+  "model_name": "Drake",
+  "verts": 9948,
+  "faces": 9806,
+  "dims": [
+   256.529,
+   104.267,
+   519.855
+  ],
+  "sec": 18.0,
+  "obj": "Drake.obj"
+ },
+ {
+  "id": "ferox",
+  "typeid": 16227,
+  "status": "ok",
+  "model_name": "Ferox",
+  "verts": 10383,
+  "faces": 6574,
+  "dims": [
+   280.778,
+   151.937,
+   503.647
+  ],
+  "sec": 14.6,
+  "obj": "Ferox.obj"
+ },
+ {
+  "id": "brutix",
+  "typeid": 16229,
+  "status": "ok",
+  "model_name": "Brutix",
+  "verts": 5017,
+  "faces": 6630,
+  "dims": [
+   282.124,
+   195.944,
+   366.698
+  ],
+  "sec": 18.8,
+  "obj": "Brutix.obj"
+ },
+ {
+  "id": "myrmidon",
+  "typeid": 24700,
+  "status": "ok",
+  "model_name": "Myrmidon",
+  "verts": 6199,
+  "faces": 7000,
+  "dims": [
+   138.406,
+   601.28,
+   310.582
+  ],
+  "sec": 18.5,
+  "obj": "Myrmidon.obj"
+ },
+ {
+  "id": "cyclone",
+  "typeid": 16231,
+  "status": "ok",
+  "model_name": "Cyclone",
+  "verts": 11179,
+  "faces": 7390,
+  "dims": [
+   181.75,
+   163.939,
+   513.917
+  ],
+  "sec": 17.4,
+  "obj": "Cyclone.obj"
+ },
+ {
+  "id": "hurricane",
+  "typeid": 24702,
+  "status": "ok",
+  "model_name": "Hurricane",
+  "verts": 11414,
+  "faces": 6522,
+  "dims": [
+   209.092,
+   69.358,
+   485.552
+  ],
+  "sec": 16.1,
+  "obj": "Hurricane.obj"
+ },
+ {
+  "id": "prophecy",
+  "typeid": 16233,
+  "status": "ok",
+  "model_name": "Prophecy",
+  "verts": 5660,
+  "faces": 5782,
+  "dims": [
+   256.334,
+   130.161,
+   327.548
+  ],
+  "sec": 17.0,
+  "obj": "Prophecy.obj"
+ },
+ {
+  "id": "harbinger",
+  "typeid": 24696,
+  "status": "ok",
+  "model_name": "Harbinger",
+  "verts": 16789,
+  "faces": 6430,
+  "dims": [
+   216,
+   79.265,
+   394.875
+  ],
+  "sec": 15.6,
+  "obj": "Harbinger.obj"
+ },
+ {
+  "id": "raven",
+  "typeid": 638,
+  "status": "ok",
+  "model_name": "Raven",
+  "verts": 10626,
+  "faces": 11240,
+  "dims": [
+   746.088,
+   221.833,
+   778.108
+  ],
+  "sec": 16.7,
+  "obj": "Raven.obj"
+ },
+ {
+  "id": "scorpion",
+  "typeid": 640,
+  "status": "ok",
+  "model_name": "Scorpion",
+  "verts": 9691,
+  "faces": 10954,
+  "dims": [
+   652.23,
+   333.156,
+   726.906
+  ],
+  "sec": 14.3,
+  "obj": "Scorpion.obj"
+ },
+ {
+  "id": "rokh",
+  "typeid": 24688,
+  "status": "ok",
+  "model_name": "Rokh",
+  "verts": 12344,
+  "faces": 7204,
+  "dims": [
+   223.846,
+   181.646,
+   1019.97
+  ],
+  "sec": 15.8,
+  "obj": "Rokh.obj"
+ },
+ {
+  "id": "megathron",
+  "typeid": 641,
+  "status": "ok",
+  "model_name": "Megathron",
+  "verts": 7814,
+  "faces": 10000,
+  "dims": [
+   441.14,
+   384.736,
+   1059.43
+  ],
+  "sec": 19.3,
+  "obj": "Megathron.obj"
+ },
+ {
+  "id": "hyperion",
+  "typeid": 24690,
+  "status": "ok",
+  "model_name": "Hyperion",
+  "verts": 9367,
+  "faces": 10032,
+  "dims": [
+   507.112,
+   640.619,
+   1494.69
+  ],
+  "sec": 16.5,
+  "obj": "Hyperion.obj"
+ },
+ {
+  "id": "dominix",
+  "typeid": 645,
+  "status": "ok",
+  "model_name": "Dominix",
+  "verts": 10051,
+  "faces": 12113,
+  "dims": [
+   315.138,
+   482.195,
+   996.621
+  ],
+  "sec": 37.3,
+  "obj": "Dominix.obj"
+ },
+ {
+  "id": "typhoon",
+  "typeid": 644,
+  "status": "ok",
+  "model_name": "Typhoon",
+  "verts": 16003,
+  "faces": 12092,
+  "dims": [
+   302.812,
+   202.968,
+   1059.52
+  ],
+  "sec": 59.5,
+  "obj": "Typhoon.obj"
+ },
+ {
+  "id": "maelstrom",
+  "typeid": 24694,
+  "status": "ok",
+  "model_name": "Maelstrom",
+  "verts": 19093,
+  "faces": 7246,
+  "dims": [
+   263.25,
+   819,
+   1481.5
+  ],
+  "sec": 27.2,
+  "obj": "Maelstrom.obj"
+ },
+ {
+  "id": "tempest",
+  "typeid": 639,
+  "status": "ok",
+  "model_name": "Tempest",
+  "verts": 11979,
+  "faces": 10049,
+  "dims": [
+   154.063,
+   857.991,
+   908.9
+  ],
+  "sec": 39.3,
+  "obj": "Tempest.obj"
+ },
+ {
+  "id": "abaddon",
+  "typeid": 24692,
+  "status": "ok",
+  "model_name": "Abaddon",
+  "verts": 13483,
+  "faces": 11260,
+  "dims": [
+   263.564,
+   385.642,
+   1245.585
+  ],
+  "sec": 23.7,
+  "obj": "Abaddon.obj"
+ },
+ {
+  "id": "armageddon",
+  "typeid": 643,
+  "status": "ok",
+  "model_name": "Armageddon",
+  "verts": 5421,
+  "faces": 6367,
+  "dims": [
+   208.454,
+   283.027,
+   1048.168
+  ],
+  "sec": 25.3,
+  "obj": "Armageddon.obj"
+ },
+ {
+  "id": "apocalypse",
+  "typeid": 642,
+  "status": "ok",
+  "model_name": "Apocalypse",
+  "verts": 10144,
+  "faces": 11728,
+  "dims": [
+   232.552,
+   398.169,
+   1529.347
+  ],
+  "sec": 27.8,
+  "obj": "Apocalypse.obj"
+ }
+]

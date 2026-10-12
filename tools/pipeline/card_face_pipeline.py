@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """斗地主牌面批处理管线（固化路线 · 角标归一化）
 ────────────────────────────────────────────────────────────
-输入：F:\\EVE自走棋\\牌面\\牌面\\*.png   （54 张 = 13 点数 × 4 花色 + 大小王）
-输出：F:\\evezzq\\eve自走棋918\\assets\\cards\\card_<id>.png  （512×717，alpha 圆角）
+输入：卡牌正面原图目录（环境变量 `EVE_CARD_SRC`，默认见 `_paths.py`）   （54 张 = 13 点数 × 4 花色 + 大小王）
+输出：`<工程>/assets/cards/card_<id>.png`  （512×717，alpha 圆角）
 
 处理（对齐已确认的 v4 观感）：
   ① 逐张检测左上角「点数+花色」墨迹 → 抠成纯色 mask →
@@ -22,9 +22,11 @@ import sys
 import glob
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageStat
 
-SRC = r"F:\EVE自走棋\牌面\牌面"
-OUT = r"F:\evezzq\eve自走棋918\assets\cards"
-QC = r"C:\godot\_export\gen\qc"
+from _paths import CARDS_DIR, CARD_SRC, WORK
+
+SRC = CARD_SRC
+OUT = CARDS_DIR
+QC = os.path.join(WORK, "gen", "qc")
 
 PILOT = ["梅花2_游戏版.png", "方片2_游戏版.png", "黑桃A_游戏版.png", "黑桃3_游戏版.png",
          "方片3_游戏版.png", "梅花7_游戏版.png", "小王_游戏版.png", "大王_游戏版.png"]

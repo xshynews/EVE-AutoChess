@@ -11,8 +11,11 @@ import io
 import re
 import sys
 
-SRC = r"C:\Users\Administrator\AppData\Roaming\Godot\app_userdata\EVE自走棋918\bow_calib\remap47.txt"
-DST = r"F:\evezzq\eve自走棋918\scripts\data\eve_ship_yaw.gd"
+import os
+from _paths import YAW_GD, godot_user_dir
+
+SRC = os.path.join(godot_user_dir(), "bow_calib", "remap47.txt")
+DST = YAW_GD
 
 # ── 读源：只取 `&"id": "spec",` 形态的行 ────────────────────────────
 pat = re.compile(r'^\s*&"([a-z0-9_]+)":\s*"([-+][XYZ](?:,[-+][XYZ]){2})",\s*$')

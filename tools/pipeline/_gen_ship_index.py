@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """从 `_ship_manifest.json` + 实际建模结果，生成 Godot 侧的资产索引。
 
-产物：`F:\\evezzq\\eve自走棋918\\scripts\\data\\eve_ship_asset_index.gd`
+产物：`<工程>/scripts/data/eve_ship_asset_index.gd`（见 `_paths.SHIP_INDEX_GD`，可用环境变量覆盖）
 
 ## 为什么要机生成而不是手写
 
@@ -28,17 +28,19 @@ import json
 import os
 import sys
 
-MANIFEST = r"C:\godot\_export\_ship_manifest.json"
-RESULT = r"C:\godot\_export\_ship3d\_build_result.json"
-ROOT = r"C:\godot\_export\_ship3d"
-OUT = r"F:\evezzq\eve自走棋918\scripts\data\eve_ship_asset_index.gd"
+from _paths import SHIP_INDEX_GD, SHIP_MANIFEST, WORK, build_result_json
+
+MANIFEST = SHIP_MANIFEST
+RESULT = build_result_json()
+ROOT = os.path.join(WORK, "_ship3d")
+OUT = SHIP_INDEX_GD
 
 HEAD = '''extends RefCounted
 class_name EveShipAssetIndex
 
 ## EVE 自走棋 —— 舰船资产索引（**机生成，不要手改**）
 ##
-## 生成器：`C:\\\\godot\\\\_export\\\\_gen_ship_index.py`
+## 生成器：`tools/pipeline/_gen_ship_index.py`
 ## 数据链：`01_舰船数值全表.csv` → `eve_ship_table.gd`(id/中文名/势力/费用)
 ##         + ESI `/universe/ids/`(id → typeID) → `_ship_manifest.json`
 ##         + `eve_ship_build.py`(typeID → 模型) → 本文件

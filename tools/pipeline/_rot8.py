@@ -14,12 +14,14 @@ import sys
 import numpy as np
 from PIL import Image, ImageDraw
 
-sys.path.insert(0, r'C:\godot\_export')
+sys.path.insert(0, WORK)
 from glow_probe import gather, load_glb, font                          # noqa: E402
 from pose_sheet import GLB_DIR, render                                 # noqa: E402
 
-OUT = r'C:\godot\_export'
-CLIP = r'C:\Users\Administrator\.workbuddy\clipboard-images'
+from _paths import WORK
+
+OUT = WORK
+CLIP = os.environ.get("EVE_CLIP_DIR") or os.path.expanduser("~/clipboard-images")
 IMG_W = 460
 CELL = 330
 HDR = 66

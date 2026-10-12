@@ -21,3 +21,6 @@ Thumbs.db
 
 # Python bytecode (export pipeline)
 __pycache__/
+
+# 流水线工作目录（中间产物，⛔ 别提交）
+.pipeline_work/

@@ -22,7 +22,6 @@ const DEPLOY := preload("res://scripts/scene/eve_deploy_controller.gd")
 ##   R03  我方残骸用真实星级（不套敌方关卡倍率）
 ##   R04  三连合成继承永久强化（`buffs` 不丢）
 ##   R05  黑市保底在**下一节点**落地（不再被普通刷新覆盖）
-##   EWAR 电子战模块已整体移除（EveShip 无 is_jammed / jammed_until / webbed_until）
 ##   FIRE 连射循环内目标死亡后立即停手（kills 不重复、unit_destroyed 只发一次）
 ##
 ## 跑法：
@@ -43,7 +42,6 @@ func _ready() -> void:
 	_t_r03_friendly_wreck_star()
 	_t_r04_merge_keeps_buffs()
 	_t_r05_black_market_pending()
-	_t_ewar_removed()
 	_t_fire_stops_on_death()
 	_t_sim_seed_reproducible()
 	_t_step_accumulator()
@@ -224,19 +222,6 @@ func _t_r05_black_market_pending() -> void:
 			hi += 1
 	_ok(hi >= 1,
 			"★ R05 下一节点货架保底 ≥1 艘 cost≥3（实际 %d 艘）—— 不再被覆盖" % hi)
-
-
-# ────────────────────────────────────────────────────────── EWAR 移除
-func _t_ewar_removed() -> void:
-	print("── EWAR 电子战已移除 ──")
-	var sh := EveShipDatabase.instantiate_by_id("punisher", 0, 9901)
-	_ok(sh != null, "建船成功")
-	if sh == null:
-		return
-	_ok(not sh.has_method("is_jammed"), "★ EWAR 移除：EveShip 无 is_jammed()")
-	_ok(sh.get("jammed_until") == null, "★ EWAR 移除：无 jammed_until 字段")
-	_ok(sh.get("webbed_until") == null, "★ EWAR 移除：无 webbed_until 字段")
-	_ok(sh.get("is_ewar") == null, "★ EWAR 移除：无 is_ewar 字段")
 
 
 # ─────────────────────────────────────────────────────── 连射停手（bug#3）

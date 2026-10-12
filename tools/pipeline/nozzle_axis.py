@@ -40,11 +40,13 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, r'C:\godot\_export')
+sys.path.insert(0, WORK)
 from glow_probe import gather, load_glb                              # noqa: E402
 from pose_sheet import (parse_table, spec_rows, tri_area, uv_sample,  # noqa: E402
                         GLB_DIR, THR_LIST)
 from review_sheet import parse_index, best_e                         # noqa: E402
+
+from _paths import WORK
 
 MIN_F = 4          # 喷口面数下限
 MIN_COS = 0.60     # 只取法线沿轴的自发光面

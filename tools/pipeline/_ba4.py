@@ -18,15 +18,17 @@ import sys
 import numpy as np
 from PIL import Image, ImageDraw
 
-sys.path.insert(0, r'C:\godot\_export')
+sys.path.insert(0, WORK)
 import _vs_user                                                        # noqa: E402
 from _pick4 import face_colors                                         # noqa: E402
 from glow_probe import gather, load_glb, font                          # noqa: E402
 from pose_sheet import parse_table, spec_rows, ry, GLB_DIR, MODEL_YAW_FIX  # noqa: E402
 
+from _paths import WORK
+
 W = 620
 _vs_user.W = W
-OUT = r'C:\godot\_export'
+OUT = WORK
 RED = np.array([0.95, 0.16, 0.10], np.float32)
 GRN = np.array([0.16, 0.85, 0.28], np.float32)
 

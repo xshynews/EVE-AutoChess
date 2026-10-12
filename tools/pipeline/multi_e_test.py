@@ -11,9 +11,11 @@
 import os
 import sys
 
+from _paths import WORK
+
 import numpy as np
 
-sys.path.insert(0, r'C:\godot\_export')
+sys.path.insert(0, WORK)
 from PIL import Image                                          # noqa: E402
 from glow_probe import gather, load_glb                        # noqa: E402
 from pose_sheet import (parse_table, spec_rows, uv_sample,     # noqa: E402

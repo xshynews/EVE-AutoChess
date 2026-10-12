@@ -7,11 +7,14 @@ import numpy as np
 import cv2
 from PIL import Image
 
-sys.path.insert(0, r"C:\godot\_export")
+sys.path.insert(0, WORK)
 from cut_models import get_mask
 
-SRC = r"C:\godot\_export\_official_all"
-DST = r"C:\godot\_export\official_cut"
+import sys
+from _paths import WORK
+
+SRC = os.path.join(WORK, "_official_all")
+DST = os.path.join(WORK, "official_cut")
 CANVAS = 512
 FILL = 0.92   # 船体最大边占画布比例
 PAD = 0.05    # bbox 外扩
@@ -87,5 +90,5 @@ if __name__ == "__main__":
         print(log[-1])
     log.append("")
     log.append("共 %d 张，用时 %.1fs" % (len(files), time.time() - t0))
-    open(r"C:\godot\_export\_cut_all.txt", "w", encoding="utf-8").write("\n".join(log))
+    open(os.path.join(WORK, "_cut_all.txt"), "w", encoding="utf-8").write("\n".join(log))
     print(log[-1])

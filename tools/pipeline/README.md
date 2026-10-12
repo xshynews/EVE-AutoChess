@@ -3,15 +3,39 @@
 > ⚠️ **这些脚本不在游戏里跑**，也不参与导出。它们是"资产是怎么来的"的留档 ——
 > 没有它们，别人 clone 仓库后**没法重新生成**舰船表、朝向标定、牌面、天空盒、立绘。
 >
-> ⚠️ 脚本里仍写着**作者本机的绝对路径**（EVE 客户端缓存、`C:/godot/_export/` 工作目录等）。
-> 移植到别的机器时改脚本顶部的路径常量即可；各脚本开头都写了自己的输入/输出。
+> ✅ **2026-10-12：路径已全部外置** —— 脚本里**不再有**任何硬编码的绝对路径。
+> 所有路径由 [`_paths.py`](./_paths.py) 解析，**每一项都能用环境变量覆盖**：
+>
+> | 环境变量 | 用途 | 默认（本机没有就落到仓库内） |
+> |---|---|---|
+> | `EVE_PROJECT_ROOT` | Godot 工程根 | 本文件上溯两级（= 仓库根） |
+> | `EVE_WORK_DIR` | 工作目录（中间产物） | 旧 `C:\godot\_export`（存在时）否则 `<仓库根>/.pipeline_work` |
+> | `EVE_CLIENT_DIR` | EVE 客户端 `SharedCache` | 旧 `D:/EVE/SharedCache`（存在时）否则未设置 |
+> | `EVE_CARD_SRC` | 卡牌正面原图 | 旧 `F:/EVE自走棋/牌面/牌面`（存在时）否则 `<仓库根>/.incoming/cards` |
+> | `EVE_GODOT_BIN` | Godot 可执行文件 | `C:/godot/Godot_v4.7.2-stable_win64_console.exe` 等 |
+> | `EVE_TEXCONV` | `texconv.exe`（DirectXTex，**不入库**） | `<工作目录>/_tools/texconv.exe` → `PATH` |
+> | `EVE_PYTHON` | 子进程用的解释器 | 当前解释器 |
+>
+> 先跑 `python tools/pipeline/_paths.py` 可以打印解析结果自查。
+>
+> ⚠️ 少数脚本依赖**本机 EVE 客户端**（音频 / 星云 / 官方渲染图）与 `texconv.exe`
+> —— 这两类原始资源**不能随仓库分发**（版权 / 第三方二进制），需要自备。
+>
+> ⚠️ 3D 建模的清单与核心脚本已随仓库提供：`_manifest/`（清单，含**已知偏差说明**）
+> + [`eve_ship_build.py`](./eve_ship_build.py) + [`blender_project.py`](./blender_project.py)。
 
 ## 数据表 / 索引
 
 | 脚本 | 作用 | 输入 → 输出 |
 |---|---|---|
-| `_gen_ship_index.py` | 生成 Godot 侧资产索引 | `_ship_manifest.json` + 建模结果 → `scripts/data/eve_ship_asset_index.gd` |
-| `_build_all_ships.py` | 批量建模 52 艘 | EVE 客户端资源 → `_ship3d/<id>/` |
+| `_gen_ship_index.py` | 生成 Godot 侧资产索引 | `_manifest/_ship_manifest.json` + 建模结果 → `scripts/data/eve_ship_asset_index.gd` |
+| `_build_all_ships.py` | 批量建模 52 艘 | EVE 客户端资源 → `<工作目录>/_ship3d/<id>/` |
+| `eve_ship_build.py` | **核心**：单个 typeID → OBJ + 官方贴图（一条命令） | gamemodels3d 官方资产 → `<out>/<Model>.obj` |
+| `blender_project.py` | 用 Blender 打开构建结果做人工复核 | 上述 OBJ |
+| `_paths.py` | **路径唯一真源**（环境变量可覆盖） | — |
+
+> ⚠️ 重新生成索引前先读 [`_manifest/README.md`](./_manifest/README.md)：清单与仓库里的
+> `eve_ship_asset_index.gd` 有 **3 处已知偏差**，直接跑会把手工修正冲掉。
 
 ## 朝向标定（`eve_ship_yaw.gd` 的来源）
 

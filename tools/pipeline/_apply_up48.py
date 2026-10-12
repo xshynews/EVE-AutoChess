@@ -11,11 +11,14 @@
 """
 import io, os, re, sys
 import numpy as np
-sys.path.insert(0, r'C:/godot/_export')
+sys.path.insert(0, WORK)
 from glow_probe import gather, load_glb
 
-YAW_GD = r'F:/evezzq/eve自走棋918/scripts/data/eve_ship_yaw.gd'
-GLB_DIR = r'F:/evezzq/eve自走棋918/assets/ships3d'
+import sys
+from _paths import GLB_DIR, WORK, YAW_GD
+
+
+
 
 ROW_RE = re.compile(r'^(\t&"([a-z0-9_]+)":\s*"bow:([-+][XYZ]) up:)([-+][XYZ])(".*)$')
 

@@ -11,7 +11,7 @@
   5. 出 4096×2048 PNG，并做「随机方向 vs 直接查立方体」的映射验收
 
 用法：
-  PY eve_neb.py --cube c07 --out F:/evezzq/eve自走棋918/assets/backgrounds/caldari-c07-nebula-4096.png
+  PY eve_neb.py --cube c07 --out <工程>/assets/backgrounds/caldari-c07-nebula-4096.png
 
 ★ 那个 face table 的坑（本脚本最要命的一处）：
   判正负【必须用带符号分量】，不能用 |分量|。用绝对值的话 |x|>0 恒真，
@@ -29,11 +29,14 @@ import tempfile
 import numpy as np
 from PIL import Image
 
+from _paths import texconv, CLIENT
+
 Image.MAX_IMAGE_PIXELS = None
 
-IDX_TQ = r"D:\EVE\SharedCache\tq\resfileindex.txt"
-RES_FILES = r"D:\EVE\SharedCache\ResFiles"
-TEXCONV = r"C:\godot\_export\_tools\texconv.exe"
+IDX_TQ = os.path.join(CLIENT, "tq", "resfileindex.txt")
+RES_FILES = os.path.join(CLIENT, "ResFiles")
+# texconv：第三方二进制（DirectXTex），**不入库** ⇒ 走 EVE_TEXCONV 或 PATH（见 _paths.py）
+TEXCONV = texconv()
 
 OUT_W, OUT_H = 4096, 2048
 
