@@ -1,17 +1,16 @@
 extends Node
-## 斗地主 · 联机会话层自检（**无 UI、无网络**）。
+## 斗地主联机会话层自检（无 UI、无网络）。
 ##
-## 用法：`godot --headless --path <工程> --quit-after 9000 res://tools/verify_ddz_net.tscn`
+## 用法：`godot --headless --path . --quit-after 9000 res://tools/verify_ddz_net.tscn`
 ##
-## ★ 这套里**唯一不可替代**的是 `_t_isolation`（手牌隔离）：
-##   单机版是「整副牌都在本地」，改联机时最容易顺手把整副同步出去 ——
-##   那等于外挂满天飞，而且**肉眼看不出来**（界面完全正常、流程完全走得通）。
-##   所以三条判据：
-##     ① 每个座位的下发负载里，**别人未公开的牌一张都不许出现**；
-##     ② 负载的**字段严格等于白名单** —— 以后谁偷偷加个 `hands` 字段，这里立刻红；
-##     ③ 发牌种子绝不出现（键名 / 数值 / 日志 三路都查）。
-##   ⚠️ 还带一条**反向自检**：故意把整副牌塞进负载，验证检测器**真的能抓到**
-##      —— 否则「0 泄漏」可能只是「根本没在检查」。
+## 最关键的是 `_t_isolation`（手牌隔离）。把单机版改成联机时，最容易顺手把整副牌同步出去，
+## 而界面和流程看起来完全正常。判据：
+## 1. 每个座位的下发负载里，不出现别人尚未公开的牌；
+## 2. 负载字段严格等于白名单，新增字段必须同步修改 `SNAP_KEYS`；
+## 3. 发牌种子不出现在键名、数值与日志中。
+## 另有一条反向自检：故意把整副牌塞进负载，确认检测器确实能发现泄漏。
+##
+## `_t_peer_binding` 与 `_t_input_validation` 覆盖网络输入：冒充座位、越界叫分、畸形数据。
 
 const N := preload("res://scripts/net/ddz_net.gd")
 const RC := preload("res://scripts/net/eve_room_code.gd")
@@ -19,11 +18,11 @@ const G := preload("res://scripts/card/ddz/ddz_game.gd")
 const AI := preload("res://scripts/card/ddz/ddz_ai.gd")
 const R := preload("res://scripts/card/ddz/ddz_rules.gd")
 
-## 下发负载允许出现的字段 —— **白名单**。加字段必须来这里同步（刻意留的摩擦）。
+## 下发负载允许出现的字段（白名单）。新增字段必须同步修改这里。
 const SNAP_KEYS := ["seat", "phase", "turn", "landlord", "base_score", "pass_streak",
 		"bombs", "spring", "winner", "multiplier", "counts", "your_hand",
 		"last_play", "played", "bottom", "log", "seats"]
-## 单局自检的步数上限（够跑完一局；跑不完说明驱动卡住了）
+## 单局自检的步数上限。一局跑不完说明驱动卡住了。
 const MAX_STEPS := 400
 
 var _pass := 0
@@ -34,13 +33,15 @@ func _ready() -> void:
 	print("═══ 斗地主联机会话层自检 ═══")
 	_t_room_code()
 	_t_seed_repro()
-	_t_isolation()          # ★ 核心
+	_t_isolation()
 	_t_authority()
+	_t_peer_binding()
+	_t_input_validation()
 	_t_takeover()
 	_t_wire()
 	print("═══ RESULT passed=%d failed=%d ═══" % [_pass, _fail])
 	if _fail > 0:
-		print("⚠️ 有失败项")
+		print("有失败项")
 	get_tree().quit(1 if _fail > 0 else 0)
 
 
@@ -78,6 +79,13 @@ func _t_room_code() -> void:
 	_ok(RC.network_secret(code).length() == 16, "密钥 16 位 hex")
 	_ok(RC.network_secret(code) == RC.network_secret(code), "密钥确定")
 	_ok(RC.network_secret(code).find(code.to_lower()) < 0, "密钥里不出现码明文")
+	_ok(RC.network_name(code).to_upper().find(code) < 0, "网络名里不出现码明文")
+	_ok(RC.network_name(code) != RC.NET_PREFIX + code.to_lower(), "网络名不是「前缀 + 房间码」")
+	# 不传 rng 时走密码学安全随机数
+	var c1: String = RC.generate()
+	var c2: String = RC.generate()
+	_ok(RC.is_valid(c1) and RC.normalize(c1) == c1, "默认生成器产出合法房间码（%s）" % c1)
+	_ok(c1 != c2, "默认生成器两次结果不同")
 	# 网段：避开常见家用网段（撞了会被本地路由抢先）
 	var parts: PackedStringArray = RC.subnet_for(code).split(".")
 	_ok(parts.size() == 4 and parts[0] == "10" and parts[3] == "0/24",
@@ -115,10 +123,10 @@ func _t_seed_repro() -> void:
 	_ok(a.bottom.size() == 3, "底牌 3 张")
 
 
-# ══════════════════════════════════════════════════════ 3 ★ 手牌隔离
+# ══════════════════════════════════════════════════════ 3 手牌隔离
 
 func _t_isolation() -> void:
-	print("── ★ 手牌隔离（核心）──")
+	print("── 手牌隔离（核心）──")
 	var seed_val := 987654321
 	var net = N.new()
 	net.host_setup(["我", "下家", "上家"])
@@ -135,7 +143,7 @@ func _t_isolation() -> void:
 
 	while not g.is_over() and steps < MAX_STEPS:
 		steps += 1
-		# 三家一律用 AI 驱动，且**全部走房主的命令入口**（与真人同一条路径）
+		# 三家一律用 AI 驱动，且全部走房主的命令入口（与真人同一条路径）
 		var t := int(g.turn)
 		if int(g.phase) == int(G.Phase.BID):
 			net.apply_command({"seat": t, "kind": N.Kind.BID,
@@ -148,7 +156,7 @@ func _t_isolation() -> void:
 				net.apply_command({"seat": t, "kind": N.Kind.PLAY,
 						"cards": mv.get("cards", [])})
 
-		# ★ 每一步之后，核**三个座位**各自的下发负载
+		# 每一步之后，核三个座位各自的下发负载
 		for s in N.SEATS:
 			var snap: Dictionary = net.snapshot_for(s)
 			if snap.is_empty():
@@ -165,7 +173,7 @@ func _t_isolation() -> void:
 				own_bad += 1
 				if own_bad <= 2:
 					print("     自己的手牌不对 seat=%d" % s)
-			# ③ ★ 别人未公开的牌：一张都不许出现
+			# ③ 别人未公开的牌：一张都不许出现
 			var leaked: Array = _leaked_ids(g, s, snap)
 			if not leaked.is_empty():
 				leaks += 1
@@ -188,20 +196,20 @@ func _t_isolation() -> void:
 
 	_ok(steps > 20, "跑完一整局（%d 步）" % steps)
 	_ok(bool(g.is_over()), "对局正常结束")
-	_ok(key_bad == 0, "★ 下发字段严格等于白名单（加字段必须来改 SNAP_KEYS）")
+	_ok(key_bad == 0, "下发字段严格等于白名单（加字段必须来改 SNAP_KEYS）")
 	_ok(own_bad == 0, "每个座位都拿到了且只拿到自己的手牌")
-	_ok(seed_bad == 0, "★★ 全 %d 步：发牌种子从未下发" % steps)
-	_ok(leaks == 0, "★★ 全 %d 座位 × 全 %d 步：无任何他人手牌泄漏" % [N.SEATS, steps])
+	_ok(seed_bad == 0, "全 %d 步：发牌种子从未下发" % steps)
+	_ok(leaks == 0, "全 %d 座位 × 全 %d 步：无任何他人手牌泄漏" % [N.SEATS, steps])
 
-	# ★ 反向自检：故意把整副牌塞进负载，检测器必须抓到（否则上面那个 0 不可信）
+	# 反向自检：故意把整副牌塞进负载，检测器必须抓到（否则上面那个 0 不可信）
 	var fake: Dictionary = net.snapshot_for(1)
 	var all: Array = []
 	for o in N.SEATS:
 		all.append_array(g.hands[o])
 	fake["your_hand"] = all
-	_ok(not _leaked_ids(g, 1, fake).is_empty(), "★ 反向自检：把整副牌塞进负载，检测器能抓到")
+	_ok(not _leaked_ids(g, 1, fake).is_empty(), "反向自检：把整副牌塞进负载，检测器能抓到")
 
-	# 亮底之后：底牌归地主，那 3 张对**地主本人**是公开的，但**对别人仍不该出现**
+	# 亮底之后：底牌归地主，那 3 张对地主本人是公开的，但对别人仍不该出现
 	# （它在另一个人的手里 —— 除非他就是地主）
 	var s_land := int(g.landlord)
 	if s_land >= 0:
@@ -210,7 +218,7 @@ func _t_isolation() -> void:
 				"亮底后：非地主座位仍看不到那 3 张底牌")
 
 
-## 某座位的下发负载里，**混进了多少张「别人的、且尚未公开的」牌**。
+## 某座位的下发负载里，混进了多少张「别人的、且尚未公开的」牌。
 func _leaked_ids(g, seat: int, snap: Dictionary) -> Array:
 	var public_ids := {}
 	for c in g.played:
@@ -237,7 +245,7 @@ func _leaked_ids(g, seat: int, snap: Dictionary) -> Array:
 	return out
 
 
-## 负载里**所有会装牌 id 的字段**（只挑这几个 —— 别把 turn/phase 这种小整数
+## 负载里所有会装牌 id 的字段（只挑这几个 —— 别把 turn/phase 这种小整数
 ## 一起摊平，否则 `turn=3` 会撞上牌 id 3 造成假阳性）。
 func _card_fields(snap: Dictionary) -> Array:
 	var out: Array = []
@@ -316,7 +324,100 @@ func _t_authority() -> void:
 	cli.client_apply_snapshot(snap1)
 	_ok(str(cli.view["your_hand"]) == str(g.hands[1]), "客户端视图里的手牌 = 他的真手牌")
 	_ok(not cli.view.has("seed"), "客户端视图里没有种子字段")
-	_ok(cli.authoritative_game() == null, "客户端**没有**权威对局对象（拿不到整副牌）")
+	_ok(cli.authoritative_game() == null, "客户端没有权威对局对象（拿不到整副牌）")
+
+
+# ══════════════════════════════════════════════════════ 5 连接绑定（防冒充）
+
+func _t_peer_binding() -> void:
+	print("── 连接绑定（防冒充）──")
+	var net = N.new()
+	net.host_setup(["A", "B", "C"], 1)
+	net.host_start(24680, 0)
+	var g = net.authoritative_game()
+	_ok(net.seat_of_peer(1) == 0, "房主连接绑定在座位 0")
+	_ok(net.bind_peer(1, 101), "座位 1 绑定连接 101")
+	_ok(net.bind_peer(2, 102), "座位 2 绑定连接 102")
+	_ok(not net.bind_peer(2, 101), "同一连接不能占两个座位")
+	_ok(not net.bind_peer(5, 105), "绑定越界座位被拒")
+
+	# 未入座的连接
+	var stranger: Dictionary = net.apply_remote(999, {"seat": 0, "kind": N.Kind.BID, "score": 1})
+	_ok(not bool(stranger["ok"]), "未入座连接的命令被拒（%s）" % String(stranger["reason"]))
+
+	# 连接 101（座位 1）伪造 seat=0，在座位 0 的回合叫 3 分
+	_ok(int(g.turn) == 0, "当前轮到座位 0")
+	var spoof: Dictionary = net.apply_remote(101, {"seat": 0, "kind": N.Kind.BID, "score": 3})
+	_ok(not bool(spoof["ok"]), "伪造 seat 字段冒充座位 0 被拒（%s）" % String(spoof["reason"]))
+	_ok(int(g.landlord) < 0 and int(g.phase) == int(G.Phase.BID), "冒充命令没有改变局面")
+
+	# 冒充心跳：连接 101 替掉线的座位 2 续命
+	net.mark_offline(2)
+	net.apply_remote(101, {"seat": 2, "kind": N.Kind.PING, "now_ms": N.TAKEOVER_MS * 10})
+	_ok(not bool(net.seats[2]["online"]), "伪造他人心跳不会让掉线座位恢复在线")
+	var r: Dictionary = net.tick(N.TAKEOVER_MS + 1000)
+	_ok((r["takeover"] as Array).has(2), "掉线座位照常转为托管")
+
+	# 正常路径：房主自己叫分
+	var own: Dictionary = net.apply_remote(1, {"kind": N.Kind.BID, "score": 3})
+	_ok(bool(own["ok"]), "通过连接身份正常叫分（命令里不带 seat 也行）")
+
+	# 重连换了连接 id
+	_ok(net.bind_peer(1, 201), "座位 1 重连后改绑连接 201")
+	_ok(net.seat_of_peer(101) < 0, "旧连接 101 不再对应任何座位")
+	net.unbind_peer(201)
+	_ok(net.seat_of_peer(201) < 0, "解绑后连接 201 不对应任何座位")
+	_ok(not bool(net.apply_remote(201, {"kind": N.Kind.PING})["ok"]), "解绑后的连接命令被拒")
+
+
+# ══════════════════════════════════════════════════════ 6 输入校验
+
+func _t_input_validation() -> void:
+	print("── 输入校验（畸形 / 越界数据不报错、不生效）──")
+	var net = N.new()
+	net.host_setup(["A", "B", "C"])
+	net.host_start(11223, 0)
+	var g = net.authoritative_game()
+
+	# 叫分范围
+	for s in [99, 4, -1]:
+		var r: Dictionary = net.apply_command({"seat": 0, "kind": N.Kind.BID, "score": s})
+		_ok(not bool(r["ok"]), "叫 %d 分被拒（%s）" % [s, String(r["reason"])])
+	_ok(int(g.base_score) == 1 and int(g.phase) == int(G.Phase.BID), "越界叫分没有改变底分与阶段")
+	_ok(not bool(net.apply_command({"seat": 0, "kind": N.Kind.BID, "score": "3"})["ok"]),
+			"叫分为字符串被拒")
+	_ok(not bool(net.apply_command({"seat": 0, "kind": N.Kind.BID})["ok"]), "缺少叫分被拒")
+
+	# 进入出牌阶段
+	net.apply_command({"seat": 0, "kind": N.Kind.BID, "score": 3})
+	_ok(int(g.phase) == int(G.Phase.PLAY), "叫 3 分进入出牌阶段")
+	var h0: Array = g.hand_of(0)
+	var c0 := int(h0[0])
+	var bad_cases := [
+		["cards 是整数", 5],
+		["cards 是字符串", "abc"],
+		["cards 是字典", {"a": 1}],
+		["牌 id 是浮点数", [float(c0)]],
+		["牌 id 是字符串", [str(c0)]],
+		["牌 id 越界", [54]],
+		["牌 id 为负", [-1]],
+		["重复的牌", [c0, c0]],
+		["张数过多", range(21)],
+	]
+	for case in bad_cases:
+		var r: Dictionary = net.apply_command({"seat": 0, "kind": N.Kind.PLAY, "cards": case[1]})
+		_ok(r.has("ok") and not bool(r["ok"]), "%s ⇒ 被拒（%s）" % [case[0], String(r.get("reason", ""))])
+	_ok((g.hand_of(0) as Array).size() == 20, "畸形出牌后地主手牌不变")
+
+	# 命令本身的格式
+	_ok(not bool(net.apply_command({"seat": "0", "kind": N.Kind.PASS})["ok"]), "seat 为字符串被拒")
+	_ok(not bool(net.apply_command({"seat": 0, "kind": 1.0})["ok"]), "kind 为浮点数被拒")
+	_ok(not bool(net.apply_command({})["ok"]), "空命令被拒")
+	_ok(not bool(net.apply_command({"seat": 0, "kind": N.Kind.PING, "now_ms": "x"})["ok"]),
+			"心跳时间为字符串被拒")
+	net.bind_peer(1, 101)
+	_ok(not bool(net.apply_remote(101, [1, 2, 3])["ok"]), "远端命令不是字典被拒")
+	_ok(not bool(net.apply_remote(101, null)["ok"]), "远端命令为 null 被拒")
 
 
 func _two_different_ranks(hand: Array) -> Array:
@@ -327,7 +428,7 @@ func _two_different_ranks(hand: Array) -> Array:
 	return []
 
 
-# ══════════════════════════════════════════════════════ 5 掉线托管
+# ══════════════════════════════════════════════════════ 7 掉线托管
 
 func _t_takeover() -> void:
 	print("── 掉线托管 ──")
@@ -368,7 +469,7 @@ func _t_takeover() -> void:
 	_ok(bool(back["ok"]), "PING 命令永远被接受（心跳）")
 
 
-# ══════════════════════════════════════════════════════ 6 负载序列化
+# ══════════════════════════════════════════════════════ 8 负载序列化
 
 func _t_wire() -> void:
 	print("── 负载序列化 ──")
@@ -381,5 +482,9 @@ func _t_wire() -> void:
 	_ok(str(back["your_hand"]) == str(snap["your_hand"]), "往返后手牌一致")
 	_ok(str(back["counts"]) == str(snap["counts"]), "往返后各家张数一致")
 	_ok(typeof(back["your_hand"][0]) == TYPE_INT,
-			"★ 往返后牌 id 仍是 int（用 JSON 会全变 float，`5.0` 混进手牌）")
+			"往返后牌 id 仍是 int（用 JSON 会全变 float，`5.0` 混进手牌）")
 	_ok(N.from_wire(PackedByteArray()).is_empty(), "空字节 ⇒ 空字典（不炸）")
+	var huge := PackedByteArray()
+	huge.resize(N.MAX_WIRE_BYTES + 1)
+	_ok(N.from_wire(huge).is_empty(), "超长数据 ⇒ 空字典（不解析）")
+	_ok(N.from_wire(var_to_bytes([1, 2])).is_empty(), "不是字典 ⇒ 空字典")

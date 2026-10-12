@@ -15,6 +15,8 @@ enum Phase { BID, PLAY, OVER }
 const SEATS := 3
 const HAND_SIZE := 17
 const BOTTOM_SIZE := 3
+## 叫分上限。叫到它直接定地主；超出范围的叫分一律拒绝（联机时叫分来自客户端）。
+const MAX_BID := 3
 
 var hands: Array = [[], [], []]        ## 三家手牌（牌 id 数组）
 var bottom: Array = []                 ## 底牌（叫完地主才翻开并归地主）
@@ -79,6 +81,8 @@ func bid(seat: int, score: int) -> Dictionary:
 		return _deny("不在叫分阶段")
 	if seat != turn:
 		return _deny("还没轮到你")
+	if score < 0 or score > MAX_BID:
+		return _deny("叫分只能是 0~%d" % MAX_BID)
 	if score != 0 and score <= bid_best:
 		return _deny("叫分必须高于当前最高分")
 	if score > 0:
@@ -89,7 +93,7 @@ func bid(seat: int, score: int) -> Dictionary:
 	else:
 		log_lines.append("座位 %d 不叫" % seat)
 	# 3 分直接定；或者转完一圈有人叫过就定
-	if bid_best == 3 or (seat == SEATS - 1 and bid_seat >= 0):
+	if bid_best == MAX_BID or (seat == SEATS - 1 and bid_seat >= 0):
 		_landlord_decided()
 		return {"ok": true, "reason": "", "done": true}
 	if seat == SEATS - 1:
