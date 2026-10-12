@@ -50,6 +50,22 @@ const ANDROID_CORE := "libetcore.so"
 const ANDROID_ABI := "arm64-v8a"
 ## 安卓内核的随包源文件（由 `_fetch_easytier.py` 从 Easytier-Magisk 包解出）。
 const ANDROID_SRC := "res://addons/easytier/bin/android-arm64/easytier-core"
+
+## ★★ 安卓侧的两个**Java 落盘文件**（`GodotApp.java` 里的 eve-patch 钩子写的，位置 =
+##   `getFilesDir()`，正是 GDScript 的 `user://`；钩子源码见
+##   `tools/android/eve_native_lib_hook.java`，由 `_android_patch.py` 注入）：
+##   ① **原生库目录 + 内核状态** —— Godot 没暴露 `ApplicationInfo.nativeLibraryDir`，
+##      而 `FileAccess` 读 `/proc`、`/data/app` 会被引擎的存储范围检查拒掉
+##      （绝对路径后端 = Java 实现，`StorageScope` 对这些路径返回 UNKNOWN）⇒ 只剩 Java 这条口子。
+##   ② **exec 自检结果** —— 把「系统禁止 exec」与「内核起来了但组网失败」分开，
+##      ⛔ 别让玩家只看到一句「内核没起来」。
+const LIB_INFO := "user://eve_native_lib_dir.txt"
+const EXEC_PROBE := "user://eve_exec_probe.txt"
+## LIB_INFO 的字段名（键名与 Java 侧一字不差）
+const INFO_LIB_DIR := "native_lib_dir"
+const INFO_CORE_EXISTS := "core_exists"
+const INFO_CORE_CAN_EXEC := "core_can_execute"
+
 ## 就绪判定超时（毫秒）：起不来的话 UI 得给玩家一个说法，别无限转圈
 const READY_TIMEOUT_MS := 20000
 
@@ -133,15 +149,49 @@ static func is_android() -> bool:
 	return OS.get_name() == "Android"
 
 
-## 安卓：算出 APK 的**原生库目录**（唯一允许 exec 的目录）。
+## 解析 Java 侧落盘的 `key=value` 文本。**纯函数** ⇒ 验收可喂合成样本。
+## 容错：空行、无 `=` 的行、`#` 注释一律跳过；键值都 strip。
+static func parse_lib_info(text: String) -> Dictionary:
+	var out := {}
+	for raw in text.split("\n"):
+		var line := raw.strip_edges()
+		if line.is_empty() or line.begins_with("#"):
+			continue
+		var eq := line.find("=")
+		if eq <= 0:
+			continue
+		out[line.substr(0, eq).strip_edges()] = line.substr(eq + 1).strip_edges()
+	return out
+
+
+## Java 侧落盘的原生库信息（读不到 = 空字典 ⇒ 说明这个包没带 Java 钩子）。
+static func android_lib_info() -> Dictionary:
+	return parse_lib_info(_read_text(LIB_INFO))
+
+
+## 安卓：APK 的**原生库目录**（Android 10+ 唯一允许 exec 的位置）。
 ##
-## ⚠️ Godot 没有暴露 `ApplicationInfo.nativeLibraryDir`，所以从 `/proc/self/maps`
-##   反推：已加载的引擎库一定出现在
-##   `/data/app/~~<hash>/<包名>-<hash>/lib/arm64/libgodot_android.so`，
-##   取到 `/lib/<abi>` 为止的目录即可。
-##   （应用读自己的 `/proc/self/maps` 是被允许的；拿不到时返回 ""，由上层给人话报错。）
+## 正路 = 读 Java 侧落盘的信息（见 `LIB_INFO` 的注释）；
+## 兜底 = 从 `/proc/self/maps` 反推 —— ⚠️ **真机上这条路拿不到**（引擎拒绝读 `/proc`），
+##        仅在桌面合成样本 / 开发期有意义；留着是为了「拿不到时能看出是哪一步断的」。
 static func android_native_lib_dir() -> String:
+	var d: String = android_lib_info().get(INFO_LIB_DIR, "")
+	if d != "":
+		return d
 	return parse_native_lib_dir(_read_text("/proc/self/maps"))
+
+
+## 安卓内核状态一行摘要（日志 / 探针 / 未来帮助页都用它，方便玩家报障）。
+static func android_status_text() -> String:
+	if not is_android():
+		return ""
+	var info := android_lib_info()
+	if info.is_empty():
+		return "没有 Java 落盘信息（本包缺少钩子，或 user:// 与 getFilesDir() 不一致）"
+	return "目录=%s 存在=%s 可执行=%s 大小=%s exec自检=%s" % [
+		info.get(INFO_LIB_DIR, "?"), info.get(INFO_CORE_EXISTS, "?"),
+		info.get(INFO_CORE_CAN_EXEC, "?"), info.get("core_size", "?"),
+		_read_text(EXEC_PROBE)]
 
 
 ## 从 `maps` 文本里挑出原生库目录。**纯函数** ⇒ 可在无头验收里喂合成样本。
@@ -209,11 +259,14 @@ static func _read_text(path: String) -> String:
 static func core_path() -> String:
 	# ① 安卓：只能用 APK 原生库目录里的那份（其他位置 exec 会被系统拒绝）
 	if is_android():
-		var nd := android_native_lib_dir()
-		if nd == "":
+		# ⛔⛔ 这里**绝不能**用 `FileAccess.file_exists()` 去验 nativeLibraryDir 下的路径：
+		#    `/data/app/...` 不在应用存储范围内 ⇒ 引擎一律返回 false ⇒ 会把**好路径误判成没有**
+		#    （这正是 N01 的隐藏第二环）。⇒ 以 Java 侧报的 `core_exists` 为准。
+		var info := android_lib_info()
+		if str(info.get(INFO_CORE_EXISTS, "false")) != "true":
 			return ""
-		var ap := nd.path_join(ANDROID_CORE)
-		return ap if FileAccess.file_exists(ap) else ""
+		var nd: String = info.get(INFO_LIB_DIR, "")
+		return nd.path_join(ANDROID_CORE) if nd != "" else ""
 	var extracted := user_dir().path_join(CORE)
 	if FileAccess.file_exists(extracted) and _size_matches_pack(extracted, CORE):
 		return extracted
@@ -333,6 +386,24 @@ func start(code_text: String, seat_no: int, is_host: bool,
 		state = State.FAILED
 		last_error = "安卓版暂不支持创建房间（房主需要虚拟网卡）。请让 Windows 的队友建房，你再输房间码加入。"
 		return false
+	# ★ 安卓「内核起不来」有**三种完全不同的原因**（缺包 / 缺文件 / 系统禁止 exec），
+	#   玩家该做的事各不相同 ⇒ 分因报错，⛔ 别混成一句「没找到内核」。
+	#   状态先打进日志：真机排查时 logcat 一眼看到底是哪一步断的。
+	if is_android():
+		print("[eve-net] 安卓内核状态：%s" % android_status_text())
+		var info := android_lib_info()
+		if info.is_empty():
+			state = State.FAILED
+			last_error = "本机的安装包缺少内置内核信息（请用最新版重装）。"
+			return false
+		if str(info.get(INFO_CORE_EXISTS, "false")) != "true":
+			state = State.FAILED
+			last_error = "安装包里没有联机内核（请重新安装完整包）。"
+			return false
+		if str(info.get(INFO_CORE_CAN_EXEC, "true")) != "true":
+			state = State.FAILED
+			last_error = "这个安卓系统不允许执行内置内核（机型/系统限制）。请改用 Windows 版加入。"
+			return false
 	var exe := core_path()
 	if exe == "":
 		state = State.FAILED
@@ -412,6 +483,12 @@ func is_up() -> bool:
 func _exit_reason() -> String:
 	var tail := read_log_tail(4)
 	if tail.is_empty():
+		# 安卓上「进程起不来 + 一行日志都没有」几乎只有一个原因：系统不允许 exec
+		# （Android 10+ 只允许执行 APK 原生库目录里的文件）。别让玩家看到「原因未知」——
+		# 改用开机时那次独立自检的结果说话。
+		if is_android():
+			var p := _read_text(EXEC_PROBE)
+			return "联机内核没能起来（安卓自检：%s）" % (p if p != "" else "无结果")
 		return "联机内核启动后立刻退出（原因未知，可能被安全软件拦截）"
 	var t := tail.to_lower()
 	if t.find("wintun") >= 0 or t.find("adapter") >= 0:

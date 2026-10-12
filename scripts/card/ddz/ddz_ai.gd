@@ -268,10 +268,11 @@ static func _proxy(cards: Array) -> int:
 #  叫分（**L2/L3 共用**：A/B 只比出牌，叫分不一样会污染结论）
 # ══════════════════════════════════════════════════════════════════
 
-## 叫分（0 = 不叫，1~3）。按手里的「大牌」给个粗档 —— 够用即可。
+## 叫/抢地主（true = 叫 / 抢）。按手里的「大牌」给个粗档 —— 够用即可。
 ##
-## ⚠️ 返回值必须**高于**当前最高叫分，否则 `game.bid()` 会拒（这是规则）。
-static func bid_score(game, seat: int) -> int:
+## ⚠️ 两边**共用不改**：A/B 只比「出牌」，叫/抢口径不一样会污染结论。
+##   （2026-10-12 改自 bid_score：叫分制换成了抢地主制，返回从 0~3 分变成 true/false。）
+static func want_bid(game, seat: int) -> bool:
 	var pts: int = 0
 	for c in game.hand_of(seat):
 		match R.rank_of(int(c)):
@@ -282,16 +283,8 @@ static func bid_score(game, seat: int) -> int:
 	# ★ 顺带用「手数」补一档：牌散但有炸也是好牌（不该只看大牌张数）
 	if E.min_plays(game.hand_of(seat)) <= 7:
 		pts += 2
-	var want: int = 0
-	if pts >= 6:
-		want = 3
-	elif pts >= 4:
-		want = 2
-	elif pts >= 2:
-		want = 1
-	if want <= int(game.bid_best):
-		return 0
-	return want
+	# ≥5 ≈ 双王之一 + 一两张大牌，或手数特别顺 —— 值得叫/抢（抢意味着倍数 ×2，门槛略高）
+	return pts >= 5
 
 
 # ══════════════════════════════════════════════════════════════════

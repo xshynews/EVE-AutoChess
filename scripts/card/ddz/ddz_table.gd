@@ -267,6 +267,13 @@ var _passed := [false, false, false]  ## 这家最近是不是「不要」
 var _room = null
 ## 最近一次应用的联机快照（用来判断「有没有变」，避免每帧重建渲染对象）
 var _online_view: Dictionary = {}
+## ★★ 「当前屏上这份联机视图是按哪个座位裁的」。
+##   为什么必须记下来（2026-10-12 实测踩过）：房主掉线后 `_room` 会被置空、
+##   面板切 FAILED ⇒ `_is_online()` 变 false ⇒ `_my_seat()` 若回落到 `HUMAN_SEAT`(0)，
+##   而联机视图里**只有「我」那个座位是真牌、其余全是 `-1` 占位**
+##   ⇒ 手牌行就会去画 `hands[0]`（一屏 `-1`），渲染成**一排白色的 3**。
+##   ⇒ 座位必须在「应用视图」时定死，绝不随后续房间状态漂移。
+var _view_seat := -1
 ## 联机时的座位昵称（房主/好友自己的名字，来自快照的 `seats`）
 var _online_names: Array = []
 var _online: Control = null
@@ -564,7 +571,7 @@ func _is_human_turn() -> bool:
 func _ai_step() -> void:
 	var seat: int = int(game.turn)
 	if int(game.phase) == int(G.Phase.BID):
-		_do_bid(seat, AI.bid_score(game, seat))
+		_do_bid(seat, AI.want_bid(game, seat))
 		return
 	var mv: Dictionary = AI.choose(game, seat)
 	if mv.has("cards"):
@@ -582,16 +589,27 @@ func _ai_step() -> void:
 
 ## ── 三个动作（玩家与 AI **共用**，所以记录与状态只有一份口径）──
 
-func _do_bid(seat: int, score: int) -> bool:
+func _do_bid(seat: int, grab: bool) -> bool:
 	# ★ 联机：**发给房主**，本地不动权威状态（快照回来才算数）
 	if _is_online():
-		return _online_send(NET.Kind.BID, {"score": score})
-	var res: Dictionary = game.bid(seat, score)
+		return _online_send(NET.Kind.BID, {"grab": grab})
+	# ★ 先记下**表态前**的阶段：叫地主这一下会把阶段从 CALL 切到 GRAB，
+	#   事后读 `bid_stage` 就会把这个「叫」误写成「抢」。
+	var was_grab := int(game.bid_stage) == int(G.BidStage.GRAB)
+	var res: Dictionary = game.bid(seat, grab)
 	if not bool(res.get("ok", false)):
 		_reject(String(res.get("reason", "")))
 		return false
-	var what := (T.t("DDZ_BID_PASS", "不叫") if score <= 0
-			else (T.t("DDZ_BID_N", "叫 %d 分") % score))
+	# ★ 流局（三家都不叫）⇒ 重新发牌（单机路径；联机路径由房主的 ddz_net 处理）
+	if bool(res.get("redeal", false)):
+		_push(T.t("DDZ_LOG_REDEAL", "三家都不叫 ⇒ 流局，重新发牌"))
+		_start_game()
+		return true
+	var what: String
+	if was_grab:
+		what = (T.t("DDZ_BID_GRAB", "抢地主") if grab else T.t("DDZ_BID_NOPASS", "不抢"))
+	else:
+		what = (T.t("DDZ_BID_CALL", "叫地主") if grab else T.t("DDZ_BID_PASS", "不叫"))
 	_push("%s %s" % [_seat_name(seat), what])
 	_bid_text[seat] = what
 	if int(game.phase) == int(G.Phase.PLAY):
@@ -707,7 +725,19 @@ func _refresh_status() -> void:
 func _gui_input(event: InputEvent) -> void:
 	# ★ 联机面板开着 ⇒ 牌桌不吃输入（面板自己是 PanelContainer，会拦住它上面的点击，
 	#   但桌面空白处的点击仍会落到这里 —— 那道闸必须在这儿）
+	# ★★ 例外：**「← 返回」必须放行**。
+	#    原来这里是无条件 `return`，而面板 `closable=false`（没有 ✕）、CHOOSE 阶段
+	#    又没有「离开房间」⇒ 点了「联机对战」之后玩家**卡死在面板里出不来**
+	#    （2026-10-12 用户实测报障：不能点返回）。
+	#    联机时「返回」的语义 = **收起面板**（⛔ 不拆房间、不切场景）。
 	if _online != null and _online.visible:
+		if event is InputEventMouseButton:
+			var mb0 := event as InputEventMouseButton
+			if mb0.pressed and mb0.button_index == MOUSE_BUTTON_LEFT \
+					and _hit_button(mb0.position - _ui_origin()) == "back":
+				_online.hide_panel()
+				queue_redraw()
+				accept_event()
 		return
 	# ★ 非 16:9 分辨率下内容整体平移过（见 _ui_origin）⇒ 输入要先**减掉偏移**，
 	#   否则就是「看到的牌在那里、点的却是别处」。绘制与输入**用同一个偏移**
@@ -891,18 +921,16 @@ func _on_button(id: String) -> void:
 			_try_pass()
 		_:
 			if id.begins_with("bid"):
-				_try_bid(int(id.substr(3)))
+				# bid0 = 不叫/不抢，bid1 = 叫地主/抢地主（按钮由阶段决定文案，见 _buttons）
+				_try_bid(id != "bid0")
 	queue_redraw()
 
 
-func _try_bid(score: int) -> void:
+func _try_bid(grab: bool) -> void:
 	if not _is_human_turn() or int(game.phase) != int(G.Phase.BID):
 		_reject(T.t("DDZ_TOAST_NOT_BID", "现在不是你的叫分回合"))
 		return
-	if score != 0 and score <= int(game.bid_best):
-		_reject(T.t("DDZ_TOAST_BID_LOW", "叫分要高于当前最高分（现在是 %d 分）") % int(game.bid_best))
-		return
-	_do_bid(_my_seat(), score)
+	_do_bid(_my_seat(), grab)
 
 
 func _try_play() -> void:
@@ -1029,13 +1057,17 @@ func _buttons() -> Array:
 		return out
 	if int(game.phase) == int(G.Phase.BID):
 		if _is_human_turn():
-			var labels := [T.t("DDZ_BID_PASS", "不叫"),
-					T.t("DDZ_BID_1", "1 分"), T.t("DDZ_BID_2", "2 分"),
-					T.t("DDZ_BID_3", "3 分")]
-			for i in 4:
+			# ★ 抢地主制（2026-10-12 用户定稿）：两颗按钮，文案跟着阶段走 ——
+			#   叫阶段 [不叫][叫地主]；抢阶段 [不抢][抢地主]
+			var labels: Array
+			if int(game.bid_stage) == int(G.BidStage.GRAB):
+				labels = [T.t("DDZ_BID_NOPASS", "不抢"), T.t("DDZ_BID_GRAB", "抢地主")]
+			else:
+				labels = [T.t("DDZ_BID_PASS", "不叫"), T.t("DDZ_BID_CALL", "叫地主")]
+			for i in 2:
 				out.append({"id": "bid%d" % i,
-						"rect": Rect2(w * 0.5 - 176.0 + i * 92.0, bar_y, 84.0, 40.0),
-						"label": labels[i], "on": i == 0 or i > int(game.bid_best)})
+						"rect": Rect2(w * 0.5 - 96.0 + i * 108.0, bar_y, 96.0, 40.0),
+						"label": labels[i], "on": true})
 		return out
 	if _is_human_turn():
 		out.append({"id": "play", "rect": Rect2(w * 0.5 - 196.0, bar_y, 140.0, 40.0),
@@ -1664,6 +1696,13 @@ func _draw_toast(w: float, h: float) -> void:
 
 ## 一张明牌。`hi` = 高亮（最新一手 / 已选中）
 func _card_at(pos: Vector2, id: int, cw: float, ch: float, hi: bool) -> void:
+	# ★★ `-1` 是**联机里别人手牌的占位符**（服务端只发你一个人的牌，别人只报张数）。
+	#    ⛔⛔ 绝不能把它当牌面画出来：`label_of(-1)` → `rank_of(-1)` = `3 + (-1)/4` = **3**
+	#    （GDScript 整除向零截断）⇒ 屏幕上就是一张**白色牌面 + "3"**。
+	#    实测症状：房主掉线后手牌行变成「一排白色的 3」（2026-10-12 真机踩过）。
+	#    这是最后一道兜底 —— 根因在 `_view_seat`（座位漂移），但这道闸必须留着。
+	if id < 0:
+		return
 	# 阴影：让牌「立起来」（资料：微妙阴影/边框能让牌面分离出来）
 	_round_rect(Rect2(pos + Vector2(2.5, 2.5), Vector2(cw, ch)), Color(0, 0, 0, 0.30), cw * 0.09)
 	_round_rect(Rect2(pos, Vector2(cw, ch)), C_CARD, cw * 0.09)
@@ -1958,6 +1997,7 @@ func _leave_online() -> void:
 		_online.visible = false
 	_room = null
 	_online_view = {}
+	_view_seat = -1
 	_online_names = []
 	game = null
 	_started = false
@@ -1973,8 +2013,13 @@ func _is_online() -> bool:
 ## 本地玩家的座位。★ 联机时由房主分配，单机时恒为 `HUMAN_SEAT`。
 ## ⛔ 所有「我的座位」的判断都必须走这里 —— 直接写 HUMAN_SEAT 在联机时是错的。
 func _my_seat() -> int:
-	if _is_online() and _room.net != null:
+	if _room != null and _room.net != null:
 		return int(_room.my_seat())
+	# ★★ 联机视图还挂在屏上（典型：房主刚掉线，`_room` 已置空）时**绝不能回落到 HUMAN_SEAT**：
+	#    那份视图里别人的手牌是 `-1` 占位、只有「我」那个座位是真牌；座位一漂，
+	#    手牌行就会画出一排占位的白 3（2026-10-12 实测踩过，见 `_view_seat` 的注释）。
+	if _view_seat >= 0:
+		return _view_seat
 	return HUMAN_SEAT
 
 
@@ -2009,6 +2054,10 @@ func _apply_online_view(v: Dictionary) -> void:
 	# ★ 统一写入点：应用与「已应用哪份快照」必须同步，否则 `_is_human_turn()` 里
 	#   那道「还没收到快照」的闸会误判（实测踩过：直接调本函数时它还是空的）
 	_online_view = v
+	# ★★ 座位在**应用视图的这一刻**定死（此刻房间还活着，`my_seat()` 是真的）。
+	#    ⛔ 别在渲染时才问 —— 房主掉线后房间会被置空，那一刻回落到 HUMAN_SEAT 就是白 3。
+	if _room != null and _room.net != null:
+		_view_seat = int(_room.my_seat())
 	var g := G.new()
 	var counts: Array = v.get("counts", [0, 0, 0])
 	var hands: Array = [[], [], []]
@@ -2026,6 +2075,10 @@ func _apply_online_view(v: Dictionary) -> void:
 	g.turn = int(v.get("turn", 0))
 	g.landlord = int(v.get("landlord", -1))
 	g.winner = int(v.get("winner", -1))
+	# ★ 抢地主进度（客户端按钮文案与倍数显示靠它）—— 房主的快照带，缺省即叫阶段
+	g.bid_stage = int(v.get("bid_stage", 0))
+	g.claimant = int(v.get("claimant", -1))
+	g.grabs = int(v.get("grabs", 0))
 	g.base_score = int(v.get("base_score", 1))
 	g.pass_streak = int(v.get("pass_streak", 0))
 	g.bombs = int(v.get("bombs", 0))

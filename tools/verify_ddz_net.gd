@@ -20,6 +20,7 @@ const R := preload("res://scripts/card/ddz/ddz_rules.gd")
 
 ## 下发负载允许出现的字段（白名单）。新增字段必须同步修改这里。
 const SNAP_KEYS := ["seat", "phase", "turn", "landlord", "base_score", "pass_streak",
+		"bid_stage", "claimant", "grabs",
 		"passed",
 		"bombs", "spring", "winner", "multiplier", "counts", "your_hand",
 		"last_play", "played", "bottom", "log", "seats"]
@@ -152,7 +153,7 @@ func _t_isolation() -> void:
 		var t := int(g.turn)
 		if int(g.phase) == int(G.Phase.BID):
 			net.apply_command({"seat": t, "kind": N.Kind.BID,
-					"score": AI.bid_score(g, t)})
+					"grab": AI.want_bid(g, t)})
 		else:
 			var mv: Dictionary = AI.choose(g, t)
 			if bool(mv.get("pass", false)):
@@ -269,18 +270,31 @@ func _t_authority() -> void:
 	print("── 房主权威（客户端说不了算）──")
 	var net = N.new()
 	net.host_setup(["A", "B", "C"])
-	net.host_start(13579, 0)
+	# ★ 13584 是「起点 = 座位 0」的确定性种子（随机起点 ⇒ 用探针选定的 seed）
+	# ★ 空座位开局即托管 ⇒ 想让 1/2 号位表态，须先绑成真人（房间层 approve 也这么做）
+	net.bind_peer(1, 811)
+	net.bind_peer(2, 812)
+	net.host_start(13584, 0)
 	var g = net.authoritative_game()
+	_ok(int(g.turn) == 0, "叫地主起点 = 座位 0（seed 13584 选定）")
 
 	# 不是自己的回合
-	var wrong: Dictionary = net.apply_command({"seat": 1, "kind": N.Kind.BID, "score": 3})
+	var wrong: Dictionary = net.apply_command({"seat": 1, "kind": N.Kind.BID, "grab": true})
 	_ok(not bool(wrong["ok"]), "不是自己回合 ⇒ 被拒（%s）" % String(wrong["reason"]))
 
-	# 座位 0 叫 3 分 ⇒ 直接定地主
-	var okb: Dictionary = net.apply_command({"seat": 0, "kind": N.Kind.BID, "score": 3})
-	_ok(bool(okb["ok"]), "座位 0 叫 3 分成功")
-	_ok(int(g.landlord) == 0, "地主 = 座位 0")
+	# 座位 0 叫地主 ⇒ 进抢阶段 → 两家都「不抢」⇒ 叫者当地主
+	var okb: Dictionary = net.apply_command({"seat": 0, "kind": N.Kind.BID, "grab": true})
+	_ok(bool(okb["ok"]), "座位 0 叫地主成功")
+	_ok(int(g.bid_stage) == int(G.BidStage.GRAB), "进入抢地主阶段")
+	var asks := 0
+	while int(g.phase) == int(G.Phase.BID) and asks < 4:
+		asks += 1
+		var rp: Dictionary = net.apply_command({"seat": int(g.turn), "kind": N.Kind.BID,
+				"grab": false})
+		_ok(bool(rp["ok"]), "「不抢」命令被接受")
+	_ok(int(g.landlord) == 0, "★ 没人抢 ⇒ 叫地主的人当地主")
 	_ok(int(g.phase) == int(G.Phase.PLAY), "进入出牌阶段")
+	_ok(int(g.base_score) == 1, "★ 没人抢 ⇒ 底分 1")
 	_ok((g.hand_of(0) as Array).size() == 20, "地主 20 张（17 + 底牌 3）")
 
 	# 出别人手里的牌
@@ -319,9 +333,9 @@ func _t_authority() -> void:
 	# 客户端不能裁决
 	var cli = N.new()
 	cli.client_setup(1, "下家")
-	var nothost: Dictionary = cli.apply_command({"seat": 1, "kind": N.Kind.BID, "score": 1})
+	var nothost: Dictionary = cli.apply_command({"seat": 1, "kind": N.Kind.BID, "grab": true})
 	_ok(not bool(nothost["ok"]), "客户端无法裁决（%s）" % String(nothost["reason"]))
-	_ok(cli.apply_command({"seat": 1, "kind": N.Kind.BID, "score": 1})["result"].is_empty(),
+	_ok(cli.apply_command({"seat": 1, "kind": N.Kind.BID, "grab": true})["result"].is_empty(),
 			"被拒时不下发任何状态")
 
 	# 客户端只能看到自己的手牌（视图来自快照，不建本地对局）
@@ -338,7 +352,7 @@ func _t_peer_binding() -> void:
 	print("── 连接绑定（防冒充）──")
 	var net = N.new()
 	net.host_setup(["A", "B", "C"], 1)
-	net.host_start(24680, 0)
+	net.host_start(24686, 0)      # ★ 起点 = 座位 0 的确定性种子
 	var g = net.authoritative_game()
 	_ok(net.seat_of_peer(1) == 0, "房主连接绑定在座位 0")
 	_ok(net.bind_peer(1, 101), "座位 1 绑定连接 101")
@@ -347,12 +361,12 @@ func _t_peer_binding() -> void:
 	_ok(not net.bind_peer(5, 105), "绑定越界座位被拒")
 
 	# 未入座的连接
-	var stranger: Dictionary = net.apply_remote(999, {"seat": 0, "kind": N.Kind.BID, "score": 1})
+	var stranger: Dictionary = net.apply_remote(999, {"seat": 0, "kind": N.Kind.BID, "grab": true})
 	_ok(not bool(stranger["ok"]), "未入座连接的命令被拒（%s）" % String(stranger["reason"]))
 
 	# 连接 101（座位 1）伪造 seat=0，在座位 0 的回合叫 3 分
 	_ok(int(g.turn) == 0, "当前轮到座位 0")
-	var spoof: Dictionary = net.apply_remote(101, {"seat": 0, "kind": N.Kind.BID, "score": 3})
+	var spoof: Dictionary = net.apply_remote(101, {"seat": 0, "kind": N.Kind.BID, "grab": true})
 	_ok(not bool(spoof["ok"]), "伪造 seat 字段冒充座位 0 被拒（%s）" % String(spoof["reason"]))
 	_ok(int(g.landlord) < 0 and int(g.phase) == int(G.Phase.BID), "冒充命令没有改变局面")
 
@@ -364,7 +378,7 @@ func _t_peer_binding() -> void:
 	_ok((r["takeover"] as Array).has(2), "掉线座位照常转为托管")
 
 	# 正常路径：房主自己叫分
-	var own: Dictionary = net.apply_remote(1, {"kind": N.Kind.BID, "score": 3})
+	var own: Dictionary = net.apply_remote(1, {"kind": N.Kind.BID, "grab": true})
 	_ok(bool(own["ok"]), "通过连接身份正常叫分（命令里不带 seat 也行）")
 
 	# 重连换了连接 id
@@ -381,21 +395,27 @@ func _t_input_validation() -> void:
 	print("── 输入校验（畸形 / 越界数据不报错、不生效）──")
 	var net = N.new()
 	net.host_setup(["A", "B", "C"])
-	net.host_start(11223, 0)
+	# ★ 空座位开局即托管 ⇒ 想让 1/2 号位表态，须先绑成真人（房间层 approve 也这么做）
+	net.bind_peer(1, 821)
+	net.bind_peer(2, 822)
+	net.host_start(11225, 0)      # ★ 起点 = 座位 0 的确定性种子
 	var g = net.authoritative_game()
 
-	# 叫分范围
-	for s in [99, 4, -1]:
-		var r: Dictionary = net.apply_command({"seat": 0, "kind": N.Kind.BID, "score": s})
-		_ok(not bool(r["ok"]), "叫 %d 分被拒（%s）" % [s, String(r["reason"])])
-	_ok(int(g.base_score) == 1 and int(g.phase) == int(G.Phase.BID), "越界叫分没有改变底分与阶段")
-	_ok(not bool(net.apply_command({"seat": 0, "kind": N.Kind.BID, "score": "3"})["ok"]),
-			"叫分为字符串被拒")
-	_ok(not bool(net.apply_command({"seat": 0, "kind": N.Kind.BID})["ok"]), "缺少叫分被拒")
+	# 叫/抢参数的畸形输入：一律拒绝且不动局面（⛔ 不能被 bool() 静默折算成「不叫」）
+	for bad in [{"grab": 99}, {"grab": "yes"}, {}]:
+		var r: Dictionary = net.apply_command(
+				{"seat": 0, "kind": N.Kind.BID}.merged(bad))
+		_ok(not bool(r["ok"]), "畸形叫/抢被拒（%s）" % String(r["reason"]))
+	_ok(int(g.phase) == int(G.Phase.BID) and int(g.claimant) == -1,
+			"畸形输入没有改变局面")
 
-	# 进入出牌阶段
-	net.apply_command({"seat": 0, "kind": N.Kind.BID, "score": 3})
-	_ok(int(g.phase) == int(G.Phase.PLAY), "叫 3 分进入出牌阶段")
+	# 进入出牌阶段：起点叫地主 → 两家不抢
+	net.apply_command({"seat": 0, "kind": N.Kind.BID, "grab": true})
+	var asks2 := 0
+	while int(g.phase) == int(G.Phase.BID) and asks2 < 6:      # ⛔ 带闸：绝不无限循环
+		asks2 += 1
+		net.apply_command({"seat": int(g.turn), "kind": N.Kind.BID, "grab": false})
+	_ok(int(g.phase) == int(G.Phase.PLAY), "叫/抢收口进入出牌阶段")
 	var h0: Array = g.hand_of(0)
 	var c0 := int(h0[0])
 	var bad_cases := [
@@ -443,8 +463,22 @@ func _t_takeover() -> void:
 	#   所以「掉线托管」这个用例必须先把 1/2 号位当真人绑定（这也是房间层 approve 会做的事）。
 	net.bind_peer(1, 911)
 	net.bind_peer(2, 912)
-	net.host_start(2468, 0)
+	# ★ 起点是随机的 ⇒ 先纯逻辑探出「起点 = 座位 0」的 seed，保证「座位 0 当地主」可复现
+	#   ⛔ 别用「反复 host_start」来撞：`host_start()` 只允许一次（第二次就拒）
+	net.host_start(_starter0_seed(2468), 0)
 	var g = net.authoritative_game()
+
+	# 先按**三名真人**走完叫/抢（座位 0 叫 → 两家不抢 ⇒ 座位 0 当地主），
+	# 再让 1 号位掉线 —— 否则「空座位」会在开局那一刻就被托管，命令进不来。
+	net.apply_command({"seat": 0, "kind": N.Kind.BID, "grab": true})
+	var asks3 := 0
+	while int(g.phase) == int(G.Phase.BID) and asks3 < 6:
+		asks3 += 1
+		net.apply_command({"seat": int(g.turn), "kind": N.Kind.BID, "grab": false})
+	_ok(int(g.landlord) == 0, "（托管用例）座位 0 当地主")
+	var h0: Array = g.hand_of(0)
+	net.apply_command({"seat": 0, "kind": N.Kind.PLAY, "cards": [int(h0[0])]})
+	_ok(int(g.turn) == 1, "现在轮到座位 1")
 
 	net.mark_offline(1)
 	var r1: Dictionary = net.tick(1000)
@@ -454,18 +488,17 @@ func _t_takeover() -> void:
 	_ok((r2["takeover"] as Array).has(1), "超时后座位 1 交给托管")
 	_ok(bool(net.seats[1]["ai"]), "座位 1 标记为 AI")
 
-	var denied: Dictionary = net.apply_command({"seat": 1, "kind": N.Kind.BID, "score": 1})
+	var legal1: Array = g.legal_now(1)
+	var denied: Dictionary = net.apply_command({"seat": 1, "kind": N.Kind.PLAY,
+			"cards": (legal1[0] if not legal1.is_empty() else [int(h0[0])])})
 	_ok(not bool(denied["ok"]), "托管座位拒收真人命令（%s）" % String(denied["reason"]))
-
-	# 推到「轮到托管座位」的局面，让 tick 替他走
-	net.apply_command({"seat": 0, "kind": N.Kind.BID, "score": 3})
-	_ok(int(g.landlord) == 0, "（托管用例）座位 0 当地主")
-	var h0: Array = g.hand_of(0)
-	net.apply_command({"seat": 0, "kind": N.Kind.PLAY, "cards": [int(h0[0])]})
-	_ok(int(g.turn) == 1, "现在轮到托管中的座位 1")
 	var before: int = (g.hand_of(1) as Array).size()
 	var r3: Dictionary = net.tick(N.TAKEOVER_MS + 3000)
-	_ok((r3["auto"] as Array).has(1), "tick 自动替托管座位 1 走了一步")
+	# ★ 接管发生在**同一个 tick** 里（先把座位标 AI，紧接着就替它走）⇒
+	#   「替托管走了一步」要看 r2 或 r3 的 auto（原写法只盯 r3，会漏掉 r2 已经代走的情况）
+	_ok(((r2["auto"] as Array) + (r3["auto"] as Array)).has(1),
+			"tick 自动替托管座位 1 走了一步（r2=%s r3=%s）"
+			% [str(r2["auto"]), str(r3["auto"])])
 	_ok(int(g.turn) != 1, "托管走完之后轮到别人")
 	_ok((g.hand_of(1) as Array).size() <= before, "托管不会凭空给座位 1 加牌")
 
@@ -493,9 +526,22 @@ func _t_empty_seat_ai() -> void:
 	_ok(bool(net.seats[2]["ai"]), "★ 2 号空位同样托管")
 	_ok(not bool(net.seats[0]["ai"]), "房主自己不是托管")
 	var g = net.authoritative_game()
-	# 复现报告里的现象：让房主当地主并出一手牌，接下来必然轮到空位
-	net.apply_command({"seat": 0, "kind": N.Kind.BID, "score": 3})
-	_ok(int(g.landlord) == 0, "房主当地主")
+	# 复现报告里的现象：房主出一手牌，接下来必然轮到空位。
+	# ★ 抢地主制下起点随机、AI 也会抢 ⇒ 地主是谁不钉死，用 tick 把空位代表态推到收口
+	#   （⛔ 空位是 AI，真人命令进不来 —— 这也是这段必须走 tick 的原因）
+	var guard := 0
+	while int(g.phase) == int(G.Phase.BID) and guard < 20:
+		guard += 1
+		if int(g.turn) == 0:
+			net.apply_command({"seat": 0, "kind": N.Kind.BID, "grab": true})
+		else:
+			net.tick(9000)
+	_ok(int(g.phase) == int(G.Phase.PLAY),
+			"★ 叫/抢收口（空位由 tick 代表态；地主=座位 %d）" % int(g.landlord))
+	guard = 0
+	while int(g.turn) != 0 and guard < 40 and not g.is_over():
+		guard += 1
+		net.tick(9000)
 	var h0: Array = g.hand_of(0)
 	net.apply_command({"seat": 0, "kind": N.Kind.PLAY, "cards": [int(h0[0])]})
 	_ok(int(g.turn) != 0, "出牌后轮到别家（= 空位）")
@@ -528,3 +574,17 @@ func _t_wire() -> void:
 	huge.resize(N.MAX_WIRE_BYTES + 1)
 	_ok(N.from_wire(huge).is_empty(), "超长数据 ⇒ 空字典（不解析）")
 	_ok(N.from_wire(var_to_bytes([1, 2])).is_empty(), "不是字典 ⇒ 空字典")
+
+
+## ★ 找「叫地主起点 = 座位 0」的种子。
+##   抢地主制下起点由发牌 rng 派生（随机但可复现）⇒ 需要「玩家先表态」的用例靠它撞 seed。
+##   ⛔ 用纯逻辑对象探，别碰 net（`host_start()` 一局只允许调一次）。
+func _starter0_seed(base: int) -> int:
+	var sv := base
+	for _k in 200:
+		var gg = G.new()
+		gg.start(sv)
+		if int(gg.turn) == 0:
+			return sv
+		sv += 1
+	return base

@@ -88,6 +88,34 @@ CN_MIRRORS = """        // %s 国内镜像优先（本机直连 Maven Central �
 
 GRADLE_PROPS = os.path.join(BUILD_DIR, "gradle.properties")
 
+# 6) GodotApp.java 里的 Java 钩子：把原生库目录落盘给 GDScript。
+#    ★★ 为什么非改 Java 不可（2026-10-12 联网专项审查 N01 + 引擎源码核对）：
+#      `ApplicationInfo.nativeLibraryDir` 是安卓上**唯一允许 exec 的位置**，而 Godot
+#      （含 4.7 的 Kotlin 实现）**完全没有暴露**它；想从 `/proc/self/maps` 反推也不行 ——
+#      绝对路径的 FileAccess 后端是 Java 实现（`FileAccessFilesystemJAndroid`），
+#      而 `StorageScope` 对 `/proc/...` 与 `/data/app/.../lib/...` 一律返回 UNKNOWN ⇒ 被拒。
+#      唯一干净的口子就是模板里这份 `GodotApp.java`（官方注释写明「Feel free to extend
+#      and modify this class for your custom logic」）。
+#    ⚠️ 该类属于构建模板（`android/build/` 已 gitignore）⇒ 模板重装后必须重跑本脚本。
+APP_JAVA = os.path.join(BUILD_DIR, "src", "main", "java", "com", "godot", "game", "GodotApp.java")
+JAVA_TAG = "// [eve-patch]"
+JAVA_CALL_ANCHOR = "\t\tsuper.onCreate(savedInstanceState);\n"
+JAVA_CALL_NEW = (JAVA_CALL_ANCHOR
+                 + "\t\t" + JAVA_TAG + " 把「原生库目录 + 内核状态」落盘给 GDScript（见文件末尾）\n"
+                 + "\t\teveWriteNativeLibInfo();\n"
+                 + "\t\t" + JAVA_TAG + " 后台跑一次 exec 自检，结果落 user://eve_exec_probe.txt（⛔ 不阻塞启动）\n"
+                 + "\t\tnew Thread(new Runnable() {\n"
+                 + "\t\t\t@Override\n"
+                 + "\t\t\tpublic void run() {\n"
+                 + "\t\t\t\teveProbeExec();\n"
+                 + "\t\t\t}\n"
+                 + "\t\t}).start();\n")
+JAVA_END_ANCHOR = "\t@Override\n\tprotected boolean isPiPEnabled() {\n\t\treturn true;\n\t}\n}\n"
+
+## 注入用的 Java 方法本体（**可审阅的独立文件**，别塞回本脚本 —— 里面有 Java 的 '\\n' 字面量，
+## 放进 Python 字符串要转义两层，看不清楚）。文件在 `tools/android/` 下随仓库入库。
+JAVA_HOOK = os.path.join(ROOT, "tools", "android", "eve_native_lib_hook.java")
+
 ## 本轮**应当**写入但还没写入的补丁（供 `--check` 当发布门槛用）
 _MISSING: list = []
 DAEMON_OFF = """# %s 关掉 gradle daemon：
@@ -215,6 +243,48 @@ def ensure_gradle_props(check_only: bool) -> None:
     print("✓ 已写入 %s" % GRADLE_PROPS)
 
 
+def ensure_app_java(check_only: bool) -> None:
+    """往 GodotApp.java 注入「原生库目录落盘 + exec 自检」。
+
+    ★ 见 `JAVA_HOOK` 上方的注释：这是安卓上**唯一**能拿到
+      `ApplicationInfo.nativeLibraryDir` 的路子（Godot 没暴露它；`/proc/self/maps`
+      反推会被引擎自己的存储范围检查拒掉）。没有它，安卓点「加入房间」只会得到
+      一句「没找到内置的联机内核」，而内核其实就在包里。
+    ⚠️ GodotApp.java 属于构建模板（`android/build/` 已 gitignore）
+      ⇒ 模板重装后必须重跑本脚本（幂等）。
+    """
+    if not os.path.exists(APP_JAVA):
+        print("⚠ 找不到 %s，跳过（模板结构可能变了）" % APP_JAVA)
+        return
+    s = io.open(APP_JAVA, encoding="utf-8").read()
+    if "eveWriteNativeLibInfo" in s:
+        print("· GodotApp.java 钩子已就位")
+        return
+    if not os.path.exists(JAVA_HOOK):
+        print("✗ 缺 %s ⇒ 无法注入 Java 钩子" % JAVA_HOOK)
+        _MISSING.append("GodotApp.java 钩子（缺源文件）")
+        return
+    _MISSING.append("GodotApp.java 钩子")
+    print("── GodotApp.java 缺「原生库目录落盘」钩子（安卓联机靠它定位内核）")
+    if check_only:
+        print("（--check：未写盘）")
+        return
+    if JAVA_CALL_ANCHOR not in s or JAVA_END_ANCHOR not in s:
+        print("✗ GodotApp.java 的锚点没找到（模板结构变了）⇒ 拒绝写盘，请人工核对")
+        return
+    body = io.open(JAVA_HOOK, encoding="utf-8").read().rstrip("\n")
+    s = s.replace(JAVA_CALL_ANCHOR, JAVA_CALL_NEW, 1)
+    s = s.replace(JAVA_END_ANCHOR,
+                  "\t@Override\n\tprotected boolean isPiPEnabled() {\n\t\treturn true;\n\t}\n\n"
+                  + body + "\n}\n", 1)
+    # 后置断言：注入后两个方法名必须都在（⛔ 别再「看起来打了补丁」）
+    if "eveWriteNativeLibInfo" not in s or "eveProbeExec" not in s:
+        print("✗ 注入后方法名不全 ⇒ 拒绝写盘")
+        return
+    io.open(APP_JAVA, "w", encoding="utf-8", newline="").write(s)
+    print("✓ 已写入 %s" % APP_JAVA)
+
+
 def main() -> int:
     check_only = "--check" in sys.argv
     ensure_build_version(check_only)
@@ -223,6 +293,7 @@ def main() -> int:
     if not os.path.exists(GRADLE):
         print("✗ 找不到 %s（先在 Godot 里安装 Android 构建模板）" % GRADLE)
         return 2
+    ensure_app_java(check_only)
     s = io.open(GRADLE, encoding="utf-8").read()
     orig = s
     todo = []

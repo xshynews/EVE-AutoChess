@@ -32,6 +32,7 @@ func _ready() -> void:
 	_run_timed("_t_invalid", _t_invalid)
 	_run_timed("_t_beats", _t_beats)
 	_run_timed("_t_deal", _t_deal)
+	_run_timed("_t_grab_flow", _t_grab_flow)
 	_run_timed("_t_autoplay", _t_autoplay)
 	_run_timed("_t_table", _t_table)
 	_run_timed("_t_eval", _t_eval)
@@ -340,7 +341,10 @@ func _t_autoplay() -> void:
 			guard += 1
 			var seat: int = int(g.turn)
 			if int(g.phase) == int(G.Phase.BID):
-				g.bid(seat, AI.bid_score(g, seat))
+				var rb: Dictionary = g.bid(seat, AI.want_bid(g, seat))
+				if bool(rb.get("redeal", false)):
+					# ★ 流局重发：种子派生（确定性红线）—— 和联机房主同一套算法
+					g.start(90000 + k + 7919 * int(g.redeals))
 				continue
 			var mv: Dictionary = AI.choose(g, seat)
 			if mv.has("cards"):
@@ -393,21 +397,27 @@ func _t_table() -> void:
 	add_child(t)
 	# ⚠️ 必须先定尺寸再开局：所有坐标都是按 `size` 算的
 	t.size = Vector2(1920, 1080)
-	# 固定 seed ⇒ 牌局可复现（红了能照着同一副牌重放）
-	t.call("_new_game", 20261006)
+	# ★ 随机起点（抢地主制）⇒ 先重发到「起点 = 座位 0」，保住「玩家先表态」的测试前提
+	var sv0: int = _redeal_until_starter0(t)
 	var g = t.get("game")
 
-	# ── ① 开局：轮到玩家叫分 ──
-	_ok(int(g.turn) == 0, "开局轮到座位 0（玩家）")
+	# ── ① 开局：轮到玩家叫地主 ──
+	_ok(int(g.turn) == 0, "开局轮到座位 0（玩家；起点 seed=%d，同 seed 恒定复现）" % sv0)
 	_ok(bool(t.call("_is_human_turn")), "开局是玩家的回合")
 	var ids := _btn_ids(t)
-	_ok(ids.has("bid0") and ids.has("bid3"), "叫分按钮齐（%s）" % str(ids))
+	_ok(ids.has("bid0") and ids.has("bid1"),
+			"★ 抢地主制按钮齐（bid0=不叫 / bid1=叫地主，实际 %s）" % str(ids))
+	_ok(not ids.has("bid2") and not ids.has("bid3"), "★ 旧的四颗叫分按钮已删（bid2/bid3 不存在）")
 	_ok(not ids.has("play"), "叫分阶段不摆「出牌」按钮")
 
-	# ── ② 点「3 分」⇒ 玩家当地主 ──
-	_click_btn(t, "bid3")
-	_ok(int(g.phase) == int(G.Phase.PLAY), "叫 3 分后进入出牌阶段")
-	_ok(int(g.landlord) == 0, "★ 玩家（座位 0）当地主")
+	# ── ② 点「叫地主」→ 进抢阶段 → AI 表态 → 轮到玩家就反抢 ⇒ 玩家必是最后一个抢的人 ──
+	_click_btn(t, "bid1")
+	_ok(int(g.bid_stage) == int(G.BidStage.GRAB), "★ 叫完进入抢地主阶段")
+	_drive_bid_to_play(t)
+	_ok(int(g.phase) == int(G.Phase.PLAY), "叫/抢收口 ⇒ 进入出牌阶段")
+	_ok(int(g.landlord) == 0, "★ 玩家（座位 0）当地主（反抢排队尾 ⇒ 最后抢的必是玩家）")
+	_ok(int(g.base_score) == 1 << int(g.grabs),
+			"★ 底分 = 2^抢的次数（抢 %d 次 ⇒ 底分 %d）" % [int(g.grabs), int(g.base_score)])
 	_ok((g.hand_of(0) as Array).size() == 20,
 			"地主拿 20 张（实际 %d）" % (g.hand_of(0) as Array).size())
 
@@ -748,7 +758,7 @@ func _cards_text(cards: Array) -> String:
 ##      局 A：L3 当地主 + L2 当农民
 ##      局 B：L2 当地主 + L3 当农民
 ##    牌的好坏被配对消掉，剩下的差异就是 AI 的差异。
-## ⚠️ 叫分两边共用 ⇒ 两局地主一定是同一家（变量控制住）。
+## ⚠️ 叫/抢口径两边共用（want_bid）⇒ 同 seed 下两局地主一定是同一家（变量控制住）。
 ## ⚠️ 种子固定 ⇒ **结果可复现**（不是统计抽签，红了就是真的退步了）。
 func _t_ab() -> void:
 	print("[12] L3 vs L2 同牌对打（身份互换）")
@@ -796,7 +806,10 @@ func _duel(seed_v: int, l3_as_landlord: bool) -> int:
 		guard += 1
 		var seat: int = int(g.turn)
 		if int(g.phase) == int(G.Phase.BID):
-			g.bid(seat, AI.bid_score(g, seat))
+			var rb: Dictionary = g.bid(seat, AI.want_bid(g, seat))
+			if bool(rb.get("redeal", false)):
+				# ★ 流局重发：种子派生；同 seed ⇒ A/B 两局的重发序列与地主完全一致
+				g.start(seed_v + 7919 * int(g.redeals))
 			continue
 		var seat_is_l3: bool = (seat == int(g.landlord)) == l3_as_landlord
 		var mv: Dictionary = AI.choose(g, seat) if seat_is_l3 else AI.choose_l2(g, seat)
@@ -831,8 +844,13 @@ func _t_layout() -> void:
 	var t: Control = T.new()
 	add_child(t)
 	t.size = Vector2(1920, 1080)
-	t.call("_new_game", 20261006)
+	# ★ 随机起点 ⇒ 重发到「起点 = 座位 0」+ 一路驱动到出牌阶段
+	#   ⚠️ 驱动里可能重发（流局）/换 game 对象 ⇒ **之后必须重新取 `t.get("game")`**
+	_redeal_until_starter0(t)
+	_drive_bid_to_play(t)
 	var g = t.get("game")
+	_ok(int(g.phase) == int(G.Phase.PLAY) and int(g.landlord) == 0,
+			"★ 驱动到「玩家（座位 0）当地主、出牌阶段」")
 
 	# ── ① 上下家语义（用户 2026-10-06 指出"反了"；2026-10-07 又按玩家反馈对调）──
 	#  ⚠️ 依据是**出牌顺序**而不是画面位置：座位 1 在你**之后**出牌 ⇒ 下家。
@@ -863,9 +881,7 @@ func _t_layout() -> void:
 	_ok(p2.x < cx - 40.0 and absf(p2.y - cy) < 2.0, "★ 上家（座位 2）在**正左**（%s）" % str(p2))
 	_ok(pu.y < cy - 40.0, "★ 上方是底牌位（%s）" % str(pu))
 
-	# ── ③ 叫分文本：一进 PLAY 就全清（用户：「平时不需要显示」）──
-	t.call("_do_bid", 0, 3)
-	_ok(int(g.phase) == int(G.Phase.PLAY), "叫 3 分 ⇒ 直接进出牌阶段")
+	# ── ③ 叫/抢文本：一进 PLAY 就全清（用户：「平时不需要显示」）──
 	var bt: Array = t.get("_bid_text")
 	_ok(String(bt[0]) == "" and String(bt[1]) == "" and String(bt[2]) == "",
 			"★ 进 PLAY 后叫分文本全清（实际 %s）" % str(bt))
@@ -964,6 +980,17 @@ func _t_deal_anim() -> void:
 	_ok(bool(t.get("_dealing")), "★ 点「开始游戏」⇒ 进入发牌动画")
 	var g = t.get("game")
 	_ok(g != null, "★ 点「开始游戏」才建局")
+	# ★ 抢地主制：起点**随机** ⇒ 重开到「起点 = 座位 0（玩家）」为止，
+	#   后面「发完才出叫/抢按钮」的断言才有稳定前提。
+	#   （重开直接走 `_start_game`：点击通道 ② 已经验过，这里只换牌局。）
+	var retry := 0
+	while int(g.bid_starter) != 0 and retry < 20:
+		retry += 1
+		# ⚠️ 显式换 seed：`_start_game(-1)` 的「随机」种子是 `时间戳 & 0xFFFF`，
+		#   同一秒内重开 20 次拿到的都是**同一个**种子 ⇒ 永远重不到（实测踩过）。
+		t.call("_start_game", 777000 + retry)
+		g = t.get("game")
+	_ok(int(g.bid_starter) == 0, "★ 重开到「起点 = 座位 0」（重试 %d 次）" % retry)
 	# ★★ 数据层必须**当场就是 17 张**：动画只影响「画」
 	_ok((g.hand_of(0) as Array).size() == 17,
 			"★★ 动画一开始，数据层手牌**就已经是 17 张**（动画只影响画，不是边发边塞）")
@@ -1016,10 +1043,13 @@ func _t_deal_anim() -> void:
 	_ok(absf(float(t.call("_deal_progress")) - 17.0) < 0.001,
 			"★ 发牌进度到 17 张（实际 %.2f）" % float(t.call("_deal_progress")))
 	t.call("_process", 0.05)
-	_ok(bool(t.call("_is_human_turn")), "发完轮到玩家（座位 0 先叫）")
+	# ★ 抢地主制：起点**随机**（同 seed 恒定复现）⇒ 钉「发完后处于叫阶段」即可，
+	#   ⛔ 别再钉「座位 0 先叫」（那是旧叫分制的假设）
+	_ok(int(g.phase) == int(G.Phase.BID), "发完处于叫地主阶段")
+	_ok(int(g.turn) == int(g.bid_starter), "发完轮到本局随机选定的起点座位（%d）" % int(g.turn))
 	var ids2 := _btn_ids(t)
-	_ok(ids2.has("bid0") and ids2.has("bid3"),
-			"★★ 发完**才**出现叫分按钮（实际 %s）" % str(ids2))
+	_ok(ids2.has("bid0") and ids2.has("bid1"),
+			"★★ 发完**才**出现叫/抢按钮（实际 %s）" % str(ids2))
 	_ok(String(t.get("_status")).contains("叫"),
 			"状态栏切到叫分（实际「%s」）" % String(t.get("_status")))
 
@@ -1050,3 +1080,97 @@ func _has_bid(ids: Array) -> bool:
 		if String(i).begins_with("bid"):
 			return true
 	return false
+
+
+## ★ 抢地主制下起点是**随机**的 ⇒ 重发到「起点 = 座位 0」为止，
+##   保住「玩家先表态、玩家当地主」这条测试前提（同 seed 恒定复现）。
+func _redeal_until_starter0(t: Control) -> int:
+	var sv := 20261006
+	t.call("_new_game", sv)
+	var g = t.get("game")
+	var guard := 0
+	while int(g.turn) != 0 and guard < 500:
+		guard += 1
+		sv += 1
+		t.call("_new_game", sv)
+		g = t.get("game")
+	return sv
+
+
+## 驱动叫/抢阶段直到收口。★ 玩家是叫者 ⇒ 反抢排在队尾 ⇒ 「轮到玩家就抢」
+##   就保证玩家是**最后一个抢的人**（AI 抢不抢都不影响结论）。
+func _drive_bid_to_play(t: Control) -> void:
+	var g = t.get("game")
+	var guard := 0
+	while int(g.phase) == int(G.Phase.BID) and guard < 24:
+		guard += 1
+		if bool(t.call("_is_human_turn")):
+			_click_btn(t, "bid1")
+		else:
+			t.call("_process", 5.0)      # AI 表态一步
+
+
+## ══════════════════════════════════════════════════════════
+## 抢地主状态机（2026-10-12 用户定稿：一圈制 · 反抢 · 弃权无资格 · 流局重发）
+func _t_grab_flow() -> void:
+	print("[8b] 抢地主状态机")
+	# ── ① 随机起点是**确定性**的（从发牌 rng 派生 ⇒ 同 seed 连起点都可复现）──
+	var g1 = G.new()
+	g1.start(424242)
+	var g2 = G.new()
+	g2.start(424242)
+	_ok(int(g1.turn) == int(g2.turn),
+			"★ 同 seed ⇒ 同一个叫地主起点（座位 %d）" % int(g1.turn))
+	_ok(str(g1.hands) == str(g2.hands), "同 seed ⇒ 同一副牌")
+
+	# ── ② 反抢：叫者被抢后还有一次反抢，且排在队尾（最后一问）──
+	var g = G.new()
+	g.start(424242)
+	var opener: int = int(g.turn)
+	_ok(bool(g.bid(opener, true)["ok"]), "起点叫地主")
+	_ok(int(g.bid_stage) == int(G.BidStage.GRAB), "进入抢地主阶段")
+	var others: Array = [(opener + 1) % 3, (opener + 2) % 3]
+	_ok(bool(g.bid(int(others[0]), true)["ok"]), "下家抢地主")
+	_ok(int(g.grabs) == 1 and int(g.claimant) == int(others[0]),
+			"抢 1 次 ⇒ 抢数 +1、当前抢到的人正确")
+	_ok(bool(g.bid(int(others[1]), false)["ok"]), "再下家不抢")
+	_ok(int(g.turn) == opener, "★ 问询绕回叫者（反抢 = 队尾最后一问）")
+	_ok(bool(g.bid(opener, true)["ok"]), "叫者反抢")
+	_ok(int(g.landlord) == opener and int(g.phase) == int(G.Phase.PLAY),
+			"★ 最后抢的人（反抢的叫者）当地主；反抢后立即收口（一圈制，没人再被问）")
+	_ok(int(g.grabs) == 2 and int(g.base_score) == 4, "★ 抢 2 次 ⇒ 底分 4（2^2）")
+	_ok((g.hand_of(opener) as Array).size() == 20, "地主 20 张")
+
+	# ── ③ 「不叫」= 弃权：抢阶段没有他的份 ──
+	var d = G.new()
+	d.start(424242)
+	var st: int = int(d.turn)
+	_ok(bool(d.bid(st, false)["ok"]), "起点不叫（弃权）")
+	var s2: int = int(d.turn)
+	_ok(s2 != st, "轮转到下一位")
+	_ok(bool(d.bid(s2, true)["ok"]), "下一位叫地主")
+	_ok(int(d.turn) != st,
+			"★ 弃权者不在问询队列里（轮到 %d，不是弃权的 %d）" % [int(d.turn), st])
+	_ok(bool(d.bid(int(d.turn), false)["ok"]), "另一家不抢")
+	_ok(int(d.landlord) == s2 and int(d.phase) == int(G.Phase.PLAY),
+			"★ 没人抢 ⇒ 叫地主的人当地主（底分 %d）" % int(d.base_score))
+	_ok(int(d.base_score) == 1, "★ 没人抢 ⇒ 底分 1")
+
+	# ── ④ 三家都不叫 ⇒ 流局重发（redeal 标记 + 计数）──
+	var e = G.new()
+	e.start(424242)
+	var st4: int = int(e.turn)
+	var r1: Dictionary = e.bid(st4, false)
+	_ok(not bool(r1["redeal"]), "第一家不叫还不算流局")
+	e.bid(int(e.turn), false)
+	var r3: Dictionary = e.bid(int(e.turn), false)
+	_ok(bool(r3["redeal"]) and int(e.redeals) == 1,
+			"★ 三家都不叫 ⇒ 流局（redeal 标记 + 计数 1；⛔ 旧版是座位 0 兜底当地主）")
+
+	# ── ⑤ 轮次校验保留：没轮到的表态一律拒 ──
+	var f = G.new()
+	f.start(424242)
+	var st5: int = int(f.turn)
+	var other5: int = (st5 + 1) % 3
+	_ok(not bool(f.bid(other5, true)["ok"]), "★ 没轮到的座位叫地主 ⇒ 被拒（联机防伪造的根基）")
+	_ok(int(f.phase) == int(G.Phase.BID) and int(f.claimant) == -1, "被拒的表态不改变局面")

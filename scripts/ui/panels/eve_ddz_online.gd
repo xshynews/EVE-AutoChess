@@ -63,7 +63,13 @@ var _btn_close: Button = null
 func _ready() -> void:
 	window_title = T.t("DDZ_ON_TITLE", "联机对战  ONLINE")
 	layout_key = "ddz_online"
+	# ★★ 必须**在 `super()` 之前**置位：✕ 是在标题栏建立时按 `closable` 决定画不画的。
+	#    没有 ✕ 的后果（2026-10-12 用户实测报障「不能点返回」）：牌桌在面板可见时
+	#    **吞掉全部输入**，而 CHOOSE 阶段又没有「离开房间」⇒ 玩家卡死在面板里。
+	closable = true
 	super()
+	# ✕ 与牌桌的「← 返回」走同一条路（见 `hide_panel()`）
+	close_requested.connect(hide_panel)
 	# ⚠️⚠️ `EveWindow` **不会**自动调 `_build_contents()`（设置窗是自己调的）——
 	#   漏了这一步的表现是「窗框和标题都在、内容一片空」，而且**不报错**（实测踩过）。
 	_build_contents()
@@ -254,6 +260,17 @@ func _dismiss() -> void:
 	panel_closed.emit()
 
 
+## 收起面板。★ 标题栏 ✕ 与牌桌的「← 返回」都走这里（两个入口一条路）。
+##
+## ⛔ 对局进行中**只收面板、不拆房间**：牌局在房主手里，点一下 ✕ 就把房间拆了
+##    等于误伤整桌人。要真离开请用面板上的「离开房间」。
+func hide_panel() -> void:
+	if room != null and phase == Phase.PLAYING:
+		visible = false
+		return
+	_dismiss()
+
+
 func _close_room() -> void:
 	if room != null:
 		room.close()
@@ -308,6 +325,14 @@ func _on_join_requested(peer_id: int, player_name: String) -> void:
 
 func _on_room_failed(reason: String) -> void:
 	_set_status(reason)
+	# ★★ 对局进行中失败（典型：房主掉线）⇒ 必须让牌桌**干净退出联机模式**。
+	#    否则牌桌会继续渲染那份「按我的座位裁好」的旧视图，而 `_my_seat()` 已经漂回 0
+	#    ⇒ 手牌行去画房主的 `-1` 占位牌 ⇒ 屏幕上一排**白色的 3**（2026-10-12 真机踩过）。
+	if phase == Phase.PLAYING:
+		match_ended.emit()
+		# ⚠️ `match_ended` 的接收方（牌桌）会顺手把面板隐藏 ⇒ 这里要**再显出来**，
+		#    否则玩家看不到失败原因、也点不到「重试」。
+		visible = true
 	_set_phase(Phase.FAILED)
 
 

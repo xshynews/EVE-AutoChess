@@ -11,12 +11,15 @@ const R := preload("res://scripts/card/ddz/ddz_rules.gd")
 const P := preload("res://scripts/card/ddz/ddz_plays.gd")
 
 enum Phase { BID, PLAY, OVER }
+## BID 阶段的两步：先「叫地主」（随机起点按序），有人叫了才进「抢地主」。
+enum BidStage { CALL, GRAB }
 
 const SEATS := 3
 const HAND_SIZE := 17
 const BOTTOM_SIZE := 3
-## 叫分上限。叫到它直接定地主；超出范围的叫分一律拒绝（联机时叫分来自客户端）。
-const MAX_BID := 3
+## ★ 流局重发的防爆上限：连续这么多次「三家都不叫」后，强制让起点座位当地主。
+##   （三家全不叫的概率本来就极低，这个兜底只为「绝不死循环」。）
+const MAX_REDEALS := 5
 
 var hands: Array = [[], [], []]        ## 三家手牌（牌 id 数组）
 var bottom: Array = []                 ## 底牌（叫完地主才翻开并归地主）
@@ -25,10 +28,26 @@ var landlord := -1                     ## 地主座位（-1 = 未定）
 var turn := 0                          ## 当前该谁动
 var last_play: Dictionary = {}         ## {"seat": int, "cards": Array, "info": Dictionary}
 var pass_streak := 0                   ## 连续过牌数；满 2 ⇒ 重新开轮
-var bid_best := -1                     ## 当前最高叫分
-var bid_seat := -1
+## ══ 抢地主（BID 阶段）══ 规则（用户 2026-10-12 定稿）：
+##   ① 随机起点按序「叫地主」，**全不叫 = 流局重新发牌**；
+##   ② 有人叫后进「抢」：问询队列 = 叫者的下家→再下家（**剔除叫阶段弃权者**），
+##      走完后若有人抢过，再把**叫者**排到队尾问一次（= 反抢）；
+##      ⛔ 一圈制：每人最多一次表态，不是循环抢；
+##   ③ **最后抢的人当地主**；没人抢 = 叫者当地主；
+##   ④ 每抢一次基础倍数 ×2（base_score = 2^grabs）。
+var bid_stage := BidStage.CALL
+var claimant := -1                     ## 当前叫/抢到的人（-1 = 还没有人）
+var grabs := 0                         ## 抢的次数
+var bid_pass := [false, false, false]  ## 叫阶段「不叫」= 弃权 ⇒ 抢阶段没资格
+var bid_asked := [false, false, false] ## 叫阶段是否已被问过（走轮用）
+var ask_queue: Array = []              ## 抢阶段的问询队列（座位号）
+var ask_idx := 0
+var _opener := -1                      ## 最初的叫者
+var _opener_asked := false             ## 叫者的反抢问过没有
+var bid_starter := -1                  ## 本局叫地主的起点座位（随机派生）
+var redeals := 0                       ## 流局重发次数
 var winner := -1
-var base_score := 1                    ## 叫分（倍数基数）
+var base_score := 1                    ## 倍数基数（抢地主制：2^抢的次数）
 var log_lines: Array[String] = []      ## 人读的对局记录（验证/调试用）
 ## ★ 已打出的牌（三家合计）—— **公开信息**，`ddz_eval` 的记牌器靠它算「外面还剩什么」。
 ## ⚠️ 底牌不算「打出」（它归地主手里）；叫完地主后底牌是公开的，但仍在某人手上。
@@ -41,7 +60,7 @@ var spring := false
 var farmer_plays := 0                  ## 两个农民累计出牌次数（判春天用）
 
 
-## 开一局：洗牌 + 发牌 + 定座位 0 先叫。
+## 开一局：洗牌 + 发牌 + **随机起点**叫地主。
 func start(seed_value: int) -> void:
 	var rng := RandomNumberGenerator.new()
 	# ★ 显式 seed —— 同一 seed 必然发到同一副牌（P2P 的同步基础）
@@ -60,11 +79,22 @@ func start(seed_value: int) -> void:
 		(hands[s] as Array).sort()
 	phase = Phase.BID
 	landlord = -1
-	turn = 0
+	# ★★ 叫地主的起点**随机**（2026-10-12 用户定稿）：但必须从**发牌 rng** 派生 ——
+	#    同一 seed 连「谁先叫」都可复现（⛔ 绝不碰全局 randf/randi，那会破坏确定性）。
+	turn = rng.randi_range(0, SEATS - 1)
+	bid_starter = int(turn)
 	last_play = {}
 	pass_streak = 0
-	bid_best = -1
-	bid_seat = -1
+	bid_stage = BidStage.CALL
+	claimant = -1
+	grabs = 0
+	bid_pass = [false, false, false]
+	bid_asked = [false, false, false]
+	ask_queue = []
+	ask_idx = 0
+	_opener = -1
+	_opener_asked = false
+	redeals = 0
 	winner = -1
 	base_score = 1
 	played = []
@@ -73,53 +103,116 @@ func start(seed_value: int) -> void:
 	farmer_plays = 0
 	log_lines = []
 	log_lines.append("发牌（seed=%d）" % seed_value)
+	log_lines.append("叫地主起点 = 座位 %d" % int(turn))
 
 
-## 叫分（0 = 不叫，1~3 = 叫几分）。返回 {"ok": bool, "reason": String}。
-func bid(seat: int, score: int) -> Dictionary:
+## 叫/抢地主。`grab` = true 表示「叫地主 / 抢地主」，false = 「不叫 / 不抢」。
+##
+## 返回 `{"ok", "reason", "done"(本阶段是否收口), "redeal"(需要流局重发)}`。
+## ⛔ 轮次强校验保留（`seat != turn` 拒绝）—— 联机时命令来自客户端，不能信。
+func bid(seat: int, grab: bool) -> Dictionary:
 	if phase != Phase.BID:
-		return _deny("不在叫分阶段")
+		return _deny("不在叫/抢地主阶段")
 	if seat != turn:
 		return _deny("还没轮到你")
-	if score < 0 or score > MAX_BID:
-		return _deny("叫分只能是 0~%d" % MAX_BID)
-	if score != 0 and score <= bid_best:
-		return _deny("叫分必须高于当前最高分")
-	if score > 0:
-		bid_best = score
-		bid_seat = seat
-		base_score = score
-		log_lines.append("座位 %d 叫 %d 分" % [seat, score])
+	if bid_stage == BidStage.CALL:
+		return _bid_call(seat, grab)
+	return _bid_grab(seat, grab)
+
+
+## ── 第一步：叫地主（随机起点按序，每人一次；全不叫 = 流局）──
+func _bid_call(seat: int, want: bool) -> Dictionary:
+	bid_asked[seat] = true
+	if want:
+		claimant = seat
+		_opener = seat
+		log_lines.append("座位 %d 叫地主" % seat)
+		_enter_grab()
+		return _advance_grab()
+	bid_pass[seat] = true
+	log_lines.append("座位 %d 不叫" % seat)
+	var nxt := _next_call_seat((seat + 1) % SEATS)
+	if nxt < 0:
+		# ⛔ 防爆兜底（实际到不了）：连续 MAX_REDEALS 次流局后不再重发，
+		#   让本局**起点座位**直接当地主（底分 1）—— 规则让位于「绝不死循环」。
+		if redeals >= MAX_REDEALS:
+			claimant = bid_starter
+			grabs = 0
+			log_lines.append("连续 %d 次流局 ⇒ 兜底：座位 %d 当地主" % [redeals, bid_starter])
+			_decide_landlord()
+			return {"ok": true, "reason": "", "done": true, "redeal": false}
+		# ★ 标准：三家都不叫 = 流局重新发牌（2026-10-12 用户定稿；旧版是座位 0 兜底）
+		redeals += 1
+		log_lines.append("三家都不叫 ⇒ 流局，重新发牌（第 %d 次）" % redeals)
+		return {"ok": true, "reason": "", "done": true, "redeal": true}
+	turn = nxt
+	return {"ok": true, "reason": "", "done": false, "redeal": false}
+
+
+## 叫阶段还没被问过的下一个座位（-1 = 全问过了）。
+func _next_call_seat(from: int) -> int:
+	for k in SEATS:
+		var s := (from + k) % SEATS
+		if not bool(bid_asked[s]):
+			return s
+	return -1
+
+
+## ── 第二步：抢地主。建问询队列：叫者的下家→再下家，**剔除叫阶段弃权者**。──
+func _enter_grab() -> void:
+	bid_stage = BidStage.GRAB
+	ask_queue = []
+	for k in range(1, SEATS):
+		var s := (_opener + k) % SEATS
+		# ★「不叫」等于放弃：叫阶段弃权的人**没有抢的资格**（用户定稿的关键细节）
+		if not bool(bid_pass[s]):
+			ask_queue.append(s)
+	ask_idx = 0
+	_opener_asked = false
+
+
+func _bid_grab(seat: int, want: bool) -> Dictionary:
+	if want:
+		claimant = seat
+		grabs += 1
+		log_lines.append("座位 %d 抢地主（第 %d 抢）" % [seat, grabs])
 	else:
-		log_lines.append("座位 %d 不叫" % seat)
-	# 3 分直接定；或者转完一圈有人叫过就定
-	if bid_best == MAX_BID or (seat == SEATS - 1 and bid_seat >= 0):
-		_landlord_decided()
-		return {"ok": true, "reason": "", "done": true}
-	if seat == SEATS - 1:
-		# 三家都不叫 ⇒ 座位 0 兜底当地主（不重发，避免驱动层陷入死循环）
-		bid_seat = 0
-		base_score = 1
-		log_lines.append("三家不叫 ⇒ 座位 0 兜底当地主")
-		_landlord_decided()
-		return {"ok": true, "reason": "", "done": true}
-	turn = (seat + 1) % SEATS
-	return {"ok": true, "reason": "", "done": false}
+		log_lines.append("座位 %d 不抢" % seat)
+	ask_idx += 1
+	return _advance_grab()
 
 
-func _landlord_decided() -> void:
-	landlord = bid_seat
+## 推进抢阶段。★ 反抢是**懒追加**的：只有真有人抢过，才把叫者排到队尾问一次
+##   （没人抢时多问叫者一次毫无意义 —— 他已经是地主了）。
+func _advance_grab() -> Dictionary:
+	if ask_idx < ask_queue.size():
+		turn = int(ask_queue[ask_idx])
+		return {"ok": true, "reason": "", "done": false, "redeal": false}
+	if grabs > 0 and not _opener_asked:
+		_opener_asked = true
+		ask_queue.append(_opener)
+		turn = _opener
+		return {"ok": true, "reason": "", "done": false, "redeal": false}
+	_decide_landlord()
+	return {"ok": true, "reason": "", "done": true, "redeal": false}
+
+
+func _decide_landlord() -> void:
+	landlord = claimant
 	(hands[landlord] as Array).append_array(bottom)
 	(hands[landlord] as Array).sort()
 	phase = Phase.PLAY
 	turn = landlord
 	last_play = {}
 	pass_streak = 0
+	# ★ 抢地主制的基础分：**每抢一次 ×2**（没人抢 = 1）。结算公式（底分 × 倍数）不变。
+	base_score = 1 << grabs
 	# 出牌阶段才开始数炸弹；底牌的 3 张不算"打过"
 	bombs = 0
 	farmer_plays = 0
 	spring = false
-	log_lines.append("地主 = 座位 %d，底牌 %s" % [landlord,
+	log_lines.append("地主 = 座位 %d（抢 %d 次，底分 %d），底牌 %s" % [landlord,
+			grabs, base_score,
 			", ".join(bottom.map(func(c): return R.label_of(int(c))))])
 
 

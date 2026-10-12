@@ -16,6 +16,7 @@ extends Node
 const ROOM := preload("res://scripts/net/ddz_room.gd")
 const NET := preload("res://scripts/net/ddz_net.gd")
 const G := preload("res://scripts/card/ddz/ddz_game.gd")
+const R := preload("res://scripts/card/ddz/ddz_rules.gd")
 const TABLE := "res://scenes/doudizhu.tscn"
 
 var _pass := 0
@@ -140,6 +141,39 @@ func _run() -> void:
 	var blank := G.new()
 	table.game = blank
 	_ok(not table._is_human_turn(), "★ 还没收到快照 ⇒ 不给操作（免得闪出一排点了没用的按钮）")
+
+	# ⑨ ★★ 房主掉线：房间被置空 + 面板切 FAILED ⇒ `_my_seat()` **不许**漂回 0。
+	#    漂了 ⇒ 手牌行会去画房主的 `-1` 占位牌 ⇒ `rank_of(-1)` 算出点数 3
+	#    ⇒ 屏幕上一排**白色的 3**（2026-10-12 真机踩过，用户报障）。
+	#    这里把视图重新贴回去，复刻"白 3 那一瞬间"的现场。
+	table._apply_online_view(_make_view(2, mine))
+	table._room = null
+	table._online.phase = table._online.Phase.FAILED
+	_ok(table._my_seat() == 2, "★ 房主掉线后 `_my_seat()` 仍是 2（不漂移）")
+	_ok(table.game.hand_of(table._my_seat()).size() == 17,
+			"★ 房主掉线后手牌仍是 17 张**真牌**（不是 -1 占位）")
+	var bad_id := 0
+	for c in table.game.hand_of(table._my_seat()):
+		if int(c) < 0:
+			bad_id += 1
+	_ok(bad_id == 0, "★★ 房主掉线后手牌里没有占位 -1（⛔ 否则就是一排白 3）")
+	# 钉住陷阱本身：`-1` 会被算成点数 3 ⇒ `_card_at` 那道 `id < 0` 的闸必须留着。
+	#   ⚠️ 哪天有人把 `rank_of/label_of` 改成能识别 -1，请同步改这条和 `_card_at` 的注释。
+	_ok(R.rank_of(-1) == 3, "★ 陷阱钉死：rank_of(-1) == 3（白 3 的成因，见 `_card_at` 的守卫）")
+
+	# ⑩ ★★ 面板必须可关闭：牌桌在面板可见时**吞掉全部输入**（只放行「← 返回」），
+	#    若面板没有 ✕ 且 CHOOSE 阶段又没有「离开房间」⇒ 点了「联机对战」之后
+	#    玩家**卡死在面板里出不来**（2026-10-12 用户报障：不能点返回）。
+	_ok(table._online.closable, "★ 联机面板 closable=true（标题栏画 ✕）")
+	_ok(table._online.has_method("hide_panel"),
+			"★ 面板有 hide_panel()（✕ 与牌桌「返回」共用一条路）")
+	var closed := [false]
+	table._online.panel_closed.connect(func(): closed[0] = true)
+	table._online.hide_panel()
+	_ok(not table._online.visible, "★ hide_panel() 能收起面板")
+	_ok(closed[0], "★ 收起面板 ⇒ 发 panel_closed（牌桌据此清联机状态）")
+	_ok(table._online.phase == table._online.Phase.CHOOSE,
+			"★ 收起后回到 CHOOSE（可重新建房/加入）")
 
 	# ⑧ 回到单机：一切复原（离线路径不受影响）
 	table._leave_online()

@@ -99,17 +99,29 @@ func _run() -> void:
 		# ① 冒称：加入者1 跳过 `client_make_command`，直接发一条 seat=0（房主）的命令
 		#    ⚠️ 这里故意摸 `_tp`（房主权威的边界就在这条：**座位由连接身份决定**）
 		_c1._tp.send_to(1, {"t": ROOM.Msg.CMD,
-				"d": {"seat": 0, "kind": N.Kind.BID, "score": 3}})
+				"d": {"seat": 0, "kind": N.Kind.BID, "grab": true}})
 		await _frames(40)
-		_ok(int(g.bid_best) == -1, "★ 冒称座位 0 无效：房主没被它骗（bid_best=%d）" % int(g.bid_best))
-		# ② 正控：房主先不叫，轮到加入者1 时他合法叫 3 分 —— 必须记在他头上
-		_host.send_command(N.Kind.BID, {"score": 0})
-		await _wait(func(): return int(g.turn) == _c1.my_seat(), 3000)
-		_c1.send_command(N.Kind.BID, {"score": 3})
-		await _wait(func(): return int(g.bid_best) > 0, 3000)
-		_ok(int(g.bid_seat) == _c1.my_seat(),
-				"★ 合法命令按连接身份记账（bid_seat=%d，加入者1=%d）"
-				% [int(g.bid_seat), _c1.my_seat()])
+		_ok(int(g.claimant) == -1,
+				"★ 冒称座位 0 无效：房主没被它骗（claimant=%d）" % int(g.claimant))
+		# ② 正控：轮到加入者1 时他合法「叫地主」—— 必须记在他头上。
+		#    ★ 起点是随机的 ⇒ 前面轮到谁就让谁「不叫」（把牌局推到加入者1 的回合），
+		#      ⛔ 不能干等：房主是真人座位，没人替他表态，turn 永远不会自己走到 1。
+		var drive := 0
+		while int(g.phase) == int(G.Phase.BID) \
+				and int(g.turn) != _c1.my_seat() and drive < 8:
+			drive += 1
+			if int(g.turn) == 0:
+				_host.send_command(N.Kind.BID, {"grab": false})
+			elif int(g.turn) == _c2.my_seat():
+				_c2.send_command(N.Kind.BID, {"grab": false})
+			await _frames(20)
+		_ok(int(g.turn) == _c1.my_seat(),
+				"驱动到加入者1 的叫/抢回合（推了 %d 步）" % drive)
+		_c1.send_command(N.Kind.BID, {"grab": true})
+		await _wait(func(): return int(g.claimant) == _c1.my_seat(), 3000)
+		_ok(int(g.claimant) == _c1.my_seat(),
+				"★ 合法命令按连接身份记账（claimant=%d，加入者1=%d）"
+				% [int(g.claimant), _c1.my_seat()])
 	else:
 		_ok(true, "（非叫分阶段，跳过身份用例）")
 
@@ -125,8 +137,9 @@ func _run() -> void:
 		var payload := {}
 		if int(g.phase) == int(G.Phase.BID):
 			kind = N.Kind.BID
-			# 胜负不影响验收：只为让三家的叫分路径都被走到
-			payload = {"score": 1 if turn == 2 else 0}
+			# 胜负不影响验收：只为让三家的「叫/抢」路径都被走到
+			#   ★ 抢地主制：payload 是 bool（座位 2 叫/抢，其余不叫/不抢）
+			payload = {"grab": (turn == 2)}
 		else:
 			var cands: Array = []
 			if turn == 0:

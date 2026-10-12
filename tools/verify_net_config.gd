@@ -202,6 +202,42 @@ func _t_android_paths() -> void:
 	_ok(TUN.parse_native_lib_dir("/vendor/lib/egl/libEGL.so\n/apex/x/lib64/libc.so") == "",
 			"★ 只有系统库目录时返回空（⛔ 不能拿系统目录当 exec 位置）")
 
+	# ── Java 落盘信息（N01 的正路）───────────────────────────────────────────
+	# ★★ 为什么非得有它：Godot 没暴露 ApplicationInfo.nativeLibraryDir，而 FileAccess
+	#    读 /proc、/data/app 会被引擎的存储范围检查拒掉 ⇒ 只剩 GodotApp.java 钩子这条路。
+	var java_out := "native_lib_dir=/data/app/~~AbC==/com.evezzq.autochess-XyZ==/lib/arm64\n" \
+			+ "core_exists=true\ncore_can_execute=true\ncore_size=5910252\nsdk_int=34\n"
+	var info := TUN.parse_lib_info(java_out)
+	_ok(info.get(TUN.INFO_LIB_DIR, "") == "/data/app/~~AbC==/com.evezzq.autochess-XyZ==/lib/arm64",
+			"★ 解析出原生库目录（⛔ 路径里带 `==` 也不能被首个 = 截错）")
+	_ok(str(info.get(TUN.INFO_CORE_EXISTS, "")) == "true", "读到 core_exists")
+	_ok(str(info.get(TUN.INFO_CORE_CAN_EXEC, "")) == "true", "读到 core_can_execute")
+	_ok(str(info.get("core_size", "")) == "5910252", "读到 core_size")
+	_ok(TUN.parse_lib_info("").is_empty(), "空文本 → 空字典（不崩）")
+	_ok(TUN.parse_lib_info("\n\n# 注释\n没有等号的行\n").is_empty(),
+			"空行/注释/无等号行一律忽略")
+	_ok(TUN.parse_lib_info("a=1\n =2\n").get("a", "") == "1", "键做 strip，脏键被丢弃")
+	# ★ 路径必须是 user://（= getFilesDir()）：写成绝对路径就会被存储范围检查挡掉。
+	_ok(TUN.LIB_INFO.begins_with("user://") and TUN.EXEC_PROBE.begins_with("user://"),
+			"Java 落盘文件走 user://（绝对路径会被存储范围检查拒掉）")
+	# ★★ 跨文件一致性：Java 钩子里的键名必须与 GDScript 常量一字不差 ——
+	#    这类「两边改名只改一边」的错会**静默**变成「安卓找不到内核」，必须有断言钉住。
+	var hook := FileAccess.open("res://tools/android/eve_native_lib_hook.java", FileAccess.READ)
+	if hook == null:
+		_ok(false, "★ 找得到 Java 钩子源文件（tools/android/eve_native_lib_hook.java）")
+	else:
+		var js := hook.get_as_text()
+		hook.close()
+		_ok(js.find("\"%s=\"" % TUN.INFO_LIB_DIR) > 0,
+				"Java 钩子写的键名 %s 与 GDScript 一侧一致" % TUN.INFO_LIB_DIR)
+		_ok(js.find("\"%s=\"" % TUN.INFO_CORE_EXISTS) > 0, "Java 钩子的 core_exists 键名一致")
+		_ok(js.find("\"%s=\"" % TUN.INFO_CORE_CAN_EXEC) > 0,
+				"Java 钩子的 core_can_execute 键名一致")
+		_ok(js.find("eve_native_lib_dir.txt") > 0 and js.find("eve_exec_probe.txt") > 0,
+				"Java 钩子的落盘文件名与 GDScript 一侧一致")
+		_ok(js.find("nativeLibraryDir") > 0,
+				"★ Java 钩子读的就是 ApplicationInfo.nativeLibraryDir（唯一可 exec 的位置）")
+
 
 # ══════════════════════════════════════════════ 工具
 

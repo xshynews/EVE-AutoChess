@@ -20,7 +20,7 @@ const P := preload("res://scripts/card/ddz/ddz_plays.gd")
 
 enum Role { HOST, CLIENT }
 
-## 命令种类。命令格式：`{"seat": int, "kind": Kind, "score": int, "cards": Array, "now_ms": int}`。
+## 命令种类。命令格式：`{"seat": int, "kind": Kind, "grab": bool, "cards": Array, "now_ms": int}`。
 enum Kind { BID, PLAY, PASS, PING }
 
 const SEATS := 3
@@ -55,6 +55,8 @@ var passed: Array = [false, false, false]
 
 ## 权威对局对象。`preload(...).new()` 推断不出类型，所以这里用动态类型。
 var _game = null
+## 基准发牌种子（流局重发时从它**派生**出新种子 ⇒ 全桌仍可复现同一副牌）。
+var _seed_value := 0
 
 
 # ---------------------------------------------------------------- 房主侧
@@ -126,6 +128,7 @@ func host_start(seed_value: int, now_ms: int = 0) -> Dictionary:
 		return _deny("已经开局了")
 	_game = G.new()
 	_game.start(seed_value)
+	_seed_value = seed_value
 	started = true
 	events = []
 	passed = [false, false, false]
@@ -202,6 +205,10 @@ func snapshot_for(seat: int) -> Dictionary:
 		"turn": int(_game.turn),
 		"landlord": int(_game.landlord),
 		"base_score": int(_game.base_score),
+		# ★ 抢地主进度（客户端按钮与「倍数」显示靠它）：0=叫地主阶段 1=抢地主阶段
+		"bid_stage": int(_game.bid_stage),
+		"claimant": int(_game.claimant),
+		"grabs": int(_game.grabs),
 		"pass_streak": int(_game.pass_streak),
 		"bombs": int(_game.bombs),
 		"spring": bool(_game.spring),
@@ -388,8 +395,9 @@ func _validate(cmd: Dictionary) -> String:
 		return "未知命令"
 	match int(cmd["kind"]):
 		Kind.BID:
-			if typeof(cmd.get("score")) != TYPE_INT:
-				return "叫分格式错误"
+			# ★ 抢地主制：payload 是 `grab`(bool) —— 叫地主/抢地主 = true，不叫/不抢 = false
+			if typeof(cmd.get("grab")) != TYPE_BOOL:
+				return "叫/抢格式错误"
 		Kind.PLAY:
 			return _validate_cards(cmd.get("cards"))
 		Kind.PING:
@@ -420,7 +428,7 @@ func _validate_cards(cards) -> String:
 func _dispatch(seat: int, kind: int, cmd: Dictionary) -> Dictionary:
 	match kind:
 		Kind.BID:
-			return _apply_bid(seat, int(cmd.get("score", 0)))
+			return _apply_bid(seat, bool(cmd.get("grab", false)))
 		Kind.PLAY:
 			return _apply_play(seat, cmd.get("cards", []))
 		Kind.PASS:
@@ -428,23 +436,39 @@ func _dispatch(seat: int, kind: int, cmd: Dictionary) -> Dictionary:
 	return _deny("未知命令 kind=%d" % kind)
 
 
-## 「局面是否前进」的签名。只看 turn 不够：叫 3 分定地主时 turn 可能不变。
+## 「局面是否前进」的签名。只看 turn 不够：
+##   ① 叫/抢阶段 turn 可能不变（抢完仍是同一家的回合情景）；
+##   ② 流局重发后 phase/turn 可能回到与重发前相同的组合。
+##   ⇒ 把抢地主的进度（抢了几次、谁抢到）也编进来。
 func _progress_sig() -> int:
 	if _game == null:
 		return 0
-	return int(_game.phase) * 100000 + int(_game.turn) * 1000 \
-			+ (_game.played as Array).size() * 10 + int(_game.pass_streak)
+	return int(_game.phase) * 1000000 + int(_game.turn) * 10000 \
+			+ (_game.played as Array).size() * 100 + int(_game.pass_streak) * 10 \
+			+ int(_game.grabs) * 3 + (int(_game.claimant) + 2)
 
 
-func _apply_bid(seat: int, score: int) -> Dictionary:
-	var res: Dictionary = _game.bid(seat, score)
+func _apply_bid(seat: int, grab) -> Dictionary:
+	# ⛔ 严格校验：命令来自客户端 —— 缺字段 / 类型不对一律拒，
+	#   不让畸形输入被 `bool()` 静默折算成「不叫」而推进局面。
+	if typeof(grab) != TYPE_BOOL:
+		return _deny("叫/抢参数缺失或类型不对")
+	var res: Dictionary = _game.bid(seat, grab)
 	if not bool(res.get("ok", false)):
 		return _deny(String(res.get("reason", "叫分被拒")))
 	_push_log("%s %s" % [_who(seat),
-			("叫 %d 分" % score) if score > 0 else "不叫"])
-	if bool(res.get("done", false)):
+			(("抢地主" if int(_game.bid_stage) == int(G.BidStage.GRAB) else "叫地主")
+					if grab else
+					("不抢" if int(_game.bid_stage) == int(G.BidStage.GRAB) else "不叫"))])
+	# ★★ 流局：重新发牌。种子从基准派生（确定性红线）⇒ 全桌仍能对出同一副牌。
+	#   ⛔ `log_lines` 里带 seed，绝不下发 —— 给玩家的通报走 `_push_log`（公开日志）。
+	if bool(res.get("redeal", false)):
+		_seed_value += 7919 * int(_game.redeals)
+		_game.start(_seed_value)
+		_push_log("三家都不叫，重新发牌（第 %d 局）" % int(_game.redeals))
+	if bool(res.get("done", false)) and int(_game.phase) == int(G.Phase.PLAY):
 		passed = [false, false, false]
-		_push_log("地主 = %s" % _who(int(_game.landlord)))
+		_push_log("地主 = %s（底分 %d）" % [_who(int(_game.landlord)), int(_game.base_score)])
 	return {"ok": true, "reason": "", "result": res}
 
 
@@ -477,7 +501,7 @@ func _apply_pass(seat: int) -> Dictionary:
 ## 走 `_dispatch()` 而不是 `apply_command()`，否则会被「该座位已交给托管」拒掉。
 func _auto_one_command(seat: int) -> void:
 	if int(_game.phase) == int(G.Phase.BID):
-		_dispatch(seat, Kind.BID, {"score": AI.bid_score(_game, seat)})
+		_dispatch(seat, Kind.BID, {"grab": AI.want_bid(_game, seat)})
 		return
 	var mv: Dictionary = AI.choose(_game, seat)
 	if not bool(mv.get("pass", false)):
