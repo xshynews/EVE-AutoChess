@@ -6,8 +6,8 @@ extends Node
 ## 比例 / 与金框的压叠关系只能人眼看 —— 出一张图扫一下。
 ##
 ## 跑法（⛔ 必须非 headless，否则拿不到图像）：
-##   "C:/godot/Godot_v4.7.2-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 6000 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 6000 \
 ##     res://tools/probe_card_face.tscn
 ##
 ## 产物：user://ddz_card_face.png

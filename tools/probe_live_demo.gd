@@ -3,7 +3,7 @@ extends Node
 ## ★ 53 轮 · **一键实机演示** —— 把备战席塞满全库 52 艘，开战看实机朝向
 ##
 ## 用法（**非 headless**，必须真渲）：
-##     Godot_v4.7.1-stable_win64.exe --path "F:\evezzq\eve自走棋918" res://tools/probe_live_demo.tscn
+##     "$GODOT_BIN" --path . res://tools/probe_live_demo.tscn
 ##
 ## 你将看到：
 ##   · 备战席 9 格全满（每格按 cost 1~5 排开，能看到每派系每吨位档的船）
@@ -72,5 +72,6 @@ func _inject() -> void:
 	print("")
 	print("  ★ 准备就绪。**删掉本脚本 `_ready()` 末尾的 `get_tree().quit()`**")
 	print("    并用编辑器启动：")
-	print("       Godot_v4.7.1-stable_win64.exe --path F:\\evezzq\\eve自走棋918 res://tools/probe_live_demo.tscn")
+	print("       <Godot 编辑器可执行文件> --path %s res://tools/probe_live_demo.tscn"
+			% ProjectSettings.globalize_path("res://").trim_suffix("/"))
 	print("    然后按 空格 或屏幕上的「开始战斗」按钮开战")

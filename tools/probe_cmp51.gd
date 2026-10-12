@@ -29,7 +29,7 @@ extends Node3D
 ##   红球 = 世界 −Z（敌向）· 蓝球 = 世界 +Y（天）· 绿球 = 世界 +X
 ##
 ## 跑法（**非 headless**，要出图）：
-##   "C:/godot/Godot_v4.7.1-stable_win64.exe" --path "F:/evezzq/eve自走棋918" \
+##   "$GODOT_BIN" --path . \
 ##      res://tools/probe_cmp51.tscn -- --ids=algos,catalyst,kestrel
 ##   不给 --ids = 全库 52 艘。
 ##

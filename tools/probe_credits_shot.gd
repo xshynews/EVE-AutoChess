@@ -3,10 +3,10 @@ extends SceneTree
 ## ★ 主菜单「版权声明」真实渲染截图 —— 改版权文案后目视确认框内不被裁。
 ##
 ## 用法（⛔ 别加 `--headless`）：
-##     Godot_v4.7.2-stable_win64_console.exe --path "F:\evezzq\eve自走棋918" \
+##     "$GODOT_BIN" --path . \
 ##         --quit-after 600 --script res://tools/probe_credits_shot.gd
 ##
-## 产物：C:/godot/_export/credits_shot.png（写工程外，⛔ 别污染工程目录）
+## 产物：user://credits_shot.png（写在工程外，运行后输出里会打印实际路径）
 ##
 ## 和 `probe_menu_shot.gd` 同一套路（场景树探针要等帧），只是多一步切模式。
 ## ⚠️ 版权框是**定高**面板（`CREDITS_H`）⇒ 文案变长只能靠目视确认没有溢出/裁切。

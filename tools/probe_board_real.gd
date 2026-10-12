@@ -16,8 +16,8 @@ extends Node
 ##    ③ 落一张截图，供人眼复核。
 ##
 ## ── 跑法（⚠️ 不要加 --headless）──────────────────────────────────
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 600 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 600 \
 ##     res://tools/probe_board_real.tscn
 
 const SCENE_PATH := "res://scenes/battle_scene.tscn"

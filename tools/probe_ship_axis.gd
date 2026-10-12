@@ -20,8 +20,8 @@ extends Node3D
 ##  一根细杆把两球连起来，明确「这是一根世界 Z 轴」。
 ##
 ## ── 跑法（非 headless）──────────────────────────────────────────
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 4000 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 4000 \
 ##     res://tools/probe_ship_axis.tscn -- --ids=algos,abaddon
 ##
 ##   可选：--ids=a,b,c（默认 6 艘代表）· --size=300 · --extra（同时出 +180° 版）

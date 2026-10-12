@@ -14,8 +14,8 @@ extends Node3D
 ##    用户图给的是**语义**（哪端是舰艉），本探针给的是**坐标系**（哪端是 +X/+Z）。
 ##
 ## ── 跑法（非 headless：要读 SubViewport 纹理）──────────────────
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 4000 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 4000 \
 ##     res://tools/probe_ship_raw_views.tscn -- --ids=catalyst,kestrel
 ##
 ##   可选：--azs=0,45,90,...   --els=0,35   --size=480   --dir=raw_views

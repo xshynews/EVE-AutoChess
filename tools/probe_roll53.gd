@@ -34,7 +34,7 @@ extends Node
 ##    它回答的是一个**新**问题：48 轮那刀 `GLOBAL_ROLL_180` 该不该全局生效。
 ##
 ##  用法：
-##      Godot_v4.7.1-stable_win64_console.exe --headless \
+##      "$GODOT_BIN" --headless \
 ##          --path "<工程>" --quit-after 900 \
 ##          res://tools/probe_roll53.tscn -- --out "<路径>"
 

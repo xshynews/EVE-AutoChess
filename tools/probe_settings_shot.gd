@@ -2,10 +2,10 @@ extends Node
 ## 渲染设置窗（不开 headless），让用户能看见 DEBUG 加币按钮长啥样。
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 5000 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 5000 \
 ##     res://tools/probe_settings_shot.tscn
-## 产物：user://settings_with_debug.png  （在 C:/Users/.../AppData/.../EVE自走棋918/）
+## 产物：user://settings_with_debug.png  （即 Godot 的 user:// 目录）
 
 const SETTINGS_SCRIPT := preload("res://scripts/ui/panels/eve_settings.gd")
 

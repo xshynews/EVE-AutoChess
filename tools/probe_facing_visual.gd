@@ -8,8 +8,8 @@ extends Node
 ##   · 舰艏轴也从 `EveShipYawTable.bow_axis()` 读，不再硬写 (1,0,0)。
 ##
 ## 跑法（**必须非 headless** —— 截图那一段需要真实渲染上下文）：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 25000 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 25000 \
 ##     res://tools/probe_facing_visual.tscn
 
 const YAW := preload("res://scripts/data/eve_ship_yaw.gd")

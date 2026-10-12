@@ -25,7 +25,7 @@ extends Node
 ##    只取原始 POSITION 的 AABB**（后者才是「顶点没被额外转过」的铁证）。
 ##
 ## 用法：
-##   Godot_v4.7.1-stable_win64_console.exe --headless --path <工程> \
+##   "$GODOT_BIN" --headless --path <工程> \
 ##       --quit-after 3000 res://tools/probe_model_xform.tscn
 
 const IDS: Array[StringName] = [

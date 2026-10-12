@@ -14,8 +14,8 @@ extends Node
 ##     本探针逐一试：提环境光 / 提主光 / 加相机头灯 / 让天空盒参与 IBL。
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 1200 res://tools/probe_v3look.tscn
+##   "$GODOT_BIN" \
+##     --path . --quit-after 1200 res://tools/probe_v3look.tscn
 ##
 ## 产物（user://）：
 ##   v3_zoom_100.png / v3_zoom_140.png / v3_zoom_200.png

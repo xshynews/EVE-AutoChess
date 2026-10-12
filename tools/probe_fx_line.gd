@@ -3,8 +3,8 @@ extends Node
 ## 开火线出图探针（**非无头**）—— 2026-10-01 攻击特效改版验收
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 3000 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 3000 \
 ##     res://tools/probe_fx_line.tscn
 ##
 ## 产物在 `user://fx_line/`（= %APPDATA%\Godot\app_userdata\EVE自走棋918\fx_line\）

@@ -22,7 +22,7 @@ extends Node
 ##     bow→−Z、up→+Y 的矩阵，再按行语义转成 spec token。零手推。
 ##
 ##  用法：
-##      Godot_v4.7.1-stable_win64_console.exe --headless \
+##      "$GODOT_BIN" --headless \
 ##          --path "<工程>" --quit-after 900 \
 ##          res://tools/probe_setaxis53.tscn -- --id=tristan --bow=+Y --up=+Z
 ##

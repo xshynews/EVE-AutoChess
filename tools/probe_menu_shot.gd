@@ -3,10 +3,10 @@ extends SceneTree
 ## ★ 主菜单**真实渲染截图**（不开游戏也能看）—— 非 headless 才能拿到视口纹理。
 ##
 ## 用法（⛔ 别加 `--headless`）：
-##     Godot_v4.7.2-stable_win64_console.exe --path "F:\evezzq\eve自走棋918" \
+##     "$GODOT_BIN" --path . \
 ##         --quit-after 600 --script res://tools/probe_menu_shot.gd
 ##
-## 产物：C:/godot/_export/menu_shot.png（写工程外，⛔ 别污染工程目录）
+## 产物：user://menu_shot.png（写在工程外，运行后输出里会打印实际路径）
 ##
 ## ★ 2026-10-12：加 `-- --collapsed` 可截「自走棋收起」态（两层侧栏的折叠视觉）。
 ##

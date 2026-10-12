@@ -24,7 +24,7 @@ extends Node
 ##    它们本来就 up:±Z/±X，不参与批量翻转
 ##
 ##  用法：
-##      Godot_v4.7.1-stable_win64_console.exe --headless \
+##      "$GODOT_BIN" --headless \
 ##          --path "<工程>" --quit-after 30000 \
 ##          res://tools/probe_flip_up.tscn
 

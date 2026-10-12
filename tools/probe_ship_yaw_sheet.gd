@@ -32,8 +32,8 @@ extends Node3D
 ##  · **独立 World3D**：不受主场景光照/天空盒干扰，52 张同一套光照。
 ##
 ## ── 跑法（⚠️ 不要加 --headless，headless 下拿不到 SubViewport 纹理）──
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 4000 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 4000 \
 ##     res://tools/probe_ship_yaw_sheet.tscn
 ##
 ##   可选参数（写在 `--` 之后）：

@@ -2,7 +2,7 @@ extends Node
 ## 第二十一轮验证：sync_from_body 改后 bow 在战斗中是否朝速度方向
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --path "F:/evezzq/eve自走棋918" \
+##   "$GODOT_BIN" --path . \
 ##     --quit-after 8000 res://tools/probe_facing_flight.tscn
 
 const YAW := preload("res://scripts/data/eve_ship_yaw.gd")

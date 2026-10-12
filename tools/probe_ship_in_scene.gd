@@ -12,7 +12,7 @@ extends Node
 ##     看到的画面 = 玩家在游戏里看到的样子（含天空盒 / 棋盘 / HUD）。
 ##
 ## ── 跑法（⚠️ 不要加 --headless：headless 下取不到纹理）──
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --path "F:/evezzq/eve自走棋918" \
+##   "$GODOT_BIN" --path . \
 ##     --quit-after 900 res://tools/probe_ship_in_scene.tscn -- --ids=myrmidon
 ##
 ##   输出 `user://ship_in_scene.png`

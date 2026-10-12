@@ -12,8 +12,8 @@ extends Node
 ## 第二十一轮开局：验算 "rotation.y 偏移量" 让 bow 朝速度方向
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 5000 \
+##   "$GODOT_BIN" --headless \
+##     --path . --quit-after 5000 \
 ##     res://tools/probe_facing_offset.tscn
 
 const YAW := preload("res://scripts/data/eve_ship_yaw.gd")

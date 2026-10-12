@@ -27,8 +27,8 @@ extends Node3D
 ##  ⇒ 本探针给出的 `bow_plus == false` 那批，就是**客观上需要进 FLIP 表**的。
 ##
 ## ── 跑法（headless 即可，不需要渲染）──────────────────────────────
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 4000 \
+##   "$GODOT_BIN" --headless \
+##     --path . --quit-after 4000 \
 ##     res://tools/probe_ship_bow.tscn
 
 const INDEX := preload("res://scripts/data/eve_ship_asset_index.gd")

@@ -23,7 +23,7 @@ extends Node
 ##  ⚠️ 红线 40：读的是**引擎渲染**的 `mesh.global_transform`，不是内部变量。
 ##
 ##  用法：
-##      Godot_v4.7.1-stable_win64_console.exe --headless \
+##      "$GODOT_BIN" --headless \
 ##          --path "<工程>" --quit-after 2400 \
 ##          res://tools/probe_handoff53.tscn
 

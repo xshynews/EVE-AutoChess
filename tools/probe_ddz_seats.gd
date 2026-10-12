@@ -7,8 +7,8 @@ extends Node
 ## 「机器验过 ≠ 实机对」在这里同样成立。⇒ 出一张图，人眼扫一下。
 ##
 ## 跑法（⛔ 必须非 headless，否则拿不到图像）：
-##   "C:/godot/Godot_v4.7.2-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 6000 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 6000 \
 ##     res://tools/probe_ddz_seats.tscn
 ##
 ## 产物：user://ddz_seats_bid.png / user://ddz_seats_play.png

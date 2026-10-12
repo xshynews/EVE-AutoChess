@@ -18,8 +18,8 @@ extends Node
 ##        同一机位出图，直接看哪档合适。
 ##
 ## ── 跑法（⚠️ 要看像素，不要加 --headless）─────────────────────────
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 1200 res://tools/probe_view.tscn
+##   "$GODOT_BIN" \
+##     --path . --quit-after 1200 res://tools/probe_view.tscn
 ##
 ## 产物：user://view_<名字>.png  +  user://view_report.txt
 

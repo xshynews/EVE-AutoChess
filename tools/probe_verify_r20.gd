@@ -2,8 +2,8 @@ extends Node
 ## 验证 30 艘 away 的新 spec 是否真让 bow 朝 −Z
 ##
 ## 跑法：
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" --headless \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 5000 \
+##   "$GODOT_BIN" --headless \
+##     --path . --quit-after 5000 \
 ##     res://tools/probe_verify_r20.gd
 
 const YAW := preload("res://scripts/data/eve_ship_yaw.gd")

@@ -26,8 +26,8 @@ extends Node
 ##    这正是本工程反复强调的「不报错的分叉」，探针里踩一次就够了。
 ##
 ## ── 跑法（⚠️ 不要加 --headless，headless 下截图不上报）────────────
-##   "C:/godot/Godot_v4.7.1-stable_win64_console.exe" \
-##     --path "F:/evezzq/eve自走棋918" --quit-after 300 \
+##   "$GODOT_BIN" \
+##     --path . --quit-after 300 \
 ##     res://tools/probe_bench_buy.tscn
 
 const SCENE_PATH := "res://scenes/battle_scene.tscn"

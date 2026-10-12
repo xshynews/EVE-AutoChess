@@ -29,7 +29,7 @@ extends Node
 ##  的口径算 `M·mesh_rot·bow`，看是否都指向 −Z（朝敌）。
 ##
 ##  用法：
-##      Godot_v4.7.1-stable_win64_console.exe --headless \
+##      "$GODOT_BIN" --headless \
 ##          --path "<工程>" --quit-after 900 \
 ##          res://tools/probe_meshrot53.tscn
 

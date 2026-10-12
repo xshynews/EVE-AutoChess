@@ -25,7 +25,7 @@ extends Node
 ##  ⇒ **唯一命中**才采纳；0 个 / ≥2 个都报出来人工处理。
 ##
 ##  用法：
-##      Godot_v4.7.1-stable_win64_console.exe --headless \
+##      "$GODOT_BIN" --headless \
 ##          --path "<工程>" --quit-after 9000 \
 ##          res://tools/probe_apply_pose53.tscn -- --out "<路径>"
 
