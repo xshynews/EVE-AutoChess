@@ -31,6 +31,15 @@ const CORE := "easytier-core.exe"
 const PACKET_DLL := "Packet.dll"
 ## 只有房主（TUN 模式，要建虚拟网卡）才需要。
 const WINTUN := "wintun.dll"
+## 体积很小，一并带上（内核对它不一定有运行时依赖，但少一个文件就多一种「静默失败」）。
+const WINDIVERT_SYS := "WinDivert64.sys"
+const CLI := "easytier-cli.exe"
+## 随包分发的内核文件全集（解包时按这个清单走）。
+const FILES: Array[String] = [CORE, PACKET_DLL, WINTUN, WINDIVERT_SYS, CLI]
+## 随包分发的**源目录**（⛔ 导出时必须靠 export_presets 的
+## `include_filter="addons/easytier/bin/*"` 进包 —— 这些是**非资源文件**，
+## `all_resources` 不会自动带上）。
+const SRC_DIR := "res://addons/easytier/bin"
 ## 就绪判定超时（毫秒）：起不来的话 UI 得给玩家一个说法，别无限转圈
 const READY_TIMEOUT_MS := 20000
 
@@ -116,8 +125,23 @@ static func log_dir() -> String:
 ##   ① `user://easytier/<版本>/` —— 从导出包里解出来的（正式包走这条）
 ##   ② 与游戏 exe 同级的 `easytier/` —— 安装器直接摆好的形态
 ##   ③ `res://addons/easytier/bin/` —— 编辑器 / 开发期（内核不入库，靠 fetch 脚本放）
+## 内核可执行文件的**磁盘真实路径**。
+##
+## ★★ 为什么必须「解包」而不能直接用 `res://`（2026-10-12 导出时发现）：
+##   导出后 `res://addons/easytier/bin/…` 是**打包内的虚拟路径** —— `FileAccess`
+##   读得到它，但 `OS.create_process` 只能执行**磁盘上的真文件**。
+##   开发期 `res://` 恰好就是工程目录（真目录），所以一路正常、问题只在包里出现。
+##   ⇒ 统一做法：把内核从包里**解到 `user://easytier/<版本>/`**（幂等，按大小判新旧），
+##     再执行解出来的那份。开发期走同一条路径 ⇒ 这段代码本身也被日常验收覆盖。
 static func core_path() -> String:
-	for dir in [user_dir(), exe_dir(), res_dir()]:
+	var extracted := user_dir().path_join(CORE)
+	if FileAccess.file_exists(extracted) and _size_matches_pack(extracted, CORE):
+		return extracted
+	# ① 正路：从随包资源解到 user://（导出包只能走这条）
+	if _extract_to_user_dir():
+		return extracted
+	# ② 兜底：开发期/无包环境，直接用磁盘上的副本（`res://` 是真目录时才可能命中）
+	for dir in [exe_dir(), res_dir()]:
 		if dir == "":
 			continue
 		# ⚠️ 显式标注：循环变量是 Variant，`:=` 推不出类型（实测踩过 Parse Error）
@@ -125,6 +149,48 @@ static func core_path() -> String:
 		if FileAccess.file_exists(p):
 			return p
 	return ""
+
+
+## 把随包的内核文件解到 `user://easytier/<版本>/`。
+## 幂等：文件已存在且大小一致就跳过（省一次 33 MB 写盘）；返回「解出的 core 是否就位」。
+static func _extract_to_user_dir() -> bool:
+	var dst_dir := user_dir()
+	if DirAccess.make_dir_recursive_absolute(dst_dir) != OK:
+		return false
+	for n in FILES:
+		var src := SRC_DIR.path_join(n)
+		if not FileAccess.file_exists(src):      # 包里没有（比如精简包）⇒ 跳过它
+			continue
+		var dst := dst_dir.path_join(n)
+		var bytes := FileAccess.get_file_as_bytes(src)
+		if bytes.is_empty():
+			continue
+		if FileAccess.file_exists(dst) and _size_matches_pack(dst, n):
+			continue
+		var f := FileAccess.open(dst, FileAccess.WRITE)
+		if f == null:
+			return false
+		f.store_buffer(bytes)
+		f.close()
+	return FileAccess.file_exists(dst_dir.path_join(CORE))
+
+
+## 磁盘文件的大小是否与包内同名文件一致（⇒ 不必重解；也顺手挡住「上次解到一半」）。
+static func _size_matches_pack(disk_path: String, name: String) -> bool:
+	var src := SRC_DIR.path_join(name)
+	if not FileAccess.file_exists(src):
+		return true                              # 包里没有 ⇒ 不拿它当判据
+	var a := FileAccess.open(disk_path, FileAccess.READ)
+	if a == null:
+		return false
+	var disk_len := a.get_length()
+	a.close()
+	var b := FileAccess.open(src, FileAccess.READ)
+	if b == null:
+		return false
+	var pack_len := b.get_length()
+	b.close()
+	return disk_len == pack_len
 
 
 ## 缺哪些文件（缺了就别启动 —— 否则现象是「静默退出、原因未知」）。

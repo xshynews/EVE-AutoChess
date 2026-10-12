@@ -156,7 +156,18 @@ func _t_files() -> void:
 			"房主侧依赖：缺 wintun.dll 时会被 missing_files 报出来")
 	_ok(TUN.missing_files(false).find(TUN.PACKET_DLL) == -1,
 			"★ Packet.dll 在依赖清单里（缺它内核 100ms 静默退出）")
-	print("  内核路径：%s" % TUN.core_path())
+	# ★★ 不变量：交给 `OS.create_process` 的必须是**磁盘真文件**，⛔ 绝不可是 `res://`
+	#   虚拟路径（导出后 `FileAccess` 读得到但进程起不来 —— 2026-10-12 导出时踩过）。
+	var p := TUN.core_path()
+	_ok(not p.begins_with("res://"),
+			"★ 内核路径不是 res:// 虚拟路径（实际「%s」）" % p)
+	_ok(FileAccess.file_exists(p), "★ 内核路径在磁盘上真实存在（可被 create_process 执行）")
+	_ok(p.find("easytier") >= 0 and p.find(TUN.VERSION) >= 0,
+			"解包落在带版本的目录里（换版本会自动重解）")
+	_ok(TUN.FILES.has(TUN.CORE) and TUN.FILES.has(TUN.PACKET_DLL) and TUN.FILES.has(TUN.WINTUN),
+			"解包清单含 core / Packet.dll / wintun.dll")
+	_ok(TUN.SRC_DIR.begins_with("res://"), "解包源目录指向包内资源（导出时才拿得到）")
+	print("  内核路径：%s" % p)
 
 
 # ══════════════════════════════════════════════ 工具
