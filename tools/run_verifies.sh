@@ -48,6 +48,7 @@ SUITE=(
   verify_resolution
   verify_window
   verify_ddz
+  verify_ddz_net
   verify_intro
   verify_audio
 )
