@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://tools/probe_impact.gd" id="1_imp"]
+
+[node name="ProbeImpact" type="Node"]
+script = ExtResource("1_imp")
