@@ -7,6 +7,10 @@ extends "res://scripts/ui/eve_window.gd"
 ## 空槽画虚线框（表示「可以放」），有装备画实线框 + 描边图标。
 ## 每格 35px 高，图标 18px —— 尺寸来自 V3 稿的 .eq / .eq svg。
 ##
+## ★ 2026-10-13 手机档二修：格子**纵向拉满**窗口（`SIZE_EXPAND_FILL`）——
+##    桌面档窗高 116 恰好 2×35 ⇒ 一个像素都不动；手机档窗高 300
+##    ⇒ 每格 ~130 高，手指点得到，序号 Ⅰ~Ⅷ 也自动亮出来（见 `EveSlot.tag`）。
+##
 ## 变更清单（实装版）：
 ##   - 8 槽自绘（虚线空态 / 实线满态）
 ##   - set_slots() 接装备数组；put()/take() 单格操作
@@ -14,6 +18,8 @@ extends "res://scripts/ui/eve_window.gd"
 
 const SLOT_COUNT := 8
 const SLOT_H := 35.0
+## 8 个固定位的序号（手机档格子拉高后显示；桌面档格子矮，自动隐藏）
+const ROMAN: Array[String] = ["Ⅰ", "Ⅱ", "Ⅲ", "Ⅳ", "Ⅴ", "Ⅵ", "Ⅶ", "Ⅷ"]
 
 var capacity: int = SLOT_COUNT
 var _slots: Array[Control] = []
@@ -42,6 +48,10 @@ func _build_contents() -> void:
 		var slot: EveSlot = pair["root"]
 		slot.custom_minimum_size = Vector2(0, SLOT_H)
 		slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		# ★ 手机档：格子随窗口拉高（桌面档 116 高恰好 2×35，不动）
+		slot.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		# 序号 Ⅰ~Ⅷ：格子够高才看得见（`EveSlot.TAG_SHOW_H`）
+		slot.tag = ROMAN[i]
 		grid.add_child(slot)
 
 		_slots.append(slot)

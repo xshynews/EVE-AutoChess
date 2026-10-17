@@ -30,6 +30,11 @@ extends Node3D
 
 ## 命中爆点存活时间
 const HIT_LIFE := 0.28
+## 护盾涟漪存活时间
+##
+## ⚠️ 比命中爆点长一点：护盾是「一层壳被点亮」，扩散要看得见；
+##    和爆点同寿命会觉得只是闪了一下、没读出「这层还在扛」。
+const SHIELD_LIFE := 0.38
 ## 击毁爆炸存活时间
 const BOOM_LIFE := 0.75
 
@@ -107,7 +112,7 @@ var _fx: Array[Dictionary] = []
 ## 米 → 世界单位（与 eve_ship_visual.METERS_PER_UNIT 同一个口径）
 const METERS_PER_UNIT := 1000.0
 
-enum Kind { TRACER, HIT, BOOM }
+enum Kind { TRACER, HIT, SHIELD, BOOM }
 
 
 ## 当前活跃特效数（验收断言用）
@@ -213,13 +218,35 @@ func spawn_tracer(from_meters: Vector3, to_meters: Vector3, hit: bool,
 
 
 ## 命中爆点：目标位置上闪一小团光
-func spawn_hit(pos_meters: Vector3, quality: int) -> void:
+##
+## `layer` = 真实受击层（&"shield" / &"armor" / &"hull"），空 = 未知。
+##
+## ── 为什么要有 layer，而品质色不够 ────────────────────────────────
+##  `QUALITY_COLORS` 是按**命中品质**（MISS~WRECKING）上的色，品质 ≠ 受击层：
+##  一发「打得狠」可能砸在护盾上，一发「普通」可能已经在啃结构。
+##  玩家从颜色里想读的是「现在打的是哪一层」，所以层优先、品质兜底。
+##
+## ── 护盾为什么单独一档 ────────────────────────────────────────────
+##  护盾挨打的手感不是「炸开」，是「整层壳被点亮、扩散、收回」。
+##  ⇒ 更大、更蓝、寿命更长，并在包络里给一个更大的扩散系数。
+func spawn_hit(pos_meters: Vector3, quality: int, layer: StringName = &"") -> void:
 	if not fx_enabled:
 		return
 	var col := _quality_color(quality)
 	# 档位越高越大 —— 「打得狠」这件事必须一眼看得出来
 	var base := 0.9 + float(clampi(quality, 0, 6)) * 0.22
-	_make_flash(pos_meters, col, base, HIT_LIFE, Kind.HIT)
+	var life := HIT_LIFE
+	var kind := Kind.HIT
+	if layer == &"shield":
+		col = Color(0.38, 0.74, 1.00)      # 护盾：青蓝（与血条同一套语言）
+		base *= 1.55
+		life = SHIELD_LIFE
+		kind = Kind.SHIELD
+	elif layer == &"armor":
+		col = Color(0.95, 0.78, 0.34)      # 装甲：琥珀
+	elif layer == &"hull":
+		col = Color(1.00, 0.52, 0.30)      # 结构：橙红
+	_make_flash(pos_meters, col, base, life, kind)
 
 
 ## 击毁爆炸：一大团橙红 + 短促强光
@@ -329,8 +356,15 @@ func _apply_envelope(n: Node3D, kind: int, k: float) -> void:
 			m.albedo_color.a = fade * fade
 			m.emission_energy_multiplier = m.emission_energy_multiplier * 0.997 + 0.003 * fade
 		return
-	# 命中 / 爆炸：膨胀 + 淡出（EVE 的爆点是「炸开」，不是「闪一下就没」）
-	var grow := 1.0 + k * (0.9 if kind == Kind.HIT else 1.8)
+	# 命中 / 护盾 / 爆炸：膨胀 + 淡出（EVE 的爆点是「炸开」，不是「闪一下就没」）
+	# ⚠️ 护盾单独一档、系数最大：它的读法是「一层壳被点亮后扩散开」，
+	#    用命中爆点的 0.9 会看着像一颗普通火星，读不出「盾还在扛」。
+	var grow_k := 1.8
+	if kind == Kind.HIT:
+		grow_k = 0.9
+	elif kind == Kind.SHIELD:
+		grow_k = 2.4
+	var grow := 1.0 + k * grow_k
 	n.scale = Vector3.ONE * grow
 	if n is OmniLight3D:
 		(n as OmniLight3D).light_energy = 3.0 * fade * fade

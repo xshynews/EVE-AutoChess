@@ -2251,6 +2251,38 @@ func _step_d_hit() -> void:
 	bfx.call("clear")
 	_expect(fx_on > 0, "★ 打开特效开关 ⇒ spawn_hit 真的出特效（%d 条）" % fx_on)
 	_expect(fx_off == 0, "★ 关掉特效开关 ⇒ spawn_hit 出 0 条（%d）" % fx_off)
+
+	# ── 2026-10-17：受击分层 ──────────────────────────────────────
+	# ① 三条分层路径都必须能造出特效（layer 是新参数，不能只测默认分支）
+	#
+	# ⚠️⚠️ 用**独立探针实例**，绝不往场上那个 `battle_fx` 里塞节点：
+	#    `clear()` 走的是 `queue_free()`（延迟释放），本帧节点仍挂在树上 ——
+	#    后面的 `_check_tracer_geometry()` 会「取第一个 MeshInstance3D」，
+	#    一旦拿到这里造的、位于原点的命中特效，就会误报「线不在弹道上」。
+	#    （2026-10-17 实测踩过：偏差 37536 m、|dot| 0.5892。）
+	var probe_bfx: Node3D = BfxScript.new()
+	probe_bfx.set("fx_enabled", true)
+	var layer_counts: Array[int] = []
+	for lay in [&"shield", &"armor", &"hull"]:
+		probe_bfx.call("spawn_hit", Vector3.ZERO, 3, lay)
+		layer_counts.append(int(probe_bfx.call("active_count")))
+	probe_bfx.free()
+	_expect(layer_counts[0] > 0 and layer_counts[1] > 0 and layer_counts[2] > 0,
+			"★ 三条受击分层都能出特效（shield/armor/hull = %s）" % str(layer_counts))
+
+	# ② 船体闪光：拿场上任意一艘船直接调，计数必须 +1
+	#    ⚠️ 不用 `is_flashing()` 断言 —— 快进时一帧内可能闪完几十次，状态读数会漏。
+	var vis_list: Array[Node] = arena.find_children("*", "EveShipVisual", true, false)
+	if not vis_list.is_empty():
+		var vis: Node = vis_list[0]
+		var fc0 := int(vis.call("flash_count"))
+		vis.call("flash_hit", &"shield")
+		var fc1 := int(vis.call("flash_count"))
+		_expect(fc1 == fc0 + 1, "★ 船体受击闪光被触发时计数 +1（%d → %d）" % [fc0, fc1])
+		# 手动推到寿命尽头，把 overlay 摘干净（不留一块透明材质在船体上）
+		vis.call("_process", 99.0)
+	else:
+		_expect(false, "★ 战场上应能找到 EveShipVisual（受击闪光没有挂载点）")
 	_expect(feed1 > 0, "%d 秒战斗产生了伤害飘字 —— 实际 %d 条"
 			% [int(D_HIT_SECONDS), feed1])
 	# 上限是硬的（见 EveBattleFx.MAX_FX / EveDamageFeed.MAX_POPUPS）——
@@ -3006,12 +3038,22 @@ func _step_d_settings() -> void:
 	var saved_layout: Dictionary = WINDOW_STORE.load_window(layout_key)
 	sw.call("reset_layout")     # 清 _user_rect / _collapsed / _height_owned
 	sw.call("_fit_height")      # 按当前内容重新反推窗高（被测的就是这个语义）
-	var sw_content = sw.get("content")
-	# 窗框开销：标题栏 26 + 内容区上下内距 6/8（COMPACT density）+ 上下边框各 1
-	var chrome := 42.0
-	var want := chrome + float(sw_content.get_combined_minimum_size().y)
-	_expect(absf(float(sw.get("size").y) - want) <= 4.0,
-			"窗高贴合内容（窗高 %.0f vs 需求 %.0f）" % [float(sw.get("size").y), want])
+	# ★ 2026-10-13 全平台栏目态：窗高**定死**（矩形给的 560），内容区自己滚 ——
+	#   `_fit_height` 在栏目态是有意 no-op（旧「窗高贴合内容」语义只属于竖向长条）。
+	#   这里改验两条：① `_height_owned` 交还（`set_window_rect` 的高度生效）；
+	#   ② 窗高 = 定高、不失控。竖向回退路径的原判据留在 else 分支。
+	if bool(sw.get("_tabbed")):
+		_expect(not bool(sw.get("_height_owned")),
+				"栏目态高度归矩形管（_height_owned 已交还）")
+		_expect(absf(float(sw.get("size").y) - 560.0) <= 4.0,
+				"栏目态窗高 = 定高 560（实际 %.0f，内容自己滚）" % float(sw.get("size").y))
+	else:
+		var sw_content = sw.get("content")
+		# 窗框开销：标题栏 26 + 内容区上下内距 6/8（COMPACT density）+ 上下边框各 1
+		var chrome := 42.0
+		var want := chrome + float(sw_content.get_combined_minimum_size().y)
+		_expect(absf(float(sw.get("size").y) - want) <= 4.0,
+				"窗高贴合内容（窗高 %.0f vs 需求 %.0f）" % [float(sw.get("size").y), want])
 	# ★ 2026-10-10 上限由 700 放宽到 780：新增的「重置 RESET」区（分隔线 + 标题 +
 	#    按钮 + 说明行）让无头下的窗高从 661 长到 740。语义没变 ——
 	#    这条防的是「未布局就量」把窗撑到 900+（见上面 `_fit_height` 的说明），
@@ -3789,7 +3831,14 @@ func _step_salvage_order() -> void:
 			"★ 警告行不再说「3 艘」（已打完）")
 
 	# ── 「继续」时还有残骸 ⇒ 必须弹二次确认（参考图 1 那条红字的护栏）──
-	var ask: ConfirmationDialog = res_win.get("_salvage_ask")
+	# ★ 2026-10-13：内置 ConfirmationDialog → EveConfirmDialog（EVE 窗口语言版）。
+	#   回归断言：⛔ 不许回退到原生弹窗（系统标题栏/字体，用户明确否掉）。
+	#   ⚠️ 必须 `as Object` 再 `is`：ask 的静态类型就是 EveConfirmDialog，
+	#      直接 `ask is ConfirmationDialog` 会被解析器判「永假」而 **Parse Error**
+	#      （实测踩过：整份 verify_run 加载失败，18 套里只红这一套）。
+	var ask: EveConfirmDialog = res_win.get("_salvage_ask")
+	_expect(not ((ask as Object) is ConfirmationDialog),
+			"★ 确认框是 EVE 窗口语言版（不是原生 ConfirmationDialog）")
 	_battle.call("_on_result_next")
 	_expect(bool(ask.visible),
 			"★ 还有 1 艘没打捞就点「继续」→ 弹二次确认（不是直接推进）")

@@ -208,6 +208,17 @@ var _lang_pick_guard := false
 ## DEBUG 区（默认收起）—— 常驻显示的话，一个正式设置窗里挂着加币按钮很出戏
 var _dbg_box: VBoxContainer = null
 var _dbg_btn: Button = null
+## ★ 2026-10-13 横向栏目态（手机专用布局）开关。
+##   ⚠️ 两个写入方：`_ready` 自判据（`EveUiScale.is_mobile_tier`，唯一真源）
+##     与 HUD 每次重铺时的 `set_tabbed()`（兜底：切档位 / 自检开闸）。
+var _tabbed := false
+## 栏目顺序与文案（键 = 组盒在 `_tab_boxes` 里的键）
+const TAB_ORDER: Array[String] = ["video", "audio", "ui", "game"]
+var _tab_btns: Array[Dictionary] = []     ## [{"key": String, "btn": Button}]
+var _tab_boxes: Dictionary = {}           ## key → VBoxContainer
+var _cur_tab := "video"
+## 最近一次 `set_state()` 的入参 —— 重建内容后按它回写，免得开关/滑杆跳回默认值
+var _last_state: Dictionary = {}
 
 
 func _ready() -> void:
@@ -236,6 +247,12 @@ func _ready() -> void:
 	#   不依赖"脚本定义了 `_unhandled_input` 引擎就自动开"这条隐式规则。
 	#   ⚠️ `_unhandled_input` 不受 `visible` 影响 ⇒ 窗关着也按得到（救命键的关键）。
 	set_process_unhandled_input(true)
+	# ★ 2026-10-13：手机专用布局 ⇒ 设置窗改横向栏目（视频/音频/界面/游戏）。
+	#   ★ 同日用户定：「把设置更新也同步改到PC端」⇒ **全平台栏目态** ——
+	#     PC 与手机同一骨架（栏目 → 滚动内容 → 常驻底栏），矩形由各持有方给
+	#     （战场 HUD `settings_rect()` / 牌桌与主菜单 `_place_settings()`）。
+	#     ⛔ 竖向 `_build_contents()` 保留但不再走（`set_tabbed(false)` 仍可手动回退）。
+	_tabbed = true
 	_build_contents()
 	set_paused(false)
 	#
@@ -282,130 +299,295 @@ static func _ui_scale_items() -> Array:
 
 func _build_contents() -> void:
 	content.add_theme_constant_override("separation", 7)
+	# ★ 2026-10-13：手机专用布局 ⇒ 横向栏目（视频/音频/界面/游戏）；
+	#   桌面档 / 牌桌 / 主菜单 ⇒ 老长条（⛔ PC 路径一个像素都不动）。
+	if _tabbed:
+		_build_tabbed()
+		return
+	_build_vertical()
 
-	# ── ⓪ 暂停（最顶、最大）—— **只有战场有** ──
-	#
-	# ⚠️ 放在第一行的理由：它是设置窗里**唯一一个会被急用的东西** ——
-	#    玩家来点它的时候往往正手忙脚乱（战斗打崩了、想截图、想看清楚），
-	#    埋在分区里等于没有。40px 高（常规按钮 22）是为了让它在
-	#    一堆小控件里一眼可辨，而不是靠颜色去抢注意力。
-	#
-	# ⚠️ 牌桌档案里**不建**：牌桌是纯 2D、没有战斗在跑，暂停没有对应物
-	#    （见顶注的 `PROFILE_*` 与红线 9）。
-	if _is_battle():
-		_pause_btn = Button.new()
-		_pause_btn.custom_minimum_size = Vector2(0, 40)
-		_pause_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_pause_btn.pressed.connect(func(): pause_toggled.emit(not _paused))
-		content.add_child(_pause_btn)
+
+## ⛔ **PC 路径**（桌面档 / 牌桌 / 主菜单）：分区顺序与 2026-09-28 重构版
+##    逐行一致 —— 改这里 = 改 Windows 端像素。
+## ⛔ **PC 路径**（桌面档 / 牌桌 / 主菜单）：分区顺序与 2026-09-28 重构版
+##    逐行一致 —— 改这里 = 改 Windows 端像素。
+##
+## ⚠️ 每个分区都是 `_sec_*` 构建器（与横向栏目版共用同一批代码），
+##    分区之间的分隔线在这里**显式**加 —— 栏目版每组自己一页，不需要。
+func _build_vertical() -> void:
+	_sec_pause(content)              # ⓪（内部含尾部分隔线）
+	_sec_audio(content)              # ①
+	content.add_child(make_divider())
+	_sec_display(content)            # ②（`_build_display_rows` 自带尾部分隔线）
+	if not _is_menu():
+		_sec_interface(content)      # ③
 		content.add_child(make_divider())
+	if _is_battle():
+		_sec_render(content)         # ④
+		content.add_child(make_divider())
+		_sec_battle_ui(content)      # ⑤
+		content.add_child(make_divider())
+	if not _is_menu():
+		_sec_action(content)         # ⑥
+	_sec_debug(content)              # ⑦（内部含首部分隔线；发布版整块跳过）
+	_sec_reset(content)              # ⑧（内部含首部分隔线）
+	_sec_hint(content)
 
-	# ── ① 音频（**两个档案都有**）──
-	content.add_child(make_group_header(T.t("SET_GROUP_AUDIO", "音频  AUDIO")))
+
+## ★★ 2026-10-13 横向栏目态（手机专用布局）—— 视频 / 音频 / 界面 / 游戏。
+##
+## 为什么必须有它：竖向长条在手机档实测约 **900** 高，而设计高只有 800
+## （1.35 放大档）⇒ 必然出屏（用户原话：「设置栏太长了，已经超出屏幕了」）。
+## 评审稿（`outputs/android_ui_review/index_v2.html` 状态 2）定的形态：
+##   · 窗高**定死**（HUD 矩形给 560）⇒「栏目只切换内容，不改变设置窗高度」；
+##   · 内容区自己滚（ScrollContainer）⇒ 单页再长也撑不破窗；
+##   · 没有内容的组**整个不建** ⇒ 栏目按钮也不建（⛔ 不留点不动的空栏目）；
+##   · 暂停按钮留在栏目**之上** —— 它是唯一会被急用的东西，埋进栏目等于没有；
+##   · 底栏常驻「恢复默认 + 完成」。
+func _build_tabbed() -> void:
+	if _is_battle():
+		_sec_pause(content)
+	# ── 栏目行（先占位；盒子灌完内容再建按钮，空组不建钮）──
+	var tabs := HBoxContainer.new()
+	tabs.name = "Tabs"
+	tabs.add_theme_constant_override("separation", 4)
+	tabs.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(tabs)
+	# ── 内容滚动区 ──
+	var scroll := ScrollContainer.new()
+	scroll.name = "TabScroll"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content.add_child(scroll)
+	for key in TAB_ORDER:
+		var box := VBoxContainer.new()
+		box.name = "Tab_%s" % key
+		box.add_theme_constant_override("separation", 7)
+		box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		box.visible = false
+		scroll.add_child(box)
+		_tab_boxes[key] = box
+	# ── 灌内容（按档案条件构建，与竖向版同一批 `_sec_*`）──
+	# ★ 2026-10-13 三方统一后的栏目表（空组不建栏目钮）：
+	#   战场   视频 / 音频 / 界面 / 游戏（操作·DEBUG·快捷键；**返回→底栏**）
+	#   牌桌   音频 / 界面（显示+字号+说明；操作区只剩返回 ⇒ 整页不建，返回→底栏）
+	#   主菜单 音频 / 界面（显示+说明；无字号、无操作、无返回）
+	if _is_battle():
+		_sec_render(_tab_boxes["video"])          # 天空盒 / 氛围
+		_sec_battle_ui(_tab_boxes["video"])       # 空间雾 / 射程环 / 棋盘
+	_sec_audio(_tab_boxes["audio"])
+	_sec_display(_tab_boxes["ui"])                # 分辨率(桌面) / 界面缩放(手机) / 语言
+	if not _is_menu():
+		_sec_interface(_tab_boxes["ui"])          # 字号
+	if _is_battle():
+		# ── 游戏页：操作（不含返回——回底栏）+ DEBUG + 快捷键 ──
+		_sec_action(_tab_boxes["game"], false)
+		if not OS.has_feature("release"):
+			_sec_debug(_tab_boxes["game"])
+		_sec_hint(_tab_boxes["game"])             # 快捷键备忘
+	else:
+		# 牌桌 / 主菜单：说明行跟着界面页（牌桌操作区只剩返回 ⇒ 无游戏页）
+		_sec_hint(_tab_boxes["ui"])
+	# ── 栏目按钮（只给有内容的组建）──
+	_tab_btns.clear()
+	for key in TAB_ORDER:
+		var box: VBoxContainer = _tab_boxes[key]
+		if box.get_child_count() == 0:
+			continue
+		var b := _mk_btn(_tab_label(key))
+		b.custom_minimum_size = Vector2(0, 26)
+		b.set_meta(&"tab", key)
+		b.pressed.connect(_on_tab_pressed.bind(key))
+		tabs.add_child(b)
+		_tab_btns.append({"key": key, "btn": b})
+	# ── 底栏（常驻，不随栏目藏）：[放弃本局·回主界面] + 恢复默认 + 说明 + 完成 ──
+	# ★ 2026-10-13 返回主菜单常驻底栏（用户：「返回主菜单按钮…常驻首页，
+	#   要能很方便的点到才行」）：从「游戏」栏目提到底栏 —— 开窗即见、一步点到，
+	#   与斗地主/战场同一位置同一手感。
+	#   ⚠️ 它是破坏性动作（放弃本局/退出牌桌）⇒ **warn 橙皮肤** + 文案写全防误触。
+	#   ⚠️ 主菜单档案不建（我们就在主界面，没有"回去"可言）。
+	var foot := HBoxContainer.new()
+	foot.name = "Foot"
+	foot.add_theme_constant_override("separation", 8)
+	foot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(foot)
+	if not _is_menu():
+		var back_btn := _mk_btn(T.t("SET_ACT_BACK_BATTLE", "放弃本局 · 回主界面")
+				if _is_battle() else T.t("SET_ACT_BACK_LOUNGE", "返回主界面"))
+		EveButtonTheme.apply(back_btn, "hud_warn")
+		back_btn.custom_minimum_size = Vector2(0, 30)
+		back_btn.pressed.connect(func(): back_to_menu_requested.emit())
+		foot.add_child(back_btn)
+	var reset_btn := _mk_btn(T.t(&"SETTINGS_RESET", "恢复默认设置"))
+	reset_btn.custom_minimum_size = Vector2(0, 30)
+	reset_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN   # 给说明留位
+	reset_btn.pressed.connect(reset_to_defaults)
+	foot.add_child(reset_btn)
+	# ⚠️ 说明**复用 `_reset_note` 字段**：`reset_to_defaults()` 回写的就是它
+	_reset_note = Label.new()
+	_reset_note.text = RESET_NOTE_HINT
+	_reset_note.add_theme_color_override("font_color", C_TEXT_FAINT)
+	FONT.fs(_reset_note, 9)
+	_reset_note.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_reset_note.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_reset_note.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	foot.add_child(_reset_note)
+	var done_btn := _mk_btn(T.t("SET_DONE", "完成"))
+	done_btn.custom_minimum_size = Vector2(0, 30)
+	EveButtonTheme.apply(done_btn, "hud_main")
+	done_btn.pressed.connect(func(): closed.emit())
+	foot.add_child(done_btn)
+	# 默认落在线第一个有内容的组
+	_show_tab(String(_tab_btns[0]["key"]) if not _tab_btns.is_empty() else "video")
+
+
+## 栏目文案。⛔ i18n 冻结期**不进 CSV**：`T.t` 对未登记 key 返回调用点给的
+##    中文源文（全工程同款写法，`verify_i18n` 有兜底用例）。解冻时补 4 条
+##    `SET_TAB_*` 即可 —— 现在不加行（冻结令）。
+const TAB_LABELS := {"video": "视频", "audio": "音频", "ui": "界面", "game": "游戏"}
+
+func _tab_label(key: String) -> String:
+	return T.t("SET_TAB_%s" % key.to_upper(), String(TAB_LABELS.get(key, key)))
+
+
+func _on_tab_pressed(key: String) -> void:
+	_show_tab(key)
+
+
+## 切栏目：只切盒子可见性 + 按钮皮肤（⛔ 不重建控件 —— 那会丢滑块/开关的当前值）。
+func _show_tab(key: String) -> void:
+	if _tab_boxes.is_empty():
+		return
+	_cur_tab = key
+	for k in _tab_boxes.keys():
+		var box: VBoxContainer = _tab_boxes[k]
+		box.visible = String(k) == key
+	for it in _tab_btns:
+		var b: Button = it["btn"]
+		var on := String(it["key"]) == key
+		EveButtonTheme.apply(b, "hud_main" if on else "hud")
+
+
+# ══════════════════════════════════════════════════════════════════
+#  分区构建器（竖向版与栏目版共用）
+# ══════════════════════════════════════════════════════════════════
+#
+## ⚠️ 它们**不**加「分区之间」的分隔线 —— 分隔线由调用方按形态决定：
+##    竖向长条要（历史像素），栏目页不要（每组自己就是一页）。
+## ⚠️ 每个函数都自带「这个档案没有这块内容」的早退 ⇒ 调用方不用再包一层 if。
+
+## ⓪ 暂停（最顶、最大）—— **只有战场有**。
+func _sec_pause(t: VBoxContainer) -> void:
+	if not _is_battle():
+		return
+	_pause_btn = Button.new()
+	_pause_btn.custom_minimum_size = Vector2(0, 40)
+	_pause_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_pause_btn.pressed.connect(func(): pause_toggled.emit(not _paused))
+	t.add_child(_pause_btn)
+	t.add_child(make_divider())
+
+
+## ① 音频（**所有档案都有**）。
+func _sec_audio(t: VBoxContainer) -> void:
+	t.add_child(make_group_header(T.t("SET_GROUP_AUDIO", "音频  AUDIO")))
 	for item in _names(VOLUME_KINDS, "SET_VOL", "k"):
 		var kind: StringName = item["k"]
 		var made := _build_slider_row(String(item["name"]), 1.0,
 				func(v: float): _pick_volume(kind, v))
 		_sliders[kind] = made
-		content.add_child(made["row"])
-
+		t.add_child(made["row"])
 	var mute_row := HBoxContainer.new()
 	mute_row.add_theme_constant_override("separation", 5)
 	mute_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	mute_row.add_child(_make_toggle("mute", T.t("SET_MUTE", "静音"), func(on: bool):
 		STORE.save_one("muted", on)
 		mute_toggled.emit(on)))
-	content.add_child(mute_row)
-	content.add_child(make_divider())
+	t.add_child(mute_row)
 
-	# ── ② 显示（窗口分辨率 / 界面缩放）—— **两个档案都有**，内容随平台变 ──
+
+## ② 显示（分辨率 / 界面缩放 / 语言）—— 内容随平台变，见 `_build_display_rows`。
+func _sec_display(t: VBoxContainer) -> void:
 	for r in _build_display_rows():
-		content.add_child(r)
+		t.add_child(r)
 
-	# ── ③ 界面（字号）—— **战斗与牌桌有；主界面没有** ──
-	#
-	#  ★★ 字号缩放（**独立于界面缩放**：只动字、版面一点不动）。
-	#  · 界面缩放：整幅画布一起放大（字号与版面同步）——代价是设计空间被压缩
-	#    （设计高 = 1080÷倍数），所以底部两条要改贴底。
-	#  · 字号缩放：只动字 —— 适合「整体比例看着正好、就是字小」。
-	#  ⇒ 两者相乘，可细调；详见 `EveFont` 顶注。
-	#
-	# ⚠️ 上限定 1.30 不是随手取的：顶条 40px / 商店 158px / 棋带 140px 都是
-	#    设计稿写死的高度，1.30 之内它们还塞得下（实测见日志），再大就该用界面缩放。
-	# ⚠️ 桌面端**也有**这一行 —— 它跟界面缩放不同，桌面同样有意义
-	#    （窗口大小是玩家自己拖的，字号未必跟着舒服）。
-	# ★ 2026-10-10 主界面档案**不建**这一行：主菜单恒定 100%（见 `PROFILE_MENU`）。
-	if not _is_menu():
-		content.add_child(make_group_header(T.t("SET_GROUP_INTERFACE", "界面  INTERFACE")))
-		_font_slider = _build_slider_row(T.t("SET_FONT_SCALE", "字号"), FONT.scale,
-				func(v: float): _pick_font_scale(v),
-				FONT.MIN_SCALE, FONT.MAX_SCALE, FONT.STEP)
-		content.add_child(_font_slider["row"])
-		content.add_child(make_divider())
 
-	# ── ④ 画面（天空盒 / 氛围）—— **只有战场有** ──
-	#    ⚠️ 牌桌没有 3D 场景可换：它的背景是 `ddz_table` 自己画的，
-	#       由牌桌档案的「牌桌美化」项管，⛔ 别把天空盒搬过去（那是死按钮）。
+## ③ 界面（字号）—— **战斗与牌桌有；主菜单没有**。
+func _sec_interface(t: VBoxContainer) -> void:
+	if _is_menu():
+		return
+	t.add_child(make_group_header(T.t("SET_GROUP_INTERFACE", "界面  INTERFACE")))
+	_font_slider = _build_slider_row(T.t("SET_FONT_SCALE", "字号"), FONT.scale,
+			func(v: float): _pick_font_scale(v),
+			FONT.MIN_SCALE, FONT.MAX_SCALE, FONT.STEP)
+	t.add_child(_font_slider["row"])
+
+
+## ④ 画面（天空盒 / 氛围）—— **只有战场有**。
+func _sec_render(t: VBoxContainer) -> void:
+	if not _is_battle():
+		return
+	t.add_child(make_group_header(T.t("SET_GROUP_RENDER", "画面  RENDER")))
+	var bg := _build_choice_block(_names(BACKGROUNDS, "SET_BG"), "name", 2,
+			func(i: int): _pick_background(i))
+	var bg_btns: Array = bg["btns"]
+	for b in bg_btns:
+		_bg_btns.append(b as Button)
+	var bg_rows: Array = bg["rows"]
+	for r in bg_rows:
+		t.add_child(r)
+	var mood := _build_choice_block(_names(MOODS, "SET_MOOD", "v"), "name", 2,
+			func(i: int): _pick_mood(i))
+	var mood_btns: Array = mood["btns"]
+	for b in mood_btns:
+		_mood_btns.append(b as Button)
+	var mood_rows: Array = mood["rows"]
+	for r in mood_rows:
+		t.add_child(r)
+
+
+## ⑤ 战斗界面（空间雾 / 射程环 / 棋盘）—— **只有战场有**。
+func _sec_battle_ui(t: VBoxContainer) -> void:
+	if not _is_battle():
+		return
+	t.add_child(make_group_header(T.t("SET_GROUP_BATTLE_UI", "战斗界面  BATTLE UI")))
+	var toggles := HBoxContainer.new()
+	toggles.add_theme_constant_override("separation", 5)
+	toggles.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	toggles.add_child(_make_toggle("fog", T.t("SET_TOGGLE_FOG", "空间雾"), func(on: bool):
+		fog_toggled.emit(on)))
+	toggles.add_child(_make_toggle("rings", T.t("SET_TOGGLE_RINGS", "射程环"), func(on: bool):
+		range_rings_toggled.emit(on)))
+	toggles.add_child(_make_toggle("board", T.t("SET_TOGGLE_BOARD", "棋盘"), func(on: bool):
+		board_toggled.emit(on)))
+	t.add_child(toggles)
+
+
+## ⑥ 操作（不是开关，是「做一件事」）—— **战斗与牌桌有；主菜单没有**。
+##
+## ⚠️ `with_back`：栏目态传 **false** —— 返回主菜单已常驻**底栏**（2026-10-13 用户定），
+##    栏目页里再放一个是重复入口。竖向（PC）路径保持默认 true，逐像素不动。
+func _sec_action(t: VBoxContainer, with_back := true) -> void:
+	if _is_menu():
+		return
+	# 牌桌去掉返回后这一区就空了 ⇒ 整块不建（红线：不留看着能点的死区）
+	if not _is_battle() and not with_back:
+		return
+	t.add_child(make_group_header(T.t("SET_GROUP_ACTION", "操作  ACTION")))
 	if _is_battle():
-		content.add_child(make_group_header(T.t("SET_GROUP_RENDER", "画面  RENDER")))
-		# ⚠️ 天空盒用 2×2 而不是一行 4 个：窗宽 320 时一行 4 个每个只有 ~70px，
-		#    「加达里 C07」这种 7 字标签会被压成省略号（改窗宽就会复现）。
-		var bg := _build_choice_block(_names(BACKGROUNDS, "SET_BG"), "name", 2,
-				func(i: int): _pick_background(i))
-		var bg_btns: Array = bg["btns"]
-		for b in bg_btns:
-			_bg_btns.append(b as Button)
-		var bg_rows: Array = bg["rows"]
-		for r in bg_rows:
-			content.add_child(r)
-
-		var mood := _build_choice_block(_names(MOODS, "SET_MOOD", "v"), "name", 2,
-				func(i: int): _pick_mood(i))
-		var mood_btns: Array = mood["btns"]
-		for b in mood_btns:
-			_mood_btns.append(b as Button)
-		var mood_rows: Array = mood["rows"]
-		for r in mood_rows:
-			content.add_child(r)
-		content.add_child(make_divider())
-
-		# ── ⑤ 战斗界面（空间雾 / 射程环 / 棋盘）—— **只有战场有** ──
-		content.add_child(make_group_header(T.t("SET_GROUP_BATTLE_UI", "战斗界面  BATTLE UI")))
-		var toggles := HBoxContainer.new()
-		toggles.add_theme_constant_override("separation", 5)
-		toggles.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		toggles.add_child(_make_toggle("fog", T.t("SET_TOGGLE_FOG", "空间雾"), func(on: bool):
-			fog_toggled.emit(on)))
-		toggles.add_child(_make_toggle("rings", T.t("SET_TOGGLE_RINGS", "射程环"), func(on: bool):
-			range_rings_toggled.emit(on)))
-		toggles.add_child(_make_toggle("board", T.t("SET_TOGGLE_BOARD", "棋盘"), func(on: bool):
-			board_toggled.emit(on)))
-		content.add_child(toggles)
-		content.add_child(make_divider())
-
-	# ── ⑥ 操作（不是开关，是「做一件事」）—— **战斗与牌桌有；主界面没有** ──
-	#    ★ 2026-10-10 主界面档案整块**不建**：这里的动作是「相机复位 / 重开一局 /
-	#      离开这一局·回主界面」，在主界面上**一个对应物都没有**（我们就在主界面）。
-	#      建出来就是一排点不动的死按钮（红线 9，见 `PROFILE_MENU`）。
-	if not _is_menu():
-		content.add_child(make_group_header(T.t("SET_GROUP_ACTION", "操作  ACTION")))
-		if _is_battle():
-			var acts := HBoxContainer.new()
-			acts.add_theme_constant_override("separation", 5)
-			acts.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			var cam_btn := _mk_btn(T.t("SET_ACT_CAMERA", "相机复位"))
-			cam_btn.pressed.connect(func(): camera_reset_requested.emit())
-			acts.add_child(cam_btn)
-			var restart_btn := _mk_btn(T.t("SET_ACT_RESTART", "重开一局"))
-			EveButtonTheme.apply(restart_btn, "hud_warn")
-			restart_btn.pressed.connect(func(): run_restart_requested.emit())
-			acts.add_child(restart_btn)
-			content.add_child(acts)
-
-		# 返回主界面单独一行：它是"离开这一局"，与上面两个"局内动作"不同级。
-		# ⚠️ **战斗与牌桌都要**（牌桌上这是唯一的"离开"入口），只是文案不同：
-		#    战场**没有存档**，所以必须把"放弃本局"写出来，不能只写"返回主界面"
-		#    —— 那会让人以为进度还在（本文件顶注也写过这条）。
+		var acts := HBoxContainer.new()
+		acts.add_theme_constant_override("separation", 5)
+		acts.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var cam_btn := _mk_btn(T.t("SET_ACT_CAMERA", "相机复位"))
+		cam_btn.pressed.connect(func(): camera_reset_requested.emit())
+		acts.add_child(cam_btn)
+		var restart_btn := _mk_btn(T.t("SET_ACT_RESTART", "重开一局"))
+		EveButtonTheme.apply(restart_btn, "hud_warn")
+		restart_btn.pressed.connect(func(): run_restart_requested.emit())
+		acts.add_child(restart_btn)
+		t.add_child(acts)
+	if with_back:
 		var back_row := HBoxContainer.new()
 		back_row.add_theme_constant_override("separation", 5)
 		back_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -413,64 +595,41 @@ func _build_contents() -> void:
 				if _is_battle() else T.t("SET_ACT_BACK_LOUNGE", "返回主界面"))
 		menu_btn.pressed.connect(func(): back_to_menu_requested.emit())
 		back_row.add_child(menu_btn)
-		content.add_child(back_row)
+		t.add_child(back_row)
 
-	# ── ⑦ 系统（DEBUG 默认折叠）—— **只有战场有** ──────────────
-	#
-	# ★★ 2026-10-06 发布版：**DEBUG 区整块不创建**（用户：「什么 debug 功能都不需要」）。
-	#
-	#   原代码自己就写着「调试期加币按钮，发布时**必须删除**」。这里不删代码，
-	#   改用**内建 feature tag** 条件化：导出 release 模板时 OS.has_feature("release")
-	#   为真 ⇒ 整块跳过；编辑器里调试跑（F5）是 debug ⇒ 加币按钮照旧可用。
-	#   ⇒ 满足「正式版没有调试功能」，又不用每次发布前手动删代码再改回来。
-	#
-	#   ⚠️ 判据用内建 tag，⛔ 不新增 custom_features —— 自己加的 tag 忘了配 preset 时
-	#   会**静默失效**（按钮照样出现在正式版里）；"release" 由构建类型决定，不可能忘。
-	#   ⚠️ `_set_debug_open()` 里已有 null 守卫（两个字段判 null），所以正式版
-	#   字段留空不会在别处炸。
-	#   ⚠️ 加币是**战场经济**的调试手段（星币）⇒ 牌桌档案里同样不该出现。
-	if _is_battle() and not OS.has_feature("release"):
-		content.add_child(make_divider())
-		content.add_child(make_group_header(T.t("SET_GROUP_SYSTEM", "系统  SYSTEM")))
-		# 三个常见经济档位的快速加币按钮：
-		#   100 = 买 1 次超频 + 1 次经验档
-		#   300 = 日常调试（刷新 / 加速 / 打捞都够用 1~2 次）
-		#   999 = "把整局买穿"（验全档品质 / 满级后超频链）
-		_dbg_btn = Button.new()
-		_dbg_btn.custom_minimum_size = Vector2(0, 20)
-		_dbg_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_dbg_btn.pressed.connect(func():
-			_set_debug_open(_dbg_box == null or not _dbg_box.visible))
-		content.add_child(_dbg_btn)
 
-		_dbg_box = VBoxContainer.new()
-		_dbg_box.add_theme_constant_override("separation", 5)
-		_dbg_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var dbg := HBoxContainer.new()
-		dbg.add_theme_constant_override("separation", 5)
-		dbg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		for amt in [100, 300, 999]:
-			var b := _mk_btn(T.t("SET_DEBUG_COINS", "+%d 星币") % amt)
-			b.pressed.connect(func(a = amt): add_coins_requested.emit(a))
-			dbg.add_child(b)
-		_dbg_box.add_child(dbg)
-		content.add_child(_dbg_box)
-		# ⚠️ 传 false：此刻窗口宽度还是 0，反推高度会拿到垃圾值（见 _set_debug_open 的说明）
-		_set_debug_open(false, false)
+## ⑦ 系统（DEBUG 默认折叠）—— **只有战场有**（发布版整块不建）。
+func _sec_debug(t: VBoxContainer) -> void:
+	if not (_is_battle() and not OS.has_feature("release")):
+		return
+	t.add_child(make_divider())
+	t.add_child(make_group_header(T.t("SET_GROUP_SYSTEM", "系统  SYSTEM")))
+	_dbg_btn = Button.new()
+	_dbg_btn.custom_minimum_size = Vector2(0, 20)
+	_dbg_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_dbg_btn.pressed.connect(func():
+		_set_debug_open(_dbg_box == null or not _dbg_box.visible))
+	t.add_child(_dbg_btn)
+	_dbg_box = VBoxContainer.new()
+	_dbg_box.add_theme_constant_override("separation", 5)
+	_dbg_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var dbg := HBoxContainer.new()
+	dbg.add_theme_constant_override("separation", 5)
+	dbg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for amt in [100, 300, 999]:
+		var b := _mk_btn(T.t("SET_DEBUG_COINS", "+%d 星币") % amt)
+		b.pressed.connect(func(a = amt): add_coins_requested.emit(a))
+		dbg.add_child(b)
+	_dbg_box.add_child(dbg)
+	t.add_child(_dbg_box)
+	# ⚠️ 传 false：此刻窗口宽度可能还没定，反推高度会拿到垃圾值
+	_set_debug_open(false, false)
 
-	# ── ⑧ 重置（**所有档案都有**）──────────────────────────────────
-	#
-	# ★ 2026-10-10：用户要「一个 Ctrl+F11 恢复默认设置的按钮」。
-	#   ⚠️ 它本质是**救命键**：玩家把分辨率 / 字号 / 音量调歪了、界面没法用的时候，
-	#      按它就能把设置拉回出厂值。所以：
-	#        ① 按钮放在**所有档案都建**的这一区（⛔ 别塞进「操作」，那区主界面没有）；
-	#        ② `_unhandled_input` 挂在**本窗**上（三个场景都建了它）——
-	#           `_unhandled_input` 不受 `visible` 影响 ⇒ **窗关着也按得到**。
-	content.add_child(make_divider())
-	content.add_child(make_group_header(T.t("SET_GROUP_RESET", "重置  RESET")))
-	# ⚠️ 按钮与快捷键说明**排在同一行**：设置窗已经很高（地面档案含分辨率块
-	#    实测 ~940），**多占一行**就会把整扇窗顶过 `_fit_height` 的视口上限
-	#    ⇒ 触发那条守卫（拒绝设高）⇒ 窗底被切掉（2026-10-10 出图时踩到）。
+
+## ⑧ 重置（**所有档案都有**）—— 竖向长条形态；栏目态的重置在底栏。
+func _sec_reset(t: VBoxContainer) -> void:
+	t.add_child(make_divider())
+	t.add_child(make_group_header(T.t("SET_GROUP_RESET", "重置  RESET")))
 	var reset_row := HBoxContainer.new()
 	reset_row.add_theme_constant_override("separation", 8)
 	reset_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -478,7 +637,6 @@ func _build_contents() -> void:
 	reset_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN   # 别撑满，给说明留位
 	reset_btn.pressed.connect(reset_to_defaults)
 	reset_row.add_child(reset_btn)
-	# ⚠️ 说明**不许开 autowrap**（窗宽只有 320，见下面 hint 的同款说明）
 	_reset_note = Label.new()
 	_reset_note.text = RESET_NOTE_HINT
 	_reset_note.add_theme_color_override("font_color", C_TEXT_FAINT)
@@ -486,25 +644,15 @@ func _build_contents() -> void:
 	_reset_note.autowrap_mode = TextServer.AUTOWRAP_OFF
 	_reset_note.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	reset_row.add_child(_reset_note)
-	content.add_child(reset_row)
+	t.add_child(reset_row)
 
-	# 快捷键备忘 —— 设置窗的一大价值就是「让隐藏操作变得可发现」
-	#
-	# ⚠️ **不许开 autowrap**（`AUTOWRAP_OFF`）：开了之后这行的「最小高度」取决于
-	#    当时拿到的宽度 —— 窗口宽度还是 0 的那一帧（刚 new 出来、还没 set_window_rect）
-	#    会按「一个字一行」折出 800+ px 的最小高度，`_fit_height()` 于是把窗撑到 919px，
-	#    底部留下 390px 空白（用户 2026-09-29 实测）。这一行本来就放得下，不需要折行。
-	# ⚠️ 牌桌档案里那串战场快捷键（空格 / C / B / R）**一个都不存在** ⇒
-	#    换成一句只说显示的话，⛔ 别把战场的说明写进牌桌（那是一页骗人的话）。
-	# ★ 2026-10-10 主界面档案：只说主界面上**真实有效**的东西（音量 / 分辨率），
-	#    ⛔ 别提字号（主界面恒定 100%，这里改不了 —— 见 `PROFILE_MENU`）。
+
+## 快捷键备忘 —— 设置窗的一大价值就是「让隐藏操作变得可发现」。
+func _sec_hint(t: VBoxContainer) -> void:
 	var hint := Label.new()
 	var hint_text := T.t("SET_HINT_BATTLE",
 				"快捷键  空格 暂停/继续 · C 相机复位 · B 棋盘 · R 重开")
 	if _is_menu():
-		# ⚠️ 「显示」区随平台变：桌面 = 分辨率（即时生效）；移动 = 界面缩放
-		#    （存档值，主界面是固定版面**不参与**放大）⇒ 提示必须跟着平台说，
-		#    ⛔ 别在手机上写「分辨率即时生效」（根本没这一行）。
 		hint_text = (T.t("SET_HINT_MENU_DESKTOP",
 						"音量与分辨率即时生效；主界面为固定版面，字号沿用战斗设置")
 					if RESOLUTION_SCRIPT.is_enabled()
@@ -517,7 +665,7 @@ func _build_contents() -> void:
 	FONT.fs(hint, 9)
 	hint.autowrap_mode = TextServer.AUTOWRAP_OFF
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	content.add_child(hint)
+	t.add_child(hint)
 
 
 ## 「显示 DISPLAY」分区的行（窗口分辨率 / 界面缩放）。
@@ -784,6 +932,10 @@ func _set_debug_open(open: bool, refit: bool = true) -> void:
 func _fit_height() -> void:
 	if content == null:
 		return
+	# ★ 横向栏目态：窗高由 HUD 的矩形定（栏目内容区自己滚）。
+	#   ⛔ 别按内容反推 —— 那正是这次改版要消灭的「竖向长条一屏装不下」。
+	if _tabbed:
+		return
 	var need: Vector2 = content.get_combined_minimum_size()
 	# ⚠️ 宽度还没定（刚建完、还没排过序）时量出来的是垃圾值，直接放弃这一轮
 	if need.x <= 0.0:
@@ -1042,6 +1194,8 @@ func _pick_volume(kind: StringName, v: float) -> void:
 ##    单选组刷**皮肤** · 二态开关刷皮肤 + **文字** ·
 ##    滑杆刷**值 + 百分比**（且不发信号，见 `set_volume`）· 暂停刷按钮文字。
 func set_state(state: Dictionary) -> void:
+	# 记住一份：`set_tabbed()` 重建内容后要按它回写（否则开关/滑杆显示跳回默认值）
+	_last_state = state.duplicate()
 	set_background_id(String(state.get("background", "caldari_c07")))
 	set_mood(int(state.get("mood", 0)))
 	_set_toggle("fog", bool(state.get("fog", false)))
@@ -1139,6 +1293,57 @@ func set_paused(on: bool) -> void:
 
 func is_paused() -> bool:
 	return _paused
+
+
+## 切「横向栏目」态（HUD 每次重铺都调；值没变就直接返回）。
+##
+## ⚠️ 为什么需要重建而不是「建两套、切可见性」：栏目版的盒子里装的控件
+##    引用（`_sliders` / `_toggles` / `_bg_btns` …）与竖向版**同名同型**，
+##    两套并存会让「回写状态」不知道该写哪一套 —— 重建是唯一不会漂的做法。
+## ⚠️ 桌面档**永远**收不到 true（HUD 只在手机档调它）⇒ PC 路径不受影响。
+func set_tabbed(on: bool) -> void:
+	if on == _tabbed or not is_node_ready():
+		return
+	_tabbed = on
+	_rebuild_contents()
+
+
+## 清空 content 并按当前 `_tabbed` 重建，然后把上一次的真实状态回写回去。
+func _rebuild_contents() -> void:
+	for c in content.get_children():
+		content.remove_child(c)
+		c.queue_free()
+	# ⚠️ 控件引用**必须**清干净：旧控件已 `queue_free`，留着就是悬垂引用
+	_sliders.clear()
+	_toggles.clear()
+	_groups.clear()
+	_bg_btns.clear()
+	_mood_btns.clear()
+	_scale_btns.clear()
+	_res_btns.clear()
+	_lang_btns.clear()
+	_tab_btns.clear()
+	_tab_boxes.clear()
+	_pause_btn = null
+	_dbg_box = null
+	_dbg_btn = null
+	_reset_note = null
+	_font_slider = {}
+	_cur_tab = "video"
+	_build_contents()
+	# ★ 栏目态：窗高归调用方的矩形管（定高 560）——竖向时代 `_fit_height` →
+	#   `set_window_height` 置位的 `_height_owned` 必须交还，
+	#   否则 `set_window_rect(..., 560)` 的**高度被忽略**（实测牌桌窗 652 高，
+	#   底栏悬在半空）。桌面竖向态照旧由内容反推。
+	_height_owned = not _tabbed
+	# 重建后回写真实状态（暂停态 / 音量 / 开关 / 高亮）—— 否则开着的窗会跳回默认值
+	if not _last_state.is_empty():
+		set_state(_last_state)
+	if not _tabbed:
+		# 等两帧让布局稳定再量高（与 `_ready` 同款理由：宽度没定时量出垃圾值）
+		await get_tree().process_frame
+		await get_tree().process_frame
+		_fit_height()
 
 
 func get_toggle(key: String) -> bool:

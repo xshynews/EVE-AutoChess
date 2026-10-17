@@ -113,3 +113,15 @@ static func apply_scene_default(win: Window) -> void:
 ## 需要紧凑档吗（= 设计空间比 1080 矮，底部两条必须改成贴底）。
 static func is_compact(scale: float) -> bool:
 	return scale > 1.001
+
+
+## 这个倍数在当前平台 ⇒ 是不是「**手机专用布局**」档。
+##
+## ★ 2026-10-13：**唯一真源**。`EveHudRoot._mobile_layout`（侧列/顶条/停靠）
+##   与 `EveSettings` 的横向栏目都读它 —— 两处各写一遍
+##   `is_mobile() and is_compact()` 必然漂移，症状是「HUD 已按手机档排完，
+##   设置窗还是那条一屏装不下的老长条」。
+## ⚠️ HUD 那边还多一个 `force_mobile_layout`（只给无头自检开），见
+##    `apply_ui_profile()`；本函数不含它（自检要的是确定性，不是平台判断）。
+static func is_mobile_tier(scale: float) -> bool:
+	return is_mobile() and is_compact(scale)

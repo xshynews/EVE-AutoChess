@@ -15,6 +15,7 @@ const UI := preload("res://scripts/ui/eve_ui_scale.gd")
 const SETTINGS_STORE := preload("res://scripts/core/eve_settings_store.gd")
 const LAYOUT_STORE := preload("res://scripts/ui/eve_window_store.gd")
 const FONT := preload("res://scripts/ui/eve_font.gd")
+const SHIP_DB := preload("res://scripts/core/eve_ship_database.gd")
 
 ## 设计稿口径：底部留 14、两条之间留 8（与 `RECT_*` 一致）
 const BOTTOM_MARGIN := 14.0
@@ -57,6 +58,7 @@ func _ready() -> void:
 	print("═══ 平台 UI 缩放档 自检 ═══")
 	_t_scale_semantics()
 	_t_compact_geometry()
+	_t_mobile_layout()
 	_t_desktop_table_unchanged()
 	_t_profile_switch()
 	_t_desktop_noop()
@@ -334,6 +336,212 @@ func _t_compact_geometry() -> void:
 					"%s 设置窗在屏内（y %.0f..%.0f）" % [tag, set_r.position.y, set_r.end.y])
 
 
+# ---------------------------------------------------------------- [8] 手机专用布局
+
+## ★ 这一段是「手机端专用、PC 不许沾」的硬证据（2026-10-13 评审稿）：
+##   ① 几何（纯函数）：底部两条仍在屏内、侧列确实加宽、顶条确实加高；
+##   ② 折叠 = 贴边（不是"在原地把内容收掉"），且只展开点的那一组；
+##   ③ 桌面端**拿不到**手机档（除非自检显式开 `force_mobile_layout`）。
+const MOBILE_SIDE_RESERVE := 300.0
+
+func _t_mobile_layout() -> void:
+	print("[8] ★ 手机专用布局（移动端 + 紧凑档；桌面端不走这条路）")
+	for item in PHONES:
+		var d: Vector2 = item["d"]
+		var r: Dictionary = HUD_SCRIPT.mobile_rects(d)
+		var w := d.x
+		var h := d.y
+		var tag := String(item["name"])
+		var shop: Rect2 = r["shop"]
+		var bench: Rect2 = r["bench"]
+		var top: Rect2 = r["top"]
+
+		# ① 底部两条：**高度沿用设计稿**（内容最小高度决定的，压矮会静默切行）
+		_ok(is_equal_approx(shop.size.y, HUD_SCRIPT.RECT_SHOP.size.y)
+				and is_equal_approx(bench.size.y, HUD_SCRIPT.RECT_BENCH.size.y),
+				"%s ★ 底部两条高度 == 设计稿（商店 %.0f / 备战席 %.0f，⛔ 不许压矮）"
+				% [tag, shop.size.y, bench.size.y])
+		_ok(absf(shop.end.y - (h - BOTTOM_MARGIN)) < 0.5 and bench.end.y <= h,
+				"%s 商店贴底且都在屏内（底边 %.0f）" % [tag, shop.end.y])
+		_ok(absf(bench.end.y + GAP - shop.position.y) < 0.5, "%s 备战席骑在商店上" % tag)
+		_ok(absf(shop.get_center().x - w * 0.5) < 0.5
+				and absf(bench.get_center().x - w * 0.5) < 0.5,
+				"%s 底部两条水平居中" % tag)
+		_ok(bench.position.x >= MOBILE_SIDE_RESERVE - 0.5
+				and bench.end.x <= w - MOBILE_SIDE_RESERVE + 0.5,
+				"%s ★ 让出加宽后的侧列（x %.0f..%.0f，需让出 0..%.0f）"
+				% [tag, bench.position.x, bench.end.x, MOBILE_SIDE_RESERVE])
+
+		# ② 侧列加宽 + 顶条加高（评审稿：手机上"窗口太小"的第一条反馈）
+		var syn: Rect2 = r["syn"]
+		var info: Rect2 = r["info"]
+		_ok(is_equal_approx(syn.size.x, HUD_SCRIPT.MOBILE_SIDE_W)
+				and is_equal_approx(info.size.x, HUD_SCRIPT.MOBILE_SIDE_W_R),
+				"%s ★ 侧列加宽 172 → %.0f / %.0f" % [tag, syn.size.x, info.size.x])
+		_ok(is_equal_approx(top.size.y, HUD_SCRIPT.MOBILE_TOP_H),
+				"%s ★ 顶条加高 40 → %.0f（按钮 SIZE_FILL ⇒ 跟着变高）" % [tag, top.size.y])
+		_ok(absf(top.get_center().x - w * 0.5) < 0.5, "%s 顶条水平居中" % tag)
+		_ok(syn.position.x >= 0.0 and info.end.x <= w + 0.5,
+				"%s 侧列横向在屏内（右列右边 %.0f ≤ %.0f）" % [tag, info.end.x, w])
+
+		# ②b ★ 2026-10-13 二修：左列**纵向重分配**（构成压矮、装备吃高度）
+		#     —— 用户原话「左边还有高度，可以适当调整舰队构成和装备栏位的上下关系」
+		var eq: Rect2 = r["eq"]
+		var aug: Rect2 = r["aug"]
+		var setr: Rect2 = r["settings"]
+		_ok(is_equal_approx(syn.size.y, HUD_SCRIPT.MOBILE_SYN_H)
+				and eq.size.y >= HUD_SCRIPT.RECT_EQ.size.y,
+				"%s ★ 左列纵向重分配：构成 %.0f（PC 268）· 装备 %.0f（PC 116）"
+				% [tag, syn.size.y, eq.size.y])
+		_ok(absf(eq.position.y - (syn.end.y + HUD_SCRIPT.MOBILE_COL_GAP)) < 0.5
+				and absf(aug.position.y - (eq.end.y + HUD_SCRIPT.MOBILE_COL_GAP)) < 0.5,
+				"%s 构成 → 装备 → 增益 顺序相接、彼此不重叠" % tag)
+		_ok(eq.size.y <= HUD_SCRIPT.MOBILE_EQ_H + 0.5
+				and eq.size.y >= HUD_SCRIPT.RECT_EQ.size.y - 0.5,
+				"%s ★ 装备 %.0f 高（目标 %.0f；短屏按上界收缩，但不小于设计稿 %.0f）"
+				% [tag, eq.size.y, HUD_SCRIPT.MOBILE_EQ_H, HUD_SCRIPT.RECT_EQ.size.y])
+		_ok(aug.end.y <= h + 0.5,
+				"%s ★ 增益窗仍在屏内（装备吃高度**不许**把它顶出去，底边 %.0f ≤ %.0f）"
+				% [tag, aug.end.y, h])
+
+		# ②c ★ 2026-10-13 二修之三：设置窗改横向栏目 ⇒ 宽窗 + 定高
+		#     （竖向长条在手机档约 900 高 > 设计高 800 ⇒ 必然出屏）
+		var want_sw := minf(clampf(w * HUD_SCRIPT.MOBILE_SETTINGS_W_FRAC,
+				HUD_SCRIPT.MOBILE_SETTINGS_W_MIN, HUD_SCRIPT.MOBILE_SETTINGS_W_MAX),
+				w - 2.0 * HUD_SCRIPT.MOBILE_EDGE)
+		var want_sh := minf(HUD_SCRIPT.MOBILE_SETTINGS_H, h - top.end.y - 2.0 * HUD_SCRIPT.MOBILE_EDGE)
+		_ok(is_equal_approx(setr.size.x, want_sw)
+				and is_equal_approx(setr.size.y, want_sh),
+				"%s ★ 设置窗 %.0f×%.0f = 半屏宽 + 定高（横向栏目，内容区自己滚）"
+				% [tag, setr.size.x, setr.size.y])
+		_ok(setr.end.y <= h + 0.5 and setr.position.y >= top.end.y - 0.5,
+				"%s 设置窗整扇在「顶条以下」的屏内（y %.0f..%.0f，屏高 %.0f）"
+				% [tag, setr.position.y, setr.end.y, h])
+
+		# ③ 全部矩形都在屏内
+		var overflow := []
+		for key in r.keys():
+			var rect: Rect2 = r[key]
+			if rect.end.x > w + 0.5 or rect.position.x < -0.5 \
+					or rect.end.y > h + 0.5 or rect.position.y < -0.5:
+				overflow.append(key)
+		_ok(overflow.is_empty(),
+				"%s 全部 %d 个矩形都在屏内（越界：%s）"
+				% [tag, r.size(), "无" if overflow.is_empty() else str(overflow)])
+
+		# ④ 停靠标签：贴边、不越界、彼此不重叠、落在「顶条以下 / 备战席以上」
+		var docks: Dictionary = HUD_SCRIPT.mobile_dock_rects(d)
+		_ok(docks.size() == 4,
+				"%s ★ 4 组各自吸附（舰队/装备/增益/日志；档案自带收起不参与）"
+				% tag)
+		var dock_ok := true
+		var prev_end := -1.0
+		for k in ["syn", "eq", "aug"]:
+			var dr: Rect2 = docks[k]
+			if dr.position.x != 0.0 or dr.end.x > w or dr.position.y < top.end.y \
+					or dr.end.y > bench.position.y + 0.5:
+				dock_ok = false
+			if dr.position.y < prev_end - 0.5:
+				dock_ok = false
+			prev_end = dr.end.y
+		var lr: Rect2 = docks["log"]
+		if absf(lr.end.x - w) > 0.5 or lr.position.y < top.end.y \
+				or lr.end.y > bench.position.y + 0.5:
+			dock_ok = false
+		_ok(dock_ok, "%s ★ 停靠标签贴边、纵向居中、彼此不重叠" % tag)
+		_ok("info" not in docks,
+				"%s 舰船档案**不**给停靠位（它 `collapsible == false`，给了是空操作）" % tag)
+
+	# ── 实装侧：桌面端拿不到手机档，除非自检显式开闸 ──
+	var h := _mk_hud()
+	h.call("apply_ui_profile", 1.35)
+	_ok(not bool(h.get("_mobile_layout")),
+			"★★ 桌面端 apply_ui_profile(1.35) ⇒ 仍是**非**手机档（PC 布局不动）")
+	h.call("apply_ui_profile", 1.0)          # 别把放大倍数留给后面的用例
+	h.queue_free()
+
+	var m := _mk_hud()
+	m.set("force_mobile_layout", true)
+	m.call("apply_ui_profile", 1.35)
+	_ok(bool(m.get("_mobile_layout")), "★ 自检开闸 ⇒ 进手机专用布局")
+	var m_tbl: Dictionary = m.get("_rect_tbl")
+	var m_want: Dictionary = HUD_SCRIPT.mobile_rects(m.call("_design_space"))
+	_ok(m_tbl.get("syn") == m_want.get("syn"),
+			"档位表 == mobile_rects(设计空间)：舰队构成 %s" % str(m_tbl.get("syn")))
+
+	var syn_w: Control = m.get("synergy_window")
+	var log_w: Control = m.get("log_window")
+	_ok(not bool(syn_w.call("is_collapsed")) and not bool(log_w.call("is_collapsed")),
+			"★★ 手机档默认**不**收起侧列（决策信息要能扫一眼就看到）")
+	_ok(is_equal_approx(syn_w.size.x, HUD_SCRIPT.MOBILE_SIDE_W),
+			"侧列实际宽度 %.0f（设计稿是 172）" % syn_w.size.x)
+
+	# ★★ 2026-10-13 二修之四：舰船档案**默认整窗隐藏**，点中舰船才亮起
+	#    （用户原话「不要一直在那」）。⛔ 桌面档恒可见 —— 这条只属于手机档。
+	var dos: Control = m.get("dossier_window")
+	_ok(dos != null and not bool(dos.visible),
+			"★★ 手机档舰船档案**默认隐藏**（不再常驻占右列 %.0f×%.0f）"
+			% [HUD_SCRIPT.MOBILE_SIDE_W_R, HUD_SCRIPT.RECT_INFO.size.y])
+	var log_y_hidden := log_w.position.y
+	_ok(absf(log_y_hidden - m_want.get("info").position.y) < 0.5,
+			"★ 档案隐藏时战斗日志**上移到档案位**（右列不留空洞，y %.0f）" % log_y_hidden)
+	# 点中一艘船 ⇒ 档案亮起 + 日志退到它下面
+	var sh = SHIP_DB.instantiate_by_id("bantam", 0, 91001)
+	m.call("show_ship", sh)
+	_ok(bool(dos.visible), "★ 点中舰船 ⇒ 档案亮起")
+	_ok(log_w.position.y > log_y_hidden + float(dos.size.y),
+			"★ 档案亮起后日志退到它下方（y %.0f，档案高 %.0f）"
+			% [log_w.position.y, dos.size.y])
+	# 再取消选中 ⇒ 一起收回去（幂等）
+	m.call("show_ship", null)
+	_ok(not bool(dos.visible) and absf(log_w.position.y - log_y_hidden) < 0.5,
+			"★ 取消选中 ⇒ 档案收起、日志回位")
+
+	# ★★ 2026-10-13 二修之三：设置窗横向栏目 —— 每个栏目都点得动、且只亮一个
+	#    （工程红线：新面板必验「点下有反应」；四个按钮各点一次）
+	var set_w: Control = m.get("settings_window")
+	_ok(set_w != null and bool(set_w.get("_tabbed")),
+			"★★ 手机档设置窗 = **横向栏目态**（竖向长条在手机档会出屏）")
+	var tab_btns: Array = set_w.get("_tab_btns")
+	_ok(tab_btns.size() == 4,
+			"4 个栏目按钮（视频/音频/界面/游戏）实际 %d" % tab_btns.size())
+	var tab_boxes: Dictionary = set_w.get("_tab_boxes")
+	var seen := {}
+	for it in tab_btns:
+		var key := String(it["key"])
+		(it["btn"] as Button).pressed.emit()
+		var cur := String(set_w.get("_cur_tab"))
+		var vis := 0
+		for k in tab_boxes.keys():
+			if bool((tab_boxes[k] as VBoxContainer).visible):
+				vis += 1
+		_ok(vis == 1 and cur == key,
+				"★ 点「%s」⇒ 只亮该栏目（当前 %s，可见盒 %d）" % [key, cur, vis])
+		seen[key] = true
+	_ok(seen.size() == 4, "★★ 四个栏目都点得动（红线：看着能点、点了没反应）")
+
+	# 折叠 ⇒ 贴边成标签；再点 ⇒ 回原位
+	syn_w.call("set_collapsed", true)
+	var dock: Rect2 = syn_w.get("dock_rect")
+	_ok(syn_w.position == dock.position and dock.position.x == 0.0,
+			"★ 折叠 ⇒ 吸附到**左边缘**（位置 %s）" % str(syn_w.position))
+	_ok(is_equal_approx(syn_w.size.y, HUD_SCRIPT.MOBILE_DOCK_H),
+			"★ 标签高 %.0f（26px 的标题栏在手机上点不准）" % syn_w.size.y)
+	_ok(not bool(log_w.call("is_collapsed")) and log_w.position.x > 1.0,
+			"★★ 折叠一组**不影响**其他组（战斗日志仍在右侧原位）")
+	syn_w.call("set_collapsed", false)
+	_ok(is_equal_approx(syn_w.size.x, HUD_SCRIPT.MOBILE_SIDE_W)
+			and syn_w.position == m_want.get("syn").position,
+			"★ 再点开 ⇒ 回到侧列原位（%s，⛔ 不是停在边缘展开）" % str(syn_w.position))
+
+	# 切回桌面档 ⇒ 停靠位必须主动清空（否则桌面端折叠会莫名贴边）
+	m.call("apply_ui_profile", 1.0)
+	_ok(syn_w.get("dock_rect") == Rect2()
+			and is_equal_approx(float(syn_w.get("collapsed_height")), 0.0),
+			"★ 切回桌面档 ⇒ 停靠位被清空（桌面端折叠不贴边）")
+	m.queue_free()
+
+
 # ---------------------------------------------------------------- [3] 桌面档位表
 
 func _t_desktop_table_unchanged() -> void:
@@ -348,7 +556,9 @@ func _t_desktop_table_unchanged() -> void:
 		["info", HUD_SCRIPT.RECT_INFO], ["log", HUD_SCRIPT.RECT_LOG],
 		["shop", HUD_SCRIPT.RECT_SHOP], ["bench", HUD_SCRIPT.RECT_BENCH],
 		["event", HUD_SCRIPT.RECT_EVENT], ["result", HUD_SCRIPT.RECT_RESULT],
-		["settings", HUD_SCRIPT.RECT_SETTINGS],
+		# ★ 2026-10-13 用户定「把设置更新也同步改到PC端」：桌面设置窗 =
+		#   与手机同一套栏目窗（半屏宽 + 定高），不再是 320 竖条常量。
+		["settings", HUD_SCRIPT.settings_rect(h.call("_design_space"))],
 	]
 	var diff: Array[String] = []
 	for p in pairs:

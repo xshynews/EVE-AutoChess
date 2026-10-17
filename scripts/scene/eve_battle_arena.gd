@@ -725,10 +725,10 @@ func fx_tracer(from_meters: Vector3, to_meters: Vector3, hit: bool,
 		battle_fx.spawn_tracer(from_meters, to_meters, hit, quality)
 
 
-## 命中爆点
-func fx_hit(pos_meters: Vector3, quality: int) -> void:
+## 命中爆点（`layer` = 真实受击层：shield / armor / hull）
+func fx_hit(pos_meters: Vector3, quality: int, layer: StringName = &"") -> void:
 	if battle_fx != null:
-		battle_fx.spawn_hit(pos_meters, quality)
+		battle_fx.spawn_hit(pos_meters, quality, layer)
 
 
 ## 击毁爆炸

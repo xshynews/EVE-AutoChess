@@ -9,13 +9,23 @@ class_name EveSlot
 ##
 ## ⚠️ Godot 的 StyleBoxFlat 不支持虚线边框，所以整体自绘。
 
+const FONT := preload("res://scripts/ui/eve_font.gd")
+
 const DASH := 4.0
 const GAP := 3.0
+## 序号标签只在格子被拉得足够高时才显示（手机档 8 格 2×4 ⇒ 格高 ~130；
+## 桌面档 35 高的格子塞一行字会压到图标 ⇒ 自动隐藏，PC 观感不变）。
+const TAG_SHOW_H := 56.0
 
 ## 槽里有没有东西
 var filled: bool = false: set = set_filled
 ## 满槽时的强调色（用于图标描边，可由调用方设）
 var accent: Color = Color(0.70, 0.82, 0.85)
+## 槽位序号（装备栏 Ⅰ~Ⅷ）—— 空槽时让「8 个固定位」可被指认。
+## ⚠️ 只在格子够高时可见（见 `TAG_SHOW_H`）；⛔ 别用它存业务数据。
+var tag: String = "": set = set_tag
+
+var _tag_lb: Label = null
 
 
 func _ready() -> void:
@@ -25,6 +35,40 @@ func _ready() -> void:
 func set_filled(v: bool) -> void:
 	filled = v
 	queue_redraw()
+
+
+func set_tag(v: String) -> void:
+	tag = v
+	_ensure_tag_lb()
+	_refresh_tag_visible()
+
+
+func _ensure_tag_lb() -> void:
+	if _tag_lb != null or tag == "":
+		return
+	_tag_lb = Label.new()
+	_tag_lb.name = "Tag"
+	_tag_lb.add_theme_color_override("font_color", Color(0.35, 0.43, 0.47))
+	FONT.fs(_tag_lb, 9)
+	_tag_lb.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_tag_lb.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	_tag_lb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tag_lb.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_tag_lb.offset_top = 3.0
+	add_child(_tag_lb)
+
+
+func _refresh_tag_visible() -> void:
+	if _tag_lb == null:
+		return
+	_tag_lb.text = tag
+	_tag_lb.visible = tag != "" and size.y >= TAG_SHOW_H
+
+
+func _notification(what: int) -> void:
+	# 格子被拉高（手机档）⇒ 序号亮出来；收回（桌面档）⇒ 收回去
+	if what == NOTIFICATION_RESIZED:
+		_refresh_tag_visible()
 
 
 func _draw() -> void:

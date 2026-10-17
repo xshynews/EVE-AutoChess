@@ -1258,11 +1258,11 @@ func _maybe_confirm_leftover_wrecks() -> void:
 	var res_win = hud.get("result_window")
 	if res_win == null:
 		return
-	var ask: ConfirmationDialog = res_win.get("_salvage_ask")
-	if ask == null:
-		return
-	ask.dialog_text = "本回合还有 %d 艘残骸没有打捞。\n确定要放弃吗？" % run.wrecks.size()
-	ask.popup_centered(Vector2i(400, 176))
+	# ★ 2026-10-13：确认框 = `EveConfirmDialog`（EVE 窗口语言版）。
+	#   ⛔ 别再 `res_win.get("_salvage_ask")` 去戳内置 `ConfirmationDialog` ——
+	#      那是原生 OS 窗口（系统标题栏/字体/配色），已废弃（用户原话「丑哭了」）。
+	#   文案与弹框都收口在 `EveResult.ask_abandon_salvage()`，主控只报个数。
+	res_win.call("ask_abandon_salvage", run.wrecks.size())
 
 
 ## 重画打捞区（下单 / 取消后都要调）。
@@ -1419,6 +1419,30 @@ func _on_unit_destroyed(ship: EveShip) -> void:
 	#    船没了就是没了，留一个浮空的名字反而像 bug。
 
 
+## 判定这一发打在**哪一层**（护盾 / 装甲 / 结构）。
+##
+## ⚠️ 这是**近似**，不是模拟器的原始层信息：
+##    `shot_fired` 只带 `quality`，不带「打在盾上还是甲上」。
+##    这里用**命中后剩余的 hp** 反推：
+##      · 盾还有   ⇒ 盾在扛（shield）
+##      · 盾空了、甲还有 ⇒ 装甲（armor）
+##      · 都空了   ⇒ 结构（hull）
+##    唯一不准的时刻是「一发刚好把盾打穿」—— 那一发会被判成 armor。
+##    代价只是**一次闪光的颜色**，可接受；要做到严格正确得让 sim 把层信息
+##    一起播出来（那是改信号签名，要同步验收，另排期）。
+##
+## ⛔ 不要用 `quality` 来猜层：品质 ≠ 层。一发 WRECKING 可能砸在满盾上，
+##    一发普通命中可能已经在啃结构 —— 那正是「颜色读不出状态」的老毛病。
+func _hit_layer(ship: EveShip) -> StringName:
+	if ship == null:
+		return &""
+	if float(ship.hp.get(&"shield", 0.0)) > 0.001:
+		return &"shield"
+	if float(ship.hp.get(&"armor", 0.0)) > 0.001:
+		return &"armor"
+	return &"hull"
+
+
 ## 开火：画曳光 + 冒伤害数字（阶段 D②③）
 ##
 ## ⚠️ 这个回调在 **sim.step() 的一次调用里可能被触发上百次**
@@ -1452,7 +1476,13 @@ func _on_shot_fired(attacker: EveShip, target: EveShip, hit: bool,
 		#    而且不报错。
 		return
 	audio.play_hit(quality)
-	arena.fx_hit(target.body.position, quality)
+	# ★ 2026-10-17：视觉分层 —— 先判真实受击层，再交给特效层与船体闪光。
+	#   `fx_hit` 的 layer 决定爆点颜色/尺寸，`flash_hit` 决定船体泛什么色。
+	var layer := _hit_layer(target)
+	arena.fx_hit(target.body.position, quality, layer)
+	var vis := arena.get_ship_visual(target.id)
+	if vis != null and vis.has_method("flash_hit"):
+		vis.flash_hit(layer)
 	var sp := arena.world_to_screen(target.body.position + Vector3(0, 4, 0))
 	hud.pop_damage(sp, damage, quality, true)
 

@@ -278,8 +278,15 @@ func _t_settings_profile() -> void:
 			"★ 点第 1 档 ⇒ 存档写 key（%s，实际 \"%s\"）"
 			% [String(RES.CHOICES[0]["key"]),
 			   String(RES.STORE.load_all().get("resolution", "?"))])
-	_ok(lounge.size.y < battle.size.y,
-			"牌桌窗更矮（%d < %d）—— 少掉战场的分区" % [int(lounge.size.y), int(battle.size.y)])
+	# ★ 2026-10-13 全平台栏目态：三处设置窗同一骨架（半屏宽 + 定高 560），
+	#   档案间的差别落在**栏目数**上 —— 战场 4（视频/音频/界面/游戏）、牌桌 2（音频/界面）。
+	#   ⚠️ 不比窗高：本测试的窗没走过 `_place_settings()`，高度来自布局存档，不可靠。
+	var lb: int = (lounge.get("_tab_btns") as Array).size()
+	var bb: int = (battle.get("_tab_btns") as Array).size()
+	_ok(bool(lounge.get("_tabbed")) and bool(battle.get("_tabbed")),
+			"牌桌与战场设置窗同为**栏目态**（全平台统一）")
+	_ok(lb < bb,
+			"牌桌栏目更少（%d < %d）—— 少掉战场的分区" % [lb, bb])
 	# ★ 整扇窗必须在屏内（加完分辨率块之后战场窗实测 866 高）
 	# ⚠️ 本节点是 `Node` 不是 `Control` ⇒ `get_viewport_rect()` 不存在，走 get_viewport()
 	var vh := get_viewport().get_visible_rect().size.y

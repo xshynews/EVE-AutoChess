@@ -417,12 +417,19 @@ func _build_settings() -> void:
 ##
 ## ⚠️ 它挂在 `_content` 上 ⇒ 坐标即「基准区」坐标，⛔ 不用再补居中偏移
 ##    （`_content` 自己已经被 `_layout_content()` 挪到居中位置了）。
-## ⚠️ 高度**不由这里定**：`EveSettingsWindow._fit_height()` 会按内容反推并接管。
+## ⚠️ 高度**不由这里定**：`EveSettingsWindow._fit_height()` 会按内容反推并接管 ——
+##    但**横向栏目态**例外（`_fit_height` 早退，矩形说的就是最终值）。
+## ★ 2026-10-13 三方统一：手机档（栏目态）用与战场/牌桌同一形态的**半屏宽栏目窗**
+##   （宽 = 基准宽 ×0.5 夹 [420,1000]、定高 560）；桌面档保持原 320 竖条。
 func _place_settings() -> void:
 	if _settings == null:
 		return
 	var base := LAYOUT.BASE
-	_settings.set_window_rect((base.x - SETTINGS_W) * 0.5, 70.0, SETTINGS_W, 480.0)
+	if bool(_settings.get("_tabbed")):
+		var bw := clampf(base.x * 0.5, 420.0, 1000.0)
+		_settings.set_window_rect((base.x - bw) * 0.5, 70.0, bw, 560.0)
+	else:
+		_settings.set_window_rect((base.x - SETTINGS_W) * 0.5, 70.0, SETTINGS_W, 480.0)
 
 
 ## 右上角「设置」：开 / 关同一扇窗（再点一次收起 —— 与牌桌同一个交互）。

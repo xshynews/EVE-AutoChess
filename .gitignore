@@ -39,3 +39,8 @@ build/
 # 流水线本机路径配置（模板见 tools/pipeline/paths.local.example.json）
 tools/pipeline/paths.local.json
 
+# 音效候选隔离区（2026-10-16 起）：未拍板、未授权复核完的素材，按「隔离区」语义不入库。
+# 其中含 UNO 提取音（⛔ 不可商用），入库会把授权风险带进仓库。
+# 授权文本与拍板流程见 docs/音效落地执行方案-1016.md。
+assets/audio_candidates/
+

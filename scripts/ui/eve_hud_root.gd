@@ -118,13 +118,24 @@ const RECT_EVENT := Rect2(460, 300, 1000, 296)
 #    富余高度会被内容吃掉，给多 100px 就是窗里的空洞（本工程的既有教训）。
 const RECT_RESULT := Rect2(750, 330, 420, 356)
 
-# 设置窗：靠左中，不压战场中心（玩家开着它多半还想看画面变化）。
+# 设置窗：**全平台同一套栏目窗**（2026-10-13 用户定「把设置更新也同步改到PC端」）。
 #
-# ⚠️ 宽度 320（原 248）是 2026-09-28 加音量滑杆 + 暂停按钮之后必须的：
-#    一行「标签 + 滑杆 + 百分比」最少要 ~300px，248 会把滑杆压成一条缝。
-# ⚠️ 高度**只是初值** —— 设置窗自己会在 _ready 里按内容反推（`_fit_height`），
-#    这里写 480 是为了让「布局还没跑完的那一帧」不至于塌成一团。
-const RECT_SETTINGS := Rect2(196, 250, 320, 480)
+# 桌面 / 紧凑档的矩形由 static `settings_rect()` 算（半屏宽 + 定高，设计空间居中）；
+# 手机档仍走 `mobile_rects()`（y 受「顶条以下」带约束）。原来的 320 竖条常量
+# `RECT_SETTINGS` 已随之退役（竖向长条不再使用）。
+
+
+## 设置窗矩形（桌面 / 紧凑档共用）：与手机同一形态 —— 宽 = 设计宽 ×0.5
+## 夹 [420,1000]、定高 560（不超屏），在设计空间里居中。
+## ⚠️ 静态纯函数：`verify_ui_scale` 直接拿它当期望值比对。
+static func settings_rect(d: Vector2) -> Rect2:
+	var w := maxf(640.0, d.x)
+	var h := maxf(480.0, d.y)
+	var bw := clampf(w * MOBILE_SETTINGS_W_FRAC,
+			MOBILE_SETTINGS_W_MIN, MOBILE_SETTINGS_W_MAX)
+	bw = minf(bw, w - 2.0 * MOBILE_EDGE)
+	var bh := minf(MOBILE_SETTINGS_H, h - 2.0 * MOBILE_EDGE)
+	return Rect2((w - bw) * 0.5, (h - bh) * 0.5, bw, bh)
 
 # 备战席格数（与 EveBenchRail.SLOTS 对齐）
 const BENCH_SLOTS := 8
@@ -420,6 +431,14 @@ func _build_layout() -> void:
 ## 是不是「紧凑档」。
 ## ⚠️ 桌面端**恒 false** ⇒ `_rect_tbl` 逐项等于 `RECT_*` ⇒ 布局与从前逐像素一致。
 var _compact := false
+## ★ 是不是「手机专用布局」档（2026-10-13 评审稿）。
+##
+## ⛔⛔ **唯一的移动端闸门**：`_compact` 只说明"放大了"，本档才说明"这是手机"。
+##    桌面端（含无头自检）恒 false ⇒ 走 `RECT_*` / 旧紧凑档，**一个像素都不变**。
+var _mobile_layout := false
+## ⚠️ **只给自检用**：真机由 `EveUiScale.is_mobile()` 决定；桌面端跑不到手机档，
+##    而手机档的几何是纯函数、必须能在 Windows 上验（见 `verify_ui_scale` 第 8 段）。
+@export var force_mobile_layout: bool = false
 ## 当前生效的缩放倍数（1.0 = 设计稿原尺寸）
 var _ui_scale := 1.0
 ## 键 → 实际矩形。`_build_layout()` / `refresh_layout()` 都读它。
@@ -460,6 +479,60 @@ const COMPACT_GAP := 8.0
 ## ⚠️ 改字号上限、或改商店内部排版之后，**必须重新量一次**这个斜率
 ##    （量法：跑 `tools/_probe_font.tscn`，看两次打印的商店 `size.y` 之差）。
 const SHOP_FONT_GROW := 40.0
+
+## ── 手机专用布局（2026-10-13 评审稿定稿）────────────────────────────
+##
+## ⛔⛔ **这条路的唯一入口是 `_mobile_layout`**，它只在「移动平台 + 紧凑档」为真。
+##    桌面端恒 false ⇒ 11 项矩形逐项等于 `RECT_*`（见 `verify_ui_scale` 第 3 段）。
+##
+## 与桌面档的差别（评审稿：默认战场态 / 边缘吸附态 / 结算态 + 2026-10-13 二修）：
+##   ① **侧列加宽** 172 → 274（左）/ 259（右）：手机上「窗口太小」是实测第一条反馈；
+##   ② **顶条加高** 40 → 54：按钮是 `SIZE_FILL`，条一高就跟着高 ⇒ 手指够得着；
+##   ③ **底部两条高度沿用设计稿**（⛔ 不许压矮 —— 商店内容最小约 135px，
+##      压到 100 会把最后一行静默切掉），只把「让出的侧列宽度」188 → 300；
+##   ④ **折叠 = 吸附到屏幕边缘**（`MOBILE_DOCK_*`），每组各自成标签、单组点开。
+##
+## ★★ 2026-10-13 二修（用户四点反馈，样稿 `outputs/android_ui_review/index_v2.html`）：
+##   ① 左列再收窄 274 → 242（约 12%）—— 右列不动（用户只说左边栏）；
+##   ② 左列纵向重分配：舰队构成 268 → 240，装备栏位 116 → **300**
+##      （「左边还有高度」；装备是 8 格 2×4，格子越大越好点）；
+##   ③ 设置窗改**横向栏目**（视频/音频/界面/游戏）+ 宽窗定高，不再纵向堆叠出屏；
+##   ④ 舰船档案**默认整窗隐藏**，只有点中具体舰船才亮起（不再常驻占右列）。
+##
+## ⚠️ 手机档**不**默认收起侧列（旧紧凑档是收的）：评审稿的默认战场态里
+##    舰队构成 / 战斗日志是**展开**的 —— 它们是玩家做选择的参考信息，
+##    收起来就失去了「扫一眼就能拿到」的初衷；想让位给战场时由玩家自己折叠。
+const MOBILE_TOP_H := 54.0
+const MOBILE_SIDE_W := 242.0          ## 左列宽（舰队构成 / 装备 / 增益）
+const MOBILE_SIDE_W_R := 259.0        ## 右列宽（舰船档案 / 战斗日志）
+const MOBILE_EDGE := 25.0             ## 侧列离屏幕边缘
+const MOBILE_SIDE_RESERVE := 300.0    ## 底部两条必须让出的侧列宽度
+const MOBILE_COL_GAP := 10.0          ## 侧列内部上下间距
+## 左列纵向分配（2026-10-13 二修）：构成压矮、装备吃高度
+const MOBILE_SYN_H := 240.0           ## 舰队构成（PC 设计稿是 268）
+const MOBILE_EQ_H := 300.0            ## 装备栏位（PC 设计稿是 116；8 格 2×4 拉高）
+## 设置窗（横向栏目态）：**屏宽的一半**。
+##
+## ★ 2026-10-13 二修：用户「设置页面太宽，收窄到 1/3 或者 1/2」。
+##   取 **1/2** 而不是 1/3，两个理由：
+##    ① 1/3（~470）会把「背景星云」的 2 列选择块和底栏（恢复默认 + 说明 + 完成）
+##       压到刚好放下 —— 手机上是给手指点的，不留余量就是误触；
+##    ② 视频类设置（天空盒 / 氛围 / 雾）改完要**能看见背后的画面**，
+##       半屏窗两侧各留 1/4 屏，1/3 只留 1/6。
+##   上下界：420 = 2 列选择块 + 底栏仍放得下的最小宽；1000 = 平板级封顶
+##   （⛔ 别随屏宽无限放大 —— 那会退回「太宽」的老问题）。
+const MOBILE_SETTINGS_W_FRAC := 0.5
+const MOBILE_SETTINGS_W_MIN := 420.0
+const MOBILE_SETTINGS_W_MAX := 1000.0
+## 高度定死、内容区自己滚（「栏目只切换内容，不改变设置窗高度」）
+const MOBILE_SETTINGS_H := 560.0
+## 折叠后贴在边缘的那枚标签（评审稿：约 160 × 60 物理像素）
+const MOBILE_DOCK_W := 118.0
+const MOBILE_DOCK_H := 44.0
+const MOBILE_DOCK_GAP := 8.0
+## 结算页（评审稿 1300 × 770 物理 ⇒ 963 × 570 设计）：手机上要「读一屏数字」
+const MOBILE_RESULT_W := 963.0
+const MOBILE_RESULT_H := 570.0
 
 ## 底部两条**必须让出**的侧列宽度（左列 8..180，再留 8px 缝）。
 ## ⚠️ 少了它，窄屏（1.35 档下的 16:9 手机：设计宽只有 1422）上
@@ -521,25 +594,139 @@ static func compact_rects(d: Vector2) -> Dictionary:
 				ev_w, RECT_EVENT.size.y),
 		"result": Rect2((w - res_w) * 0.5, mid - RECT_RESULT.size.y * 0.5,
 				res_w, RECT_RESULT.size.y),
-		"settings": Rect2((w - RECT_SETTINGS.size.x) * 0.5,
-				mid - RECT_SETTINGS.size.y * 0.5,
-				RECT_SETTINGS.size.x, RECT_SETTINGS.size.y),
+		"settings": settings_rect(Vector2(w, h)),
 	}
 
 
+## 手机专用布局（移动端 + 紧凑档）—— **纯函数**：设计空间进、矩形出。
+##
+## ⚠️ 提成 static 是为了**能单独自检**（`verify_ui_scale` 直接喂真实手机尺寸，
+##    不需要真的跑在安卓上）。⛔ 桌面端**永远不调用**它。
+##
+## ⚠️ 只输出「位置与尺寸」，不折叠任何窗 —— 折叠与否是玩家的事（见
+##    `MOBILE_SIDE_W` 那段注释），折叠后的落位由 `mobile_dock_rects()` 给。
+static func mobile_rects(d: Vector2) -> Dictionary:
+	var w := maxf(640.0, d.x)
+	var h := maxf(480.0, d.y)
+	# ① 顶条：居中 + 加高
+	var top_w := minf(1000.0, w - 2.0 * MOBILE_EDGE)
+	var top := Rect2((w - top_w) * 0.5, 18.0, top_w, MOBILE_TOP_H)
+	# ② 底部两条：贴底；高度沿用设计稿（内容最小高度决定的，⛔ 不能压矮）
+	var avail := maxf(320.0, w - 2.0 * MOBILE_SIDE_RESERVE)
+	var shop_h := RECT_SHOP.size.y
+	var shop_w := minf(RECT_SHOP.size.x, avail)
+	var shop := Rect2((w - shop_w) * 0.5, h - COMPACT_BOTTOM - shop_h, shop_w, shop_h)
+	var bench_h := RECT_BENCH.size.y
+	var bench_w := minf(RECT_BENCH.size.x, avail)
+	var bench := Rect2((w - bench_w) * 0.5,
+			shop.position.y - COMPACT_GAP - bench_h, bench_w, bench_h)
+	# ③ 侧列：加宽 + 贴边（纵向间距沿用「展开后仍不重叠」的那套口径）
+	#    ★ 2026-10-13 二修：左列内部纵向重分配 —— 构成压矮、装备吃高度
+	#      （「左边还有高度」；装备 8 格 2×4，格子在手机上越大越好点）
+	var col_top := top.end.y + 12.0
+	var syn := Rect2(MOBILE_EDGE, col_top, MOBILE_SIDE_W, MOBILE_SYN_H)
+	# ★ 装备吃高度，但**不许把增益窗顶出屏**：左列总高（构成+间距+装备+间距+增益）
+	#   必须留在屏内。增益默认隐藏，可「一旦出现」就是在 screen 外 —— 那种bug
+	#   不报错、只是玩家永远点不到它。短屏（设计高 720）上装备按上界收缩，
+	#   ⛔ 但不小于设计稿的 116（再小就没法用了）。
+	var aug_h := RECT_AUG.size.y
+	var eq_h := maxf(minf(MOBILE_EQ_H,
+			h - col_top - MOBILE_SYN_H - 2.0 * MOBILE_COL_GAP - aug_h),
+			RECT_EQ.size.y)
+	var eq := Rect2(MOBILE_EDGE, syn.end.y + MOBILE_COL_GAP, MOBILE_SIDE_W, eq_h)
+	var aug := Rect2(MOBILE_EDGE, eq.end.y + MOBILE_COL_GAP,
+			MOBILE_SIDE_W, aug_h)
+	var info_x := w - MOBILE_EDGE - MOBILE_SIDE_W_R
+	var info := Rect2(info_x, col_top, MOBILE_SIDE_W_R, RECT_INFO.size.y)
+	var log := Rect2(info_x, info.end.y + MOBILE_COL_GAP,
+			MOBILE_SIDE_W_R, RECT_LOG.size.y)
+	# ④ 居中的大窗：在「顶条以下、备战席以上」那段里居中
+	#    ⚠️ 结算页例外 —— 它是打断式页面，允许盖住底部两条（评审稿就是这么排的），
+	#        但整扇必须在屏内（否则「继续下一节点」按钮点不到）。
+	var band_top := top.end.y
+	var band_bot := maxf(band_top + 120.0, bench.position.y)
+	var mid := (band_top + band_bot) * 0.5
+	var ev_w := minf(RECT_EVENT.size.x, w - 2.0 * MOBILE_EDGE)
+	var res_w := minf(MOBILE_RESULT_W, w - 2.0 * MOBILE_EDGE)
+	var res_h := minf(MOBILE_RESULT_H, h - band_top - 2.0 * MOBILE_EDGE)
+	var res_y := clampf(band_top + (h - band_top - res_h) * 0.5,
+			band_top + 8.0, maxf(band_top + 8.0, h - MOBILE_EDGE - res_h))
+	# ★ 设置窗（横向栏目态）：**屏宽一半** + 定高，在「顶条以下」整段里竖直居中。
+	#   ⚠️ 不再按 `mid`（顶条~备战席的中线）摆 —— 定高 560 会把备战席盖住一半；
+	#      它是模态窗，允许压底部两条，但**整扇必须在屏内**（`set_tabbed` 由
+	#      `_apply_rects` 同步铺，见那里）。
+	var set_w := clampf(w * MOBILE_SETTINGS_W_FRAC,
+			MOBILE_SETTINGS_W_MIN, MOBILE_SETTINGS_W_MAX)
+	set_w = minf(set_w, w - 2.0 * MOBILE_EDGE)
+	var set_h := minf(MOBILE_SETTINGS_H, h - band_top - 2.0 * MOBILE_EDGE)
+	var set_y := band_top + (h - band_top - set_h) * 0.5
+	return {
+		"top": top,
+		"syn": syn,
+		"eq": eq,
+		"aug": aug,
+		"info": info,
+		"log": log,
+		"shop": shop,
+		"bench": bench,
+		"event": Rect2((w - ev_w) * 0.5, mid - RECT_EVENT.size.y * 0.5,
+				ev_w, RECT_EVENT.size.y),
+		"result": Rect2((w - res_w) * 0.5, res_y, res_w, res_h),
+		"settings": Rect2((w - set_w) * 0.5, set_y, set_w, set_h),
+	}
+
+
+## 手机档「折叠后贴边」的标签位 —— **纯函数**（与 `mobile_rects` 同源）。
+##
+## ⛔ **不含 `info`（舰船档案）**：它自己实现了 128↔320 的收起/展开，
+##    `collapsible == false`，把停靠位塞给它是个静默的空操作（点了不会贴边）。
+##    ⇒ 它保持原位（本来就只有 259×128，不占地方），其余各组各自吸附。
+##
+## 排布：左右两组各自**在可用带里垂直居中**成一列，从上到下按「侧列原有顺序」。
+static func mobile_dock_rects(d: Vector2) -> Dictionary:
+	var tbl := mobile_rects(d)
+	var w := maxf(640.0, d.x)
+	var top: Rect2 = tbl["top"]
+	var bench: Rect2 = tbl["bench"]
+	var band_top := top.end.y
+	var band_bot := maxf(band_top + 120.0, bench.position.y)
+	var cy := (band_top + band_bot) * 0.5
+	var out := {}
+	var left := ["syn", "eq", "aug"]
+	var lh := float(left.size()) * MOBILE_DOCK_H \
+			+ float(left.size() - 1) * MOBILE_DOCK_GAP
+	var ly := cy - lh * 0.5
+	for i in left.size():
+		out[left[i]] = Rect2(0.0,
+				ly + float(i) * (MOBILE_DOCK_H + MOBILE_DOCK_GAP),
+				MOBILE_DOCK_W, MOBILE_DOCK_H)
+	# 右列：只有战斗日志能折叠（舰船档案自带收起，见上面注释）
+	var right := ["log"]
+	var rh := float(right.size()) * MOBILE_DOCK_H \
+			+ float(right.size() - 1) * MOBILE_DOCK_GAP
+	var ry := cy - rh * 0.5
+	for i in right.size():
+		out[right[i]] = Rect2(w - MOBILE_DOCK_W,
+				ry + float(i) * (MOBILE_DOCK_H + MOBILE_DOCK_GAP),
+				MOBILE_DOCK_W, MOBILE_DOCK_H)
+	return out
+
+
 ## 按当前档位算出矩形表。
-## ⚠️ 桌面分支就是那 11 个 `RECT_*` **原封不动** —— 这是「Windows 端不变」的落点，
-##    也正因为它逐项相等，桌面的布局才不需要任何回归验证。
+## ⚠️ 桌面分支的 10 扇窗仍是 `RECT_*` 原封不动；唯独设置窗在 2026-10-13
+##    改成与手机同一套栏目窗（`settings_rect()`）—— 用户：「同步改到PC端」。
 func _refresh_rect_tbl() -> void:
 	_last_design = _design_space()
-	if _compact:
+	if _mobile_layout:
+		_rect_tbl = mobile_rects(_last_design)
+	elif _compact:
 		_rect_tbl = compact_rects(_last_design)
 	else:
 		_rect_tbl = {
 			"top": RECT_TOP, "syn": RECT_SYN, "eq": RECT_EQ, "aug": RECT_AUG,
 			"info": RECT_INFO, "log": RECT_LOG, "shop": RECT_SHOP,
 			"bench": RECT_BENCH, "event": RECT_EVENT, "result": RECT_RESULT,
-			"settings": RECT_SETTINGS,
+			"settings": settings_rect(_last_design),
 		}
 	# ★ 字号放大 ⇒ 底部两条整体上抬（两个档位都要，见 `SHOP_FONT_GROW`）。
 	#   ⚠️ 放在两个分支**之外**：紧凑档同样是贴底摆的，同样会被字撑出去。
@@ -594,18 +781,61 @@ func _apply_rects() -> void:
 		_refresh_rect_tbl()
 	var o := Vector2.ZERO if _compact else LAYOUT.origin(get_window())
 	_origin_applied = o
+	# ★★ 2026-10-13 二修之四：手机档舰船档案**默认整窗隐藏**，
+	#    只有选中具体舰船才亮起 —— 不再常驻占右列 259×128（用户原话
+	#    「不要一直在那」）。桌面档恒可见（PC 一个像素都不动）。
+	#    ⚠️ 必须在铺矩形**之前**算：下面「日志上移」要读它的 visible。
+	if dossier_window != null:
+		if _mobile_layout:
+			dossier_window.visible = _selected_ship != null
+		else:
+			dossier_window.visible = true
+	# ★★ 二修之三：设置窗**全平台**横向栏目（2026-10-13 用户定「把设置更新也
+	#    同步改到PC端」）—— `_ready` 自建时就已 `_tabbed = true`，这里不再反向
+	#    下命令（原来按 `_mobile_layout` 强设，会把 PC 拽回竖向长条）。
 	for key in ["top", "syn", "eq", "aug", "info", "log",
 			"shop", "event", "result", "settings"]:
 		var w: EveWindow = _win_of(key)
 		if w == null:
 			continue
 		var r := _r(key)
+		# ★ 档案隐藏时，战斗日志上移到档案位（右列不留一个空洞）；
+		#   档案亮起时它退到档案**当前高度**的下方（展开 320 / 收起 128
+		#   —— 高度由档案窗自己管，`set_window_height` 已把 `_height_owned`
+		#   置真，所以这里读 `size.y` 就是真值，⛔ 别去 `get()` 脚本常量）。
+		if _mobile_layout and key == "log" and dossier_window != null:
+			var log_y := _r("info").position.y
+			if dossier_window.visible:
+				log_y += dossier_window.size.y + MOBILE_COL_GAP
+			r = Rect2(r.position.x, log_y, r.size.x, r.size.y)
 		w.set_window_rect(r.position.x + o.x, r.position.y + o.y, r.size.x, r.size.y)
 	if bench_rail != null:
 		var b := _r("bench")
 		bench_rail.position = b.position + o
 		bench_rail.size = b.size
 		bench_rail.custom_minimum_size = b.size
+	# ★ 手机档：把「折叠后贴边」的落位告诉侧列（设计空间会变 ⇒ 每次重铺都要重设）
+	_apply_mobile_docks()
+
+
+## 手机档的停靠位下发 / 非手机档的清理。
+##
+## ⚠️ 必须在**每次**重铺时跑：手机横竖屏一转，设计空间就变了，
+##    边缘标签还留在旧坐标上就会跑出屏幕（而且它是折叠态，玩家一眼看不出）。
+## ⚠️ 非手机档必须**主动清空** —— 否则「先跑过一次手机档、再切回桌面档」时，
+##    窗上还挂着停靠位，折叠就会莫名贴边（桌面端不允许这种行为）。
+func _apply_mobile_docks() -> void:
+	var docks := mobile_dock_rects(_last_design) if _mobile_layout else {}
+	for key in ["syn", "eq", "aug", "log", "info"]:
+		var w: EveWindow = _win_of(key)
+		if w == null:
+			continue
+		if _mobile_layout:
+			w.set_dock_rect(docks.get(key, Rect2()))
+			w.set_collapsed_height(MOBILE_DOCK_H)
+		else:
+			w.set_dock_rect(Rect2())
+			w.set_collapsed_height(0.0)
 
 
 ## 应用 UI 缩放档。
@@ -619,9 +849,19 @@ func _apply_rects() -> void:
 func apply_ui_profile(scale: float) -> void:
 	var s := maxf(1.0, scale)
 	var compact := UI_SCALE_SCRIPT.is_compact(s)
-	var changed := (not is_equal_approx(s, _ui_scale)) or compact != _compact
+	# ★ 手机档 = 移动平台 + 紧凑档（`force_mobile_layout` 只给自检开）
+	#   ⚠️ 平台判据收口到 `EveUiScale.is_mobile_tier()`（唯一真源，
+	#      设置窗的横向栏目读同一个函数）—— 别在这里再写一遍 and。
+	#   ⛠⛠ 但 `force` **仍在 `compact` 的与关系里**：旧口径是
+	#      `compact and (is_mobile or force)`，⛔ 不是 `(is_mobile and compact) or force`
+	#      —— 后者会让「桌面档 + 自检强制」在切回 1.0 时赖在手机档不走
+	#      （实测：停靠位清不掉，verify_ui_scale 第 8 段当场红）。
+	var mobile := compact and (UI_SCALE_SCRIPT.is_mobile_tier(s) or force_mobile_layout)
+	var changed := (not is_equal_approx(s, _ui_scale)) or compact != _compact \
+			or mobile != _mobile_layout
 	_ui_scale = s
 	_compact = compact
+	_mobile_layout = mobile
 	var win := get_window()
 	if win != null and not is_equal_approx(win.content_scale_factor, s):
 		win.content_scale_factor = s
@@ -636,7 +876,10 @@ func apply_ui_profile(scale: float) -> void:
 		if w != null:
 			w.reset_layout()
 	refresh_layout()
-	if _compact:
+	# ⚠️ 手机档**不**默认收起侧列：评审稿的默认战场态里它们是展开的
+	#    （决策参考信息，收起来就丢了「扫一眼就能拿到」的初衷）。
+	#    ⇒ 只有非手机的紧凑档（如今只剩自检会走到）沿用旧的默认收起。
+	if _compact and not _mobile_layout:
 		for key in COMPACT_COLLAPSED:
 			var w2: EveWindow = _win_of(key)
 			if w2 != null:
@@ -712,6 +955,11 @@ func show_ship(ship: EveShip) -> void:
 	_selected_ship = ship
 	if dossier_window and dossier_window.has_method("set_ship"):
 		dossier_window.set_ship(ship)
+	# ★ 2026-10-13 二修之四：手机档档案是「点船才亮起」的 ⇒ 选中态一变
+	#   就重铺一次（`_apply_rects` 里同步可见性，并让战斗日志让位/回位）。
+	#   ⚠️ 只在手机档做 —— 桌面档档案恒可见，重铺纯属浪费。
+	if _mobile_layout:
+		refresh_layout()
 
 
 func get_selected_ship() -> EveShip:

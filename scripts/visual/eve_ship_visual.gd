@@ -961,6 +961,135 @@ func _add_box(pos: Vector3, size: Vector3, mat: Material) -> void:
 	hull_root.add_child(mi)
 
 
+# ------------------------------------------------------------------ 受击闪光
+
+## 被命中时，船体整片泛一层色光（护盾青蓝 / 装甲琥珀 / 结构橙红）。
+##
+## ══════════════════════════════════════════════════════════════════
+##  为什么用 `material_overlay` 而不是改材质
+## ══════════════════════════════════════════════════════════════════
+##  船体材质由 `EveShipMaterial` 按 **(ship_id, surface)** **静态缓存共享** ——
+##  同型的两艘船拿到的是**同一个 ShaderMaterial 实例**。
+##  直接改它的 emission / 颜色 ⇒ ① 全场同型船一起闪 ② 污染缓存，
+##  下一艘同型船一出生就带着上次的闪光参数。
+##
+##  `material_overlay` 是 MeshInstance3D 上的**每实例**叠加层：
+##  不碰底层材质、不需要 duplicate、天然一船一份。
+##
+## ══════════════════════════════════════════════════════════════════
+##  为什么不用 Tween
+## ══════════════════════════════════════════════════════════════════
+##  战斗是**固定步长**推进的，`debug_fast_forward_battle()` 一次能跑几百 tick；
+##  而 Tween 按**真实帧时间**走 ⇒ 快进时闪光会「卡住不灭」。
+##  这里用 `_process` 自己推时间，并且**平时把 process 关掉**（零开销）：
+##  只有真的闪起来的那 0.18 秒才进 `_process`。
+##
+## ⚠️ 本类原本**没有** `_process` —— 这是唯一的自持计时器，
+##    新增别的东西请不要再开第二个，直接复用它。
+## ⚠️ 血条挂在 `label_root`、不在 `hull_root` ⇒ 只叠船体，血条不会被刷白。
+const FLASH_LIFE := 0.18
+## 护盾 / 装甲的峰值不透明度
+##
+## ⚠️ 这里配的是**加法混合**（见 `_build_flash_layer`），不是普通 alpha：
+##    普通 alpha 在亮背景（云层）上会被"冲淡"，实测 0.42 几乎看不出来；
+##    加法混合是把颜色**加**到船体上 ⇒ 暗色船体明显发亮、亮部也不会糊成色块。
+##    0.55 是出图调出来的：能一眼看出"被打了一下"，又不至于把船涂成剪影。
+const FLASH_PEAK := 0.55
+## 结构层更亮一点：这是「船真的要没了」的读数
+const FLASH_PEAK_HULL := 0.68
+
+var _flash_mat: StandardMaterial3D = null
+var _flash_meshes: Array[MeshInstance3D] = []
+var _flash_t: float = 0.0
+var _flash_life: float = 0.0
+var _flash_peak: float = 0.0
+var _flash_count: int = 0
+
+
+## 受击闪光入口。`layer` = &"shield" / &"armor" / &"hull"（传空按结构色）。
+##
+## ⚠️ 这个函数会被 `_on_shot_fired` **高频调用**（一次 `sim.step` 里可能几十次），
+##    所以首次之后只做「重置计时 + 写一次颜色」，**绝不重复遍历网格**。
+func flash_hit(layer: StringName = &"hull") -> void:
+	if hull_root == null:
+		return
+	if _flash_mat == null:
+		_build_flash_layer()
+	if _flash_mat == null:
+		return
+	var col := Color(0.95, 0.50, 0.30)          # 结构：橙红
+	if layer == &"shield":
+		col = Color(0.38, 0.74, 1.00)           # 护盾：青蓝
+	elif layer == &"armor":
+		col = Color(0.95, 0.78, 0.34)           # 装甲：琥珀
+	_flash_peak = FLASH_PEAK_HULL if layer == &"hull" else FLASH_PEAK
+	_flash_mat.albedo_color = Color(col.r, col.g, col.b, _flash_peak)
+	_flash_t = 0.0
+	_flash_life = FLASH_LIFE
+	_flash_count += 1
+	set_process(true)
+
+
+## 建一次叠加层。**所有船体网格共用同一个 overlay 材质实例** ⇒ 改 alpha 只写一次。
+func _build_flash_layer() -> void:
+	_flash_meshes.clear()
+	_collect_hull_meshes(hull_root, _flash_meshes)
+	if _flash_meshes.is_empty():
+		return
+	_flash_mat = StandardMaterial3D.new()
+	_flash_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_flash_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	# ★ 加法混合（不是普通 alpha）：受击是「船体被点亮」，不是「蒙一层色纸」。
+	#   实测普通 alpha 0.42 在云层背景上完全看不出来（见文件顶部说明）。
+	_flash_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	_flash_mat.albedo_color = Color(1.0, 1.0, 1.0, 0.0)
+	# ⚠️ 必须 CULL_DISABLED：船的网格是闭合的，只渲染正面会让背面在掠射角露出缝隙
+	_flash_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_flash_mat.disable_fog = true
+	for mi in _flash_meshes:
+		mi.material_overlay = _flash_mat
+
+
+func _collect_hull_meshes(n: Node, out: Array[MeshInstance3D]) -> void:
+	for c in n.get_children():
+		if c is MeshInstance3D:
+			out.append(c as MeshInstance3D)
+		_collect_hull_meshes(c, out)
+
+
+## 闪光计时。平时 `set_process(false)`，只有闪起来才进这里。
+func _process(delta: float) -> void:
+	if _flash_life <= 0.0:
+		set_process(false)
+		return
+	_flash_t += delta
+	var k := _flash_t / maxf(0.001, _flash_life)
+	if k >= 1.0:
+		_flash_life = 0.0
+		if _flash_mat != null:
+			_flash_mat.albedo_color.a = 0.0
+		# ⚠️⚠️ **不摘 overlay**，只把 alpha 归零。2026-10-17 实测踩过：
+		#    原来这里 `mi.material_overlay = null`，而 `flash_hit()` 只在
+		#    **首次**（`_flash_mat == null`）才挂 —— 于是第一次闪光结束后
+		#    材质被摘掉、再也挂不回去，**第二次起的闪光全部无效**且不报错。
+		#    探针读数：第 1 张「已挂 overlay 1」，第 2/3 张「已挂 overlay 0」。
+		#    实测船体网格只有 1 个（glb 是单 MeshInstance3D 多 surface），
+		#    常驻一个 alpha=0 的 overlay 成本可以忽略 ⇒ 保留挂载最省心。
+		set_process(false)
+		return
+	# 平方衰减：亮得快、灭得干脆（与 EveBattleFx 的淡出曲线同一口径）
+	if _flash_mat != null:
+		var f := 1.0 - k
+		_flash_mat.albedo_color.a = _flash_peak * f * f
+
+
+## 验收抓手：累计触发次数。
+## ⚠️ 用**计数**而不是 `is_flashing()` 做断言 —— 快进时时间推进由渲染帧决定，
+##    一帧内可能闪完几十次，靠状态断言会漏。
+func flash_count() -> int:
+	return _flash_count
+
+
 # ------------------------------------------------------------------ 血条
 
 ## 三层血条：护盾（青）/ 装甲（琥珀）/ 结构（红），上下堆叠

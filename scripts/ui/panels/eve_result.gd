@@ -58,7 +58,12 @@ var _salvage_list: VBoxContainer
 var _salvage_queue: Label
 var _salvage_coin: Label
 var _salvage_close_btn: Button
-var _salvage_ask: ConfirmationDialog
+## ★ 2026-10-13：确认框从 Godot 内置 `ConfirmationDialog` 换成自绘的
+##    `EveConfirmDialog` —— 内置那个是**原生 OS 窗口**（系统标题栏/字体/配色），
+##    与 EVE 窗口语言完全两个物种（用户原话「给我丑哭了」）。
+##    ⚠️ 它挂在**本窗的父节点**（HUD 根）上，⛔ 不能 add_child 到本窗：
+##       EveWindow 根是 PanelContainer，会把每个子节点拉成整窗矩形。
+var _salvage_ask: EveConfirmDialog
 
 ## 结果数据（最近一次 show_result 的入参，验收脚本可读）
 var _data: Dictionary = {}
@@ -361,14 +366,45 @@ func _build_salvage_section() -> void:
 	_salvage_queue.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_salvage_section.add_child(_salvage_queue)
 
-	# ── 零选二次确认（「本回合不决定 → 永久作废」的护栏）──
 	# ── 零选二次确认（图 1 那种「本回合不决定 → 永久作废」的护栏）──
-	_salvage_ask = ConfirmationDialog.new()
-	_salvage_ask.title = T.t("RESULT_SALVAGE_ASK_TITLE", "放弃打捞")
-	_salvage_ask.ok_button_text = T.t("RESULT_SALVAGE_ASK_OK", "确定放弃")
-	_salvage_ask.cancel_button_text = T.t("RESULT_SALVAGE_ASK_CANCEL", "回去再选")
-	add_child(_salvage_ask)
+	# ★★ 2026-10-13 换装：内置 ConfirmationDialog → EveConfirmDialog（见上面成员注释）
+	_salvage_ask = EveConfirmDialog.new()
+	_salvage_ask.name = "SalvageAsk"
+	_salvage_ask.setup(T.t("RESULT_SALVAGE_ASK_TITLE", "放弃打捞"), "",
+			T.t("RESULT_SALVAGE_ASK_OK", "确定放弃"),
+			T.t("RESULT_SALVAGE_ASK_CANCEL", "回去再选"))
 	_salvage_ask.confirmed.connect(_emit_zero_pick_confirmed)
+	# ⚠️ 挂在父节点（HUD 根）上，本窗自己是个 PanelContainer（会把子节点拉变形）。
+	#    「本窗不可见 ⇒ 确认框一起收」由 `_notification` 保证，不会漏在外面吃点击。
+	var ask_host := get_parent()
+	if ask_host != null:
+		ask_host.add_child(_salvage_ask)
+	else:
+		add_child(_salvage_ask)
+
+
+## 「继续」时还有残骸 ⇒ 弹二次确认（EVE 窗口语言版）。
+##
+## 主控（`eve_battle_scene._maybe_confirm_leftover_wrecks`）只报个数，
+## 文案与弹框都在这里 —— ⛔ 别再回退成去戳内置 ConfirmationDialog。
+func ask_abandon_salvage(count: int) -> void:
+	if _salvage_ask == null:
+		return
+	# ⚠️ 这句文案 2026-10-13 从主控搬来。i18n 冻结期不迁 key，保持原样。
+	_salvage_ask.message = "本回合还有 %d 艘残骸没有打捞。\n确定要放弃吗？" % count
+	_salvage_ask.open_dialog()
+
+
+## 结算页被收起（`hud.hide_result()` / 推进节点 / 重开）⇒ 确认框必须一起收。
+##
+## ⚠️ 为什么需要它：确认框挂在 **HUD 根**（不是本窗的子节点），
+##    本窗 `visible = false` 不会连带它 —— 不主动收的话，一枚全屏 scrim
+##    会留在战场上继续吃点击（玩家点哪都没反应，且**不报错**）。
+##    确认/取消两条路都会自己 `close_dialog()`，这里兜的是其余所有收起路径。
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_VISIBILITY_CHANGED and not visible:
+		if _salvage_ask != null and _salvage_ask.visible:
+			_salvage_ask.close_dialog()
 
 
 ## 一艘残骸的一行：`节点 N · 舰名 ★S` … `N ◆` … [打捞]

@@ -134,14 +134,15 @@ const STEP_SECONDS := 0.9
 ## 提示条显示多久
 const TOAST_SECONDS := 2.6
 
-## 尺寸。★ 手牌 52×74 → **76×108**：资料结论「手牌尺寸调大 ⇒ 沉浸感更强」。
-const HAND_CARD_W := 76.0
-const HAND_CARD_H := 108.0
-const HAND_OVERLAP := 46.0      ## 手牌叠放间距（< 牌宽就是叠着）
-const PLAY_CARD_W := 60.0       ## 出牌区的牌小一号（桌面上的牌不该跟手牌抢大小）
-const PLAY_CARD_H := 84.0
-const PLAY_OVERLAP := 34.0
-const PLAY_ROW_MAX := 470.0     ## 出牌行的最大宽度（超出就自动收紧叠放）
+## 尺寸。★ 2026-10-13 再放大（用户：「牌放大到1.3，手机上确实要大点的牌」）：
+##   76×108 → **99×140**（×1.3）。牌面画法/素材**不动**，只整体放大。
+const HAND_CARD_W := 99.0
+const HAND_CARD_H := 140.0
+const HAND_OVERLAP := 60.0      ## 手牌叠放间距（< 牌宽就是叠着；随牌 ×1.3）
+const PLAY_CARD_W := 78.0       ## 出牌区的牌小一号（桌面上的牌不该跟手牌抢大小）
+const PLAY_CARD_H := 109.0
+const PLAY_OVERLAP := 44.0
+const PLAY_ROW_MAX := 560.0     ## 出牌行的最大宽度（超出就自动收紧叠放）
 ## ★★ 2026-10-06 **圆桌制**（用户定）：四方位 = **下(你) · 左(上家) · 右(下家) · 上(底牌)**。
 ##   ⚠️ 上下家是**出牌顺序**派生的：座位 1 在你**之后**出牌 ⇒ **下家**；
 ##      座位 2 在你**之前**出牌 ⇒ **上家**。
@@ -153,8 +154,9 @@ const TABLE_CX := 0.500         ## 圆心 x（屏宽比例）
 ##   「总体布局有点太靠上了，下部分留空太多」⇒ 下移到 0.435（同时纵半径 0.258→0.248
 ##   给下方的玩家块腾位置，否则「你」的出牌区会压到它）。
 const TABLE_CY := 0.435         ## 圆心 y（屏高比例）
-const TABLE_RX := 0.318         ## 横半径（屏宽比例）
-const TABLE_RY := 0.248         ## 纵半径（屏高比例）
+const TABLE_RX := 0.254         ## 横半径（屏宽比例）。★ 2026-10-13 ×0.8（用户：
+                                ##   「中间拍桌缩减一下，至少缩减到现在80km标识的地方」）
+const TABLE_RY := 0.198         ## 纵半径（屏高比例）。同上 ×0.8；新桌沿正好压旧 80km 圈
 const DIR_DOWN := 0
 const DIR_LEFT := 1
 const DIR_RIGHT := 2
@@ -162,7 +164,8 @@ const DIR_UP := 3
 ## 座位 → 方位。⛔ 这是**语义**（谁在你上/下家），不是画面坐标，别按视觉写死。
 ## ⚠️ 2026-10-07 对调（逆时针轮转）：下家（座位 1）在**右**、上家（座位 2）在**左**。
 const SEAT_DIR := [DIR_DOWN, DIR_RIGHT, DIR_LEFT]
-const PLAY_OUT := 0.62          ## 出牌/亮牌离圆心的距离（比例）
+const PLAY_OUT := 0.56          ## 出牌/亮牌离圆心的距离（比例）。★ 2026-10-13
+                                ##   0.62→0.56：桌缩小后牌变大会戳出桌沿
 const NEW_HL_SEC := 3.2         ## 「新到的底牌」抬起高亮的时长（秒）
 const NEW_LIFT := 16.0          ## 新底牌额外的抬起量
 const COIN_UNIT := 10           ## 娱乐币单位：1 倍 = 10 娱乐币
@@ -316,6 +319,22 @@ var _audio: Variant = null
 ##    `Control` 基类没有的成员。
 var _settings: Variant = null
 
+# ★★ 2026-10-13 样式微调（用户：「手机上还是小…让我自己去拉字体、窗口和牌的大小」）。
+#   三个倍率**只乘在几何漏斗上**（`_hand_base_rect` / `_play_overlap` / `_table_pt`
+#   / `_draw_shown` / 底牌 / 「我」面板让位），⛔ 不动规则、不动画法。
+#   · card_scale  —— 手牌 / 出牌 / 底牌（含命中区与发牌动画起点）
+#   · table_scale —— 距离环椭圆 + 出牌位（80km 圈那条）
+#   · win_scale   —— 设置窗宽度倍率（只影响牌桌这扇）
+#   字号走 `FONT.scale`（与设置窗那根滑杆同一个旋钮，⛔ 别再开第二个真源）。
+#   数值由 `ddz_style_tune` 面板实时改并存 `user://ddz_style_tune.cfg`。
+const STYLE_TUNE := preload("res://scripts/card/ddz/ddz_style_tune.gd")
+var _tune: PanelContainer = null
+## 整体缩放（安卓最需要的那根：2340 宽的大屏里，基准区 1920 只占八成）
+var zoom := 1.0
+var card_scale := 1.0
+var table_scale := 1.0
+var win_scale := 1.0
+
 
 func _ready() -> void:
 	# ★ 2026-10-10 i18n：**必须早于任何 UI 构建** —— 文案是建的时候取词的。
@@ -335,6 +354,8 @@ func _ready() -> void:
 	# ★ 字号缩放：牌面与记录都是自绘（`FONT.s` 现读），但 UI 控件要建立时定
 	FONT.load_from_settings()
 	COIN.load_it()          ## 娱乐币（方案 A：纯记分；字段已按 B/C 留好）
+	# ★ 2026-10-13 样式微调：本机存过的数值开场就生效（没有存过 ⇒ 全 1.0 = 设计值）
+	_apply_style_tune(STYLE_TUNE.load_style())
 	_build_audio()
 	_build_settings()
 	_build_online()
@@ -405,13 +426,54 @@ func _build_settings() -> void:
 ## ⚠️ 必须加 `_ui_origin()`：设置窗是**子节点**，不受 `_draw` 的
 ##    `draw_set_transform` 影响 ⇒ 非 16:9 分辨率下要自己补偏移。
 ## ⚠️ 高度**不由这里定**：`EveSettingsWindow._fit_height()` 会按内容反推并
-##    `set_window_height()` 接管（本函数只给一个初值）。
+##    `set_window_height()` 接管（本函数只给一个初值）——
+##    但**横向栏目态**例外（`_fit_height` 早退，矩形说的就是最终值）。
+## ★ 2026-10-13 三方统一（用户：「设置页面改三方统一」）：手机档（栏目态）用
+##   与战场/主菜单同一形态的**半屏宽栏目窗**（宽 = 基准宽 ×0.5 夹 [420,1000]、
+##   定高 560）；桌面档保持原 320 竖条（⛔ PC 一个像素不动）。
 func _place_settings() -> void:
 	if _settings == null:
 		return
 	var o := _ui_origin()
-	var bw := 320.0
-	_settings.set_window_rect(o.x + (BASE.x - bw) * 0.5, o.y + 70.0, bw, 480.0)
+	if bool(_settings.get("_tabbed")):
+		# ★ 2026-10-13 样式微调：`win_scale` 倍率叠在这上面（面板里那根「设置窗宽」）
+		var bw := clampf(BASE.x * 0.5, 420.0, 1000.0) * win_scale
+		bw = clampf(bw, 360.0, BASE.x - 24.0)
+		_settings.set_window_rect(o.x + (BASE.x - bw) * 0.5, o.y + 70.0, bw, 560.0)
+	else:
+		_settings.set_window_rect(o.x + (BASE.x - 320.0) * 0.5, o.y + 70.0, 320.0, 480.0)
+
+
+## 应用一份样式数值（空字典 = 全保持默认）。
+func _apply_style_tune(s: Dictionary) -> void:
+	if s.is_empty():
+		return
+	zoom = clampf(float(s.get("zoom", 1.0)), 0.8, zoom_cap())
+	card_scale = clampf(float(s.get("card_scale", 1.0)), 0.6, 2.2)
+	table_scale = clampf(float(s.get("table_scale", 1.0)), 0.5, 1.3)
+	win_scale = clampf(float(s.get("win_scale", 1.0)), 0.6, 1.6)
+	# ⚠️ 字号只在**存过**时覆盖（否则会把设置窗里玩家自己定的字号顶掉）
+	var fs := float(s.get("font_scale", 0.0))
+	if fs > 0.01:
+		FONT.set_scale(clampf(fs, FONT.MIN_SCALE, FONT.MAX_SCALE))
+		FONT.reapply(self)
+	queue_redraw()
+
+
+## 开/关「样式微调」面板（顶栏那颗「样式」）。懒建一次，之后只切显隐。
+func _toggle_style_tune() -> void:
+	if _tune == null:
+		_tune = STYLE_TUNE.new()
+		_tune.name = "StyleTune"
+		add_child(_tune)
+		_tune.setup(self)
+		# ⚠️ 新建的 Control 默认 visible=true ⇒ 必须显式收起，
+		#    否则**第一次点「样式」反而是关上**（实测踩到）。
+		_tune.visible = false
+	_tune.visible = not _tune.visible
+	if _tune.visible:
+		_tune.move_to_front()
+	queue_redraw()
 
 
 ## 把一局的**表现状态**清回初始（⛔ 不碰牌局数据）。
@@ -495,6 +557,9 @@ func _process(delta: float) -> void:
 	# ★ 设置窗开着 ⇒ **一步都不推**（玩家在调设置，牌局不该在背后自己跑）。
 	#   ⚠️ 与「轮到玩家就一直等」同一条思路：节奏由玩家控。
 	if _settings != null and _settings.visible:
+		return
+	# ★ 2026-10-13 样式微调面板同理：拉着滑杆看效果时牌局不该在背后跑。
+	if _tune != null and _tune.visible:
 		return
 	# ★★ 联机：局面**全部由房主裁定**，本地一步都不推 —— 只把最新快照搬进渲染用的 `game`。
 	#    心跳/托管/裁决都在房主侧；这里连 AI 都不跑（托管由房主做）。
@@ -734,20 +799,20 @@ func _gui_input(event: InputEvent) -> void:
 		if event is InputEventMouseButton:
 			var mb0 := event as InputEventMouseButton
 			if mb0.pressed and mb0.button_index == MOUSE_BUTTON_LEFT \
-					and _hit_button(mb0.position - _ui_origin()) == "back":
+					and _hit_button(_to_design(mb0.position)) == "back":
 				_online.hide_panel()
 				queue_redraw()
 				accept_event()
 		return
 	# ★ 非 16:9 分辨率下内容整体平移过（见 _ui_origin）⇒ 输入要先**减掉偏移**，
-	#   否则就是「看到的牌在那里、点的却是别处」。绘制与输入**用同一个偏移**
-	#   就是本工程「画与点同源」那条红线在这里的落点。
-	var o := _ui_origin()
+	#   否则就是「看到的牌在那里、点的却是别处」。绘制与输入**用同一个变换**
+	#   （偏移 + `zoom` 缩放，见 `_to_design`）就是本工程「画与点同源」那条红线
+	#   在这里的落点。
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed:
-				var p := mb.position - o
+				var p := _to_design(mb.position)
 				_drag_p = p
 				# ★ 按住左键 = 进入「划过即选 / 划过即取」（快速多选 / 快速取消）。
 				#   ⚠️ 落在顶栏按钮上时不进入拖选 —— 否则拖一下按钮会把下面的牌划选一片。
@@ -776,7 +841,7 @@ func _gui_input(event: InputEvent) -> void:
 			accept_event()
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
-		var p := mm.position - o
+		var p := _to_design(mm.position)
 		# 悬停高亮 = 即时反馈（资料：每个操作都要有立刻的视觉回应）
 		var mi := _hand_hover_index(p)
 		if mi != _hover_i:
@@ -849,7 +914,9 @@ func _can_pick() -> bool:
 ## 点 p 命中的顶栏按钮 id（没有则空串）。
 func _hit_button(p: Vector2) -> String:
 	for b in _buttons():
-		if (b["rect"] as Rect2).has_point(p):
+		# ★ 2026-10-13 触摸友好：命中框比画出来的大 6px ——
+		#   顶栏条在设计空间只有 28 高，手机上（尤其放大前）按不准。
+		if (b["rect"] as Rect2).grow(6.0).has_point(p):
 			return String(b["id"])
 	return ""
 
@@ -897,6 +964,9 @@ func _on_button(id: String) -> void:
 			return
 		"settings":
 			_toggle_settings()
+			return
+		"style":
+			_toggle_style_tune()
 			return
 		"auto":
 			_auto = not _auto
@@ -1023,6 +1093,10 @@ func _buttons() -> Array:
 	#   设置窗一开，`_process` 就停推 AI（见那里的守卫）。
 	out.append({"id": "settings", "rect": Rect2(w - 328.0, 8.0, 88.0, 28.0),
 			"label": T.t("DDZ_BTN_SETTINGS", "设置"), "on": true})
+	# ★ 2026-10-13 「样式微调」（手机上调牌/桌/字大小的工具，见 ddz_style_tune.gd）。
+	#   放在「设置」左边同一簇：都是「随时可用但不常用」。
+	out.append({"id": "style", "rect": Rect2(w - 424.0, 8.0, 88.0, 28.0),
+			"label": T.t("DDZ_BTN_STYLE", "样式"), "on": true})
 	if game == null:
 		# ★ 联机面板开着 ⇒ 空桌这两个大按钮**不画**：面板是半透明的，画在下面会透出来、
 		#   和面板内容叠成一片；而且面板盖不住它们上面的点击（会穿透到牌桌）。
@@ -1114,7 +1188,7 @@ func _draw() -> void:
 	#      `_buttons()` / `_hand_card_rect()` 返回的**仍是基准区坐标** ⇒
 	#      「画」与「点」天然同源（工程红线 9，见 `EveLayout` 顶注）。
 	_draw_room(size.x, size.y)     # ★ 舰长室（铺满；⛔ 不加偏移）
-	draw_set_transform(_ui_origin())
+	draw_set_transform(_ui_origin(), 0.0, Vector2(zoom, zoom))
 	var w := BASE.x
 	var h := BASE.y
 
@@ -1147,8 +1221,38 @@ func _draw() -> void:
 ## ⚠️ 判据用**自己的 `size`**（= 引擎拉伸好的设计空间），⛔ 不用 `get_window().size`：
 ##    无头模式下窗口尺寸是个假的 `(64,64)`，而 `size` 是真值 ——
 ##    自检里这张牌桌是被手动设成 1920×1080 的，因此偏移恒为 0，断言不受影响。
+## 基准区（1920×1080）到实际像素的**唯一变换漏斗**：绘制与输入都读它。
+##
+## ★ 2026-10-13 样式微调：叠一层**整体缩放** `zoom` —— 手机上大屏（2340 宽）
+##   里牌桌只占 1920 的基准区，光放大牌不够，「顶栏 / 座位面板 / 桌面」都该一起大。
+##   ⚠️ 缩放只在这里改：`_draw` 用 `draw_set_transform(o, 0, Vector2(zoom, zoom))`、
+##      输入用 `(p - o) / zoom` ⇒ **画与点同源**（红线 9）自动成立。
 func _ui_origin() -> Vector2:
-	return LAYOUT.origin_of(size)
+	var s := BASE * zoom
+	var o := Vector2((size.x - s.x) * 0.5, (size.y - s.y) * 0.5)
+	# ⚠️ 只有 `zoom <= 1` 时沿用「不小于 0」的钳制（= `EveLayout.origin_of` 的老行为：
+	#   设计空间比基准区小时，内容贴左上、不留负边距）。
+	#   `zoom > 1` 必须**允许负偏移** —— 否则放大后内容从左上铺出去，右下角被裁掉。
+	if zoom <= 1.0001:
+		o = Vector2(maxf(0.0, o.x), maxf(0.0, o.y))
+	return o
+
+
+## 屏幕坐标 → 设计空间坐标（输入侧的唯一换算点）。
+func _to_design(p: Vector2) -> Vector2:
+	return (p - _ui_origin()) / zoom
+
+
+## 整体缩放的**本机上限**：整扇内容必须装得下。
+##
+## ⚠️ 为什么要有它：顶栏在 y=8、操作栏在 y≈958（都在 1080 设计高里），
+##   放大到装不下就会把它们裁掉 —— 那不是「变大」，是「变残」（返回/出牌点不到）。
+##   ⇒ 屏高已用满的手机（如 2340×1080）上限就是 **1.00**：这时该用「牌大小 /
+##   桌沿大小 / 界面字号」三根（它们只重排内容，不裁边界）。
+func zoom_cap() -> float:
+	var w := maxf(1.0, size.x)
+	var h := maxf(1.0, size.y)
+	return clampf(minf(w / BASE.x, h / BASE.y), 0.8, 1.6)
 
 
 ## ★ 舰长室：**窗外深空 + 四周舱壁结构框**。
@@ -1210,8 +1314,9 @@ func _draw_room(w: float, h: float) -> void:
 ##   · **距离数字是它的本体** —— 等差图没有数字，就只是"几个同心圆"。
 func _draw_table(w: float, h: float) -> void:
 	var c := Vector2(w * TABLE_CX, h * TABLE_CY)
-	var rx := w * TABLE_RX
-	var ry := h * TABLE_RY
+	# ★ 2026-10-13 样式微调：桌沿倍率（距离环 + 刻度尺都按它缩放）
+	var rx := w * TABLE_RX * table_scale
+	var ry := h * TABLE_RY * table_scale
 	# ── 半透明桌面（50%）—— ⚠️ 必须在环线**之前**画，否则会把线盖灰 ──
 	draw_colored_polygon(_ellipse(c, rx, ry), C_TABLE_FILL)
 	# ── 一圈圈等差细线（这本身就是"桌子"）──
@@ -1251,19 +1356,37 @@ func _ellipse(c: Vector2, rx: float, ry: float, closed := false) -> PackedVector
 ## 圆桌图上某方位的点。`dir` 用 DIR_* ；`k` = 离圆心的距离比例（1.0 = 桌沿）。
 func _table_pt(dir: int, k: float) -> Vector2:
 	var c := Vector2(BASE.x * TABLE_CX, BASE.y * TABLE_CY)
+	# ★ 2026-10-13 样式微调：桌沿倍率（出牌位、飘字、方向刻度都跟着它）
 	match dir:
 		DIR_LEFT:
-			return Vector2(c.x - BASE.x * TABLE_RX * k, c.y)
+			return Vector2(c.x - BASE.x * TABLE_RX * table_scale * k, c.y)
 		DIR_RIGHT:
-			return Vector2(c.x + BASE.x * TABLE_RX * k, c.y)
+			return Vector2(c.x + BASE.x * TABLE_RX * table_scale * k, c.y)
 		DIR_UP:
-			return Vector2(c.x, c.y - BASE.y * TABLE_RY * k)
-	return Vector2(c.x, c.y + BASE.y * TABLE_RY * k)
+			return Vector2(c.x, c.y - BASE.y * TABLE_RY * table_scale * k)
+	return Vector2(c.x, c.y + BASE.y * TABLE_RY * table_scale * k)
 
 
 ## 某座位在桌面上的方位点（出牌 / 亮牌 / 飘字都用它 —— 单一真相源）。
+##
+## ★ 2026-10-13 样式微调：牌放大时，**我的**出牌行要抬到「我」面板上方
+##   （面板自己也在给手牌让位，两边都按同一个 `_me_panel_y()` 算 ⇒ 不会打架）。
+##   ⚠️ 只在默认 `k`（= PLAY_OUT）上生效：显式传 k 的调用方（方向刻度等）不动。
 func _seat_pt(seat: int, k: float = PLAY_OUT) -> Vector2:
-	return _table_pt(_dir_of(seat), k)
+	var dir := _dir_of(seat)
+	var pt := _table_pt(dir, k)
+	if dir == DIR_DOWN and is_equal_approx(k, PLAY_OUT):
+		var half := PLAY_CARD_H * card_scale * 0.5
+		pt.y = minf(pt.y, _me_panel_y() - half - 6.0)
+	return pt
+
+
+## 「我」面板（正下方那块：头像 + 角色 + 娱乐币）的顶边 y —— **唯一真源**。
+##   两处读它：`_draw_me()` 画它、`_seat_pt()` 给「我的出牌行」让位。
+##   规则：① 不低于设计位 h-424；② 给手牌让位（手牌越高，面板越上）。
+func _me_panel_y() -> float:
+	var hand_top := BASE.y - HAND_CARD_H * card_scale - HAND_BOTTOM_GAP - LIFT
+	return minf(BASE.y - 424.0, hand_top - 6.0 - SEAT_H)
 
 
 ## 居中画一行文字（`pos` = 水平中心 + 基线）。
@@ -1324,8 +1447,9 @@ func _draw_bottom_cards(w: float) -> void:
 	# ★ 发牌动画最后 3 张才是底牌 ⇒ 手牌没发完之前它们不出现（与录像一致）。
 	if _dealing and _deal_t < DEAL_SEC - DEAL_BOTTOM_LEAD:
 		return
-	var cw := 44.0
-	var ch := 62.0
+	# ★ 2026-10-13 样式微调：底牌随 `card_scale`
+	var cw := 44.0 * card_scale
+	var ch := 62.0 * card_scale
 	var gap := 8.0
 	var total := cw * 3.0 + gap * 2.0
 	var x0 := w * 0.5 - total * 0.5
@@ -1443,13 +1567,18 @@ func _draw_seat(seat: int) -> void:
 ## ★★ 这里同时是**代币显示位**的预留处（`代币` 那行注释）。
 ## ⛔ 不画假数字：没有数据来源的读数比空着更糟。
 func _draw_me() -> void:
-	var h := BASE.y
 	# ★ 用户 2026-10-06：「玩家头像 ID 代币位置也不对，需要更靠近自己的位置一些，
 	#   哪怕就在正上正左正右也比现在歪一大截好很多」⇒ 自己的方位是**正下**，
 	#   所以这块**水平居中、就在手牌正上方**。
 	# ⚠️ 上移量是出图调的：`h-390` 时手牌张数少（标题靠中间）会被这块压住一行。
 	# ⚠️ 牌桌下移后这里也从 h-404 微调到 h-400（仍留 11px 给手牌标题）
-	var p := Vector2(BASE.x * 0.5 - SEAT_W * 0.5, h - 400.0)
+	# ★ 2026-10-13 牌 ×1.3：h-400 → **h-424** —— 140 高的手牌 + 22 抬起
+	#   （顶 766）会顶进面板（h-400 时面板底 784 > 766 就叠了）；上移后
+	#   面板底 760，留 6px；下方与出牌区（底 644.5）仍留 11px。
+	# ★ 2026-10-13 样式微调：再按 `card_scale` 自动让位（牌越大面板越上，
+	#   ⛔ 绝不让抬起的牌压进面板 —— 那会挡住「地主/农民」和娱乐币）。
+	#   与「我的出牌行」共用同一个顶边（`_me_panel_y()`），两边不会互相压。
+	var p := Vector2(BASE.x * 0.5 - SEAT_W * 0.5, _me_panel_y())
 	var box := Rect2(p, Vector2(SEAT_W, SEAT_H))
 	var mine: bool = _is_human_turn() and not game.is_over()
 	_round_rect(box, C_PANEL, 10.0)
@@ -1484,10 +1613,15 @@ func _draw_shown(seat: int) -> void:
 	var c := _seat_pt(seat)
 	# ⚠️ 必须显式标注类型：`game` 是动态类型，``:=`` 推不出来
 	var over: bool = game.is_over()
-	var is_last: bool = not over and not game.last_play.is_empty() \
-			and int(game.last_play["seat"]) == seat
+	# ★ 胜者的名字恒金色：局中看「是否最后一手的出牌者」，
+	#   局终看「是否赢家」（用户 2026-10-13：赢家最后一轮出的牌必须一直展示）
+	var is_last: bool = (not over and not game.last_play.is_empty() \
+			and int(game.last_play["seat"]) == seat) \
+			or (over and int(game.winner) == seat)
+	var pcw := PLAY_CARD_W * card_scale
+	var pch := PLAY_CARD_H * card_scale
 	# 座位名（贴在该方位牌的上方）
-	_draw_center_text(c + Vector2(0.0, -PLAY_CARD_H * 0.5 - 24.0), _seat_name(seat), 13,
+	_draw_center_text(c + Vector2(0.0, -pch * 0.5 - 24.0), _seat_name(seat), 13,
 			C_GOLD if is_last else C_DIM)
 	# 行动大字
 	var pass_t := T.t("DDZ_PASS", "不要")
@@ -1495,9 +1629,12 @@ func _draw_shown(seat: int) -> void:
 	if note == "" and _passed[seat]:
 		note = pass_t
 	if note != "" and not over:
-		_draw_center_text(c + Vector2(0.0, PLAY_CARD_H * 0.5 + 36.0), note, 30,
+		_draw_center_text(c + Vector2(0.0, pch * 0.5 + 36.0), note, 30,
 				C_GOLD if note == pass_t else C_TEXT)
-	if over and seat != _my_seat():
+	# ★ 局终：非赢家对手摊剩余手牌（亮牌）；**赢家保留他最后出的那手牌**
+	#   （用户 2026-10-13：AI 赢时最后出的牌直接消失 = 错——
+	#     原来这里无差别改画亮牌，赢家手牌已空 ⇒ 只剩一句「已出完」）
+	if over and seat != _my_seat() and int(game.winner) != seat:
 		if _is_online():
 			# ⛔ 联机时**本来就没有别人的手牌**（服务端只发你一个人的）——
 			#    所以这里只报张数，⛔ 绝不摊牌（摊出来的是占位用的 -1）
@@ -1507,7 +1644,7 @@ func _draw_shown(seat: int) -> void:
 			_show_leftover(seat, c)
 	elif (_shown[seat] is Array) and not (_shown[seat] as Array).is_empty():
 		var cards: Array = _shown[seat]
-		_draw_card_row(cards, c, PLAY_CARD_W, PLAY_CARD_H, _play_overlap(cards.size()),
+		_draw_card_row(cards, c, pcw, pch, _play_overlap(cards.size()),
 				is_last)
 
 
@@ -1518,8 +1655,9 @@ func _show_leftover(seat: int, c: Vector2) -> void:
 		_draw_center_text(c, T.t("DDZ_ALL_OUT", "已出完"), 22, C_HI)
 		return
 	var n := left.size()
-	var ov := minf(22.0, (PLAY_ROW_MAX * 0.72 - 46.0) / maxf(1.0, float(n - 1)))
-	_draw_card_row(left, c, 46.0, 64.0, ov, false)
+	var lw := 46.0 * card_scale
+	var ov := minf(22.0 * card_scale, (PLAY_ROW_MAX * 0.72 - lw) / maxf(1.0, float(n - 1)))
+	_draw_card_row(left, c, lw, 64.0 * card_scale, ov, false)
 
 
 ## 我的手牌（底部，最大最亮 —— 资料：手牌放大最提沉浸感）
@@ -1539,6 +1677,9 @@ func _draw_hand() -> void:
 	# ★ 新底牌抬起期间标题也点一句 —— 否则玩家不知道那 3 张为什么跳出来
 	var hint: String = T.t("DDZ_NEW_BOTTOM", "　★ 底牌已加入（抬起的 3 张）") \
 			if _new_t > 0.0 and not _new_ids.is_empty() else ""
+	# ★ 2026-10-13 样式微调：手牌尺寸/标题/提示行都随 `card_scale`
+	var hcw := HAND_CARD_W * card_scale
+	var hch := HAND_CARD_H * card_scale
 	# ⚠️ 发牌期间**必须报「已到手的张数」** —— ⛔ 不能报 17：
 	#    牌还没发完却写着「17 张」，是最容易被当成 bug 的那类不一致。
 	if _dealing:
@@ -1557,10 +1698,10 @@ func _draw_hand() -> void:
 		# ★ 新到的底牌也要金框（用户：「新底牌抬起提示」）
 		var hot := _sel.has(id) or (_new_t > 0.0 and _new_ids.has(id))
 		var pos: Vector2 = _deal_fly_pos(r.position, i, prog) if _dealing else r.position
-		_card_at(pos, id, HAND_CARD_W, HAND_CARD_H, hot)
+		_card_at(pos, id, hcw, hch, hot)
 	# 已选牌 + 牌型判断（左对齐在手牌左端，与手牌同宽）
 	# ⚠️ 发牌期间换一句话：那句「看完这手牌再决定：不叫 / 1 分…」在牌没发完时毫无意义。
-	_draw_text(Vector2(hp.x, hp.y + HAND_CARD_H + 22.0),
+	_draw_text(Vector2(hp.x, hp.y + hch + 22.0),
 			T.t("DDZ_HAND_DEAL_HINT", "发牌中 —— 发完才轮到你叫地主")
 					if _dealing else _sel_text(),
 			14, C_DIM if _dealing else _sel_color())
@@ -1597,8 +1738,8 @@ func _deal_fly_pos(dest: Vector2, i: int, prog: float) -> Vector2:
 		return dest
 	var e := 1.0 - pow(1.0 - k, 3.0)
 	# 起点 = 桌面圆心（牌堆在桌上）⇒ 与距离环圆心重合，视觉上是「从桌上发出去」
-	var from := Vector2(BASE.x * TABLE_CX - HAND_CARD_W * 0.5,
-			BASE.y * TABLE_CY - HAND_CARD_H * 0.5)
+	var from := Vector2(BASE.x * TABLE_CX - HAND_CARD_W * card_scale * 0.5,
+			BASE.y * TABLE_CY - HAND_CARD_H * card_scale * 0.5)
 	return from.lerp(dest, e)
 
 
@@ -1659,7 +1800,7 @@ func _draw_over(w: float, h: float) -> void:
 			else T.t("DDZ_ROLE_FARMER", "农民"))
 	var cx := w * 0.5
 	# 放圆桌偏上：中央偏下要留给「自己」的摊牌位
-	var cy := h * TABLE_CY - h * TABLE_RY * 0.60
+	var cy := h * TABLE_CY - h * TABLE_RY * table_scale * 0.60
 	_draw_center_text(Vector2(cx, cy),
 			T.t("DDZ_WIN", "你赢了") if win else T.t("DDZ_LOSE", "你输了"), 56,
 			C_GOLD if win else C_WARN)
@@ -1812,11 +1953,20 @@ func _round_points(r: Rect2, rad: float, closed := false) -> PackedVector2Array:
 # ══════════════════════════════════════════════════════════════════
 
 ## 手牌第一张的左上角（整把牌居中）。**基准位置**，不含抬起。
+##
+## ★ 2026-10-13 样式微调：尺寸全部 × `card_scale`；牌放大到一行摆不下时
+##   自动收紧叠放间距（⛔ 不许伸出屏外 —— 手机上那等于「牌点不到」）。
 func _hand_base_rect(i: int, n: int) -> Rect2:
-	var wdt := maxf(0.0, float(n - 1)) * HAND_OVERLAP + HAND_CARD_W
+	var cw := HAND_CARD_W * card_scale
+	var ch := HAND_CARD_H * card_scale
+	var ov := HAND_OVERLAP * card_scale
+	var room := maxf(cw, BASE.x - 40.0)
+	if cw + ov * maxf(0.0, float(n - 1)) > room:
+		ov = maxf(4.0, (room - cw) / maxf(1.0, float(n - 1)))
+	var wdt := maxf(0.0, float(n - 1)) * ov + cw
 	var x0 := (BASE.x - wdt) * 0.5
-	return Rect2(Vector2(x0 + i * HAND_OVERLAP, BASE.y - HAND_CARD_H - HAND_BOTTOM_GAP),
-			Vector2(HAND_CARD_W, HAND_CARD_H))
+	return Rect2(Vector2(x0 + i * ov, BASE.y - ch - HAND_BOTTOM_GAP),
+			Vector2(cw, ch))
 
 
 func _hand_pos(n: int) -> Vector2:
@@ -1865,14 +2015,16 @@ func _hand_id_at_base(p: Vector2) -> int:
 
 
 ## 出牌区的叠放间距 / 总宽（牌多时自动收紧，别撑破托盘）
+## ★ 2026-10-13 样式微调：随 `card_scale` 一起放大（行宽上限不变 ⇒ 放大后自动更紧）。
 func _play_overlap(n: int) -> float:
 	if n <= 1:
 		return 0.0
-	return minf(PLAY_OVERLAP, (PLAY_ROW_MAX - PLAY_CARD_W) / float(n - 1))
+	return minf(PLAY_OVERLAP * card_scale,
+			(PLAY_ROW_MAX - PLAY_CARD_W * card_scale) / float(n - 1))
 
 
 func _play_width(n: int) -> float:
-	return PLAY_CARD_W + _play_overlap(n) * maxf(0.0, float(n - 1))
+	return PLAY_CARD_W * card_scale + _play_overlap(n) * maxf(0.0, float(n - 1))
 
 
 ## 回合脉冲（0~1）。资料：活跃座位用「细微脉冲或发光」，胜过静态箭头。

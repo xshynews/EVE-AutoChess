@@ -155,6 +155,23 @@ var _collapsed := false
 var _base_rect := Rect2()
 ## 玩家拖/缩后的矩形（有它就用它，压过设计稿）
 var _user_rect := Rect2()
+
+## ★ 手机端「折叠 = 吸附到屏幕边缘」用的停靠矩形（2026-10-13 手机专用布局）。
+##
+## ⛔⛔ **桌面端恒为空** —— 只有 `EveHudRoot` 在手机档（`_mobile_layout`）会设它。
+##    为空时本文件所有行为与从前逐像素一致（PC 端一个字节都不许动）。
+##
+## 语义（用户在评审稿上定的方向）：
+##   折叠**不再**是「在原地把内容收掉」，而是「整扇窗贴到屏幕边缘变成一枚标签」，
+##   玩家点它才展开；且**每组各自吸附、只展开点的那一组** ——
+##   决策信息要保持分散，玩家扫一眼就能拿到，⛔ 不许集成成一个大信息面板。
+var dock_rect := Rect2()
+
+## 折叠态高度（0 = 沿用 `HEADER_H`）。
+##
+## ⚠️ 手机端由 HUD 设成手指够得着的值（`EveHudRoot.MOBILE_DOCK_H`）——
+##    26px 的标题栏在手机上只有约 35 个物理像素，点不准。
+var collapsed_height := 0.0
 ## 高度是否由**控件自己**管（档案窗收起/展开 128↔320、结算窗按内容反推窗高）。
 ## ⚠️ 一旦为 true，`set_window_rect()` **只更新位置与宽度、不动高度** ——
 ##    否则 HUD 每次刷新都会把控件自己算好的高度按设计稿改回去。
@@ -609,8 +626,13 @@ func _refresh_collapsed() -> void:
 		_apply_rect(r)
 
 
-## 实际生效的矩形：玩家拖/缩过 ⇒ 用玩家的；否则用设计稿的。
+## 实际生效的矩形：折叠且设了停靠位 ⇒ 停靠位；玩家拖/缩过 ⇒ 用玩家的；否则设计稿。
+##
+## ⚠️ 停靠位**优先于**玩家矩形：玩家把窗拖到中间再折叠，要的是「它变成边缘标签」，
+##    不是「停在原地变小」（后者就是评审稿被否掉的那一版）。
 func _effective_rect() -> Rect2:
+	if _collapsed and dock_rect.size.x > 1.0 and dock_rect.size.y > 1.0:
+		return dock_rect
 	if _user_rect.size.x > 1.0 and _user_rect.size.y > 1.0:
 		return _user_rect
 	if _base_rect.size.x > 1.0 and _base_rect.size.y > 1.0:
@@ -623,9 +645,26 @@ func _apply_rect(r: Rect2) -> void:
 	position = r.position
 	var h := r.size.y
 	if _collapsed:
-		h = HEADER_H
+		h = collapsed_height if collapsed_height > 1.0 else HEADER_H
 	custom_minimum_size = Vector2(r.size.x, h)
 	size = Vector2(r.size.x, h)
+
+
+## 设定折叠后的「停靠位」（贴屏幕边缘的那枚标签）。传空矩形 = 取消停靠。
+##
+## ⚠️ 当下就是折叠态时**立刻生效** —— HUD 会在每次重铺时重设它（设计空间会变，
+##    比如设备旋转），少了这一句「已经折叠着的窗」会停在旧边缘上。
+func set_dock_rect(r: Rect2) -> void:
+	dock_rect = r
+	if _collapsed:
+		_apply_rect(_effective_rect())
+
+
+## 设定折叠态高度（手机端由 HUD 放大到手指够得着；传 0 = 回落到 `HEADER_H`）。
+func set_collapsed_height(h: float) -> void:
+	collapsed_height = maxf(0.0, h)
+	if _collapsed:
+		_apply_rect(_effective_rect())
 
 
 ## 记下「玩家把窗口摆成了什么样」。
@@ -648,6 +687,10 @@ func _save_layout() -> void:
 	if not persist_layout:
 		return
 	var r := _effective_rect()
+	# ⚠️ 折叠态要存**展开态**的矩形：手机档折叠后 `_effective_rect()` 返回的是
+	#    边缘标签（118×44），把它存下来 ⇒ 下次开局展开就得到一个 118 宽的窗。
+	if _collapsed and _base_rect.size.x > 1.0 and _base_rect.size.y > 1.0:
+		r = _base_rect
 	if r.size.x <= 1.0 or r.size.y <= 1.0:
 		return
 	LAYOUT_STORE.save_window(_layout_key(), {

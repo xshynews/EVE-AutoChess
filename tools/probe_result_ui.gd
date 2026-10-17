@@ -16,6 +16,8 @@ const H := 1080
 
 func _ready() -> void:
 	await _shot_list()
+	# ★ 2026-10-13：「放弃打捞」确认框换成 EVE 窗口语言版（EveConfirmDialog）后的出图
+	await _shot_ask()
 	await _shot_empty()
 	get_tree().quit()
 
@@ -81,7 +83,13 @@ func _shot_empty() -> void:
 	await _shot("salvage_empty", st.salvage_info(), "节点 7 · 遭遇战")
 
 
-func _shot(tag: String, info: Dictionary, stage: String) -> void:
+## 打捞确认框（2026-10-13 新版）：结算页 + 居中模态框同框。
+func _shot_ask() -> void:
+	var info := _make_info(23)
+	await _shot("salvage_ask", info, "节点 7 · 遭遇战", true)
+
+
+func _shot(tag: String, info: Dictionary, stage: String, open_ask: bool = false) -> void:
 	var vp := SubViewport.new()
 	vp.size = Vector2i(W, H)
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
@@ -110,6 +118,11 @@ func _shot(tag: String, info: Dictionary, stage: String) -> void:
 	rw.visible = true
 	await get_tree().process_frame
 	await get_tree().process_frame
+	if open_ask:
+		# 与主控 `_maybe_confirm_leftover_wrecks()` 同一入口（3 艘未打捞）
+		rw.call("ask_abandon_salvage", 3)
+		await get_tree().process_frame
+		await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 
 	var img := vp.get_texture().get_image()
