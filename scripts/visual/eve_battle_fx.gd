@@ -29,14 +29,43 @@ extends Node3D
 ##  那一层在 HUD 里（eve_damage_feed.gd），刻意分家。
 
 ## 命中爆点存活时间
-const HIT_LIFE := 0.28
+##
+## ★ 2026-10-17 打击感改造：0.28 → **0.16**。
+##   「疼」来自「短、亮、干脆」而不是「大、久」。旧版 0.28 秒 + 外扩 1.8 倍，
+##   实际读起来是一块慢慢变大的色板（实测占中央区 4~9%），而不是一次打击。
+const HIT_LIFE := 0.16
 ## 护盾涟漪存活时间
 ##
 ## ⚠️ 比命中爆点长一点：护盾是「一层壳被点亮」，扩散要看得见；
 ##    和爆点同寿命会觉得只是闪了一下、没读出「这层还在扛」。
-const SHIELD_LIFE := 0.38
+const SHIELD_LIFE := 0.32
 ## 击毁爆炸存活时间
-const BOOM_LIFE := 0.75
+const BOOM_LIFE := 0.62
+
+## ══════════════════════════════════════════════════════════════════
+##  ★ 特效尺寸（2026-10-17，打击感改造的核心改动）
+## ══════════════════════════════════════════════════════════════════
+##  口径：**世界单位**。实测换算 —— 2.6 世界单位的舰船在实战取景下 ≈ 121 px
+##  （`probe_impact` 逐艘投影实测），即 **1 世界单位 ≈ 46 px**。
+##
+##  旧版命中爆点 base 0.9~2.2、再乘 1.8 倍外扩 ⇒ 1.6~4.0 世界单位
+##  ⇒ 屏幕上 74~184 px 的**实心方块**，比整艘船还大 —— 这就是「一块板盖住船」。
+##  新版按「屏幕 7~17 px 的星芒」反解：0.16~0.37 世界单位。
+##
+##  ⚠️ 这不是「调小一点」的审美微调，而是**量纲修正**：
+##     特效尺寸必须相对舰船（0.06~0.14 × 船长），不能是绝对像素拍出来的数。
+##  ⛔ 改这几个值必须重跑 `probe_impact` 出对照图，别只改数字。
+const HIT_SIZE_BASE := 0.16
+const HIT_SIZE_PER_TIER := 0.035
+## 击毁：白热核 + 冲击波环。环可以是船的 0.5 倍宽（爆炸本来就该比船大一点）。
+const BOOM_CORE_SIZE := 0.42
+const BOOM_RING_SIZE := 1.25
+## 护盾：真球壳，直径略小于舰船长（2.6），包住船体中心即可。
+const SHIELD_DIAMETER := 2.05
+
+## 程序化形状 shader（无贴图：任何环境都能跑，验收不必依赖资源导入）
+const FX_SHADER := preload("res://scripts/visual/fx_impact.gdshader")
+const SHIELD_SHADER := preload("res://scripts/visual/fx_shield.gdshader")
 
 ## ══════════════════════════════════════════════════════════════════
 ##  ★ 开火线（2026-10-01 用户定案 · 第二版）
@@ -65,8 +94,13 @@ const BOOM_LIFE := 0.75
 ## ══════════════════════════════════════════════════════════════════
 const TRACER_COLOR := Color(1.0, 0.85, 0.28)          ## 统一的亮黄
 const TRACER_MISS_COLOR := Color(1.0, 0.74, 0.30, 0.45)  ## 未命中：暗一档、半透明
-## 线的视觉宽度（世界单位）。0.07 ≈ 相机拉远时约 1 像素 —— 再细会在实机上消失。
-const TRACER_WIDTH := 0.07
+## 线的视觉宽度（世界单位）。
+##
+## ★ 2026-10-17：0.07 → **0.105**。实测 1 世界单位 ≈ 46 px（船身 121 px / 2.6 单位），
+##   0.07 只有 **3 px**，而开火线是 0.15 秒就灭的瞬时元素 —— 3 px 在亮星云上等于看不见，
+##   玩家实际只看到"莫名闪一下的爆点"。这是「打击感单薄」的第二大人为原因。
+## ⚠️ 上限也要有：太粗会让高射速弹幕糊成一片黄墙（`MAX_FX` 也兜不住亮度堆积）。
+const TRACER_WIDTH := 0.105
 ## 三档长度。命中时按档位取一档；未命中固定用最短那档（打空了不该有长弹道）。
 const TRACER_LEN_HIT := [0.42, 0.68, 0.95]
 ## 未命中的长度占「开火方 → 被击方」真实距离的比例
@@ -74,7 +108,11 @@ const TRACER_MISS_FRACTION := 0.62
 ## 长度抖动幅度（±18%）
 const TRACER_JITTER := 0.18
 ## 线亮起 → 灭掉的时长。用户要求「亮一下 = 开火一次」，所以刻意很短。
-const TRACER_FLASH := 0.15
+##
+## ★ 2026-10-17：0.15 → **0.10**。理由不是"更短更帅"，而是**因果顺序**：
+##   线必须比命中爆点（0.16）先消失，玩家才读得出「打出去 → 打中」；
+##   两者同寿命时，画面上是"线和大方块同时出现"，打击感变成一坨。
+const TRACER_FLASH := 0.10
 
 ## 线长上限（世界单位）。
 ##
@@ -228,32 +266,45 @@ func spawn_tracer(from_meters: Vector3, to_meters: Vector3, hit: bool,
 ##
 ## ── 护盾为什么单独一档 ────────────────────────────────────────────
 ##  护盾挨打的手感不是「炸开」，是「整层壳被点亮、扩散、收回」。
-##  ⇒ 更大、更蓝、寿命更长，并在包络里给一个更大的扩散系数。
+##  ⇒ 2026-10-17 起用**真球壳 + 菲涅尔**（`fx_shield.gdshader`），不再用方片。
 func spawn_hit(pos_meters: Vector3, quality: int, layer: StringName = &"") -> void:
 	if not fx_enabled:
 		return
-	var col := _quality_color(quality)
-	# 档位越高越大 —— 「打得狠」这件事必须一眼看得出来
-	var base := 0.9 + float(clampi(quality, 0, 6)) * 0.22
-	var life := HIT_LIFE
-	var kind := Kind.HIT
 	if layer == &"shield":
-		col = Color(0.38, 0.74, 1.00)      # 护盾：青蓝（与血条同一套语言）
-		base *= 1.55
-		life = SHIELD_LIFE
-		kind = Kind.SHIELD
-	elif layer == &"armor":
-		col = Color(0.95, 0.78, 0.34)      # 装甲：琥珀
+		_make_shield(pos_meters)
+		return
+	var tier := clampi(quality, 0, 6)
+	# 层优先、品质兜底（旧逻辑保留）：颜色要回答「打的是哪一层」
+	var core := _quality_color(tier)
+	var edge := core.darkened(0.25)
+	if layer == &"armor":
+		core = Color(1.00, 0.90, 0.62)     # 装甲：白热 → 琥珀
+		edge = Color(0.95, 0.78, 0.34)
 	elif layer == &"hull":
-		col = Color(1.00, 0.52, 0.30)      # 结构：橙红
-	_make_flash(pos_meters, col, base, life, kind)
+		core = Color(1.00, 0.86, 0.66)     # 结构：白热 → 橙红
+		edge = Color(1.00, 0.52, 0.30)
+	# 档位越高越大越亮 —— 「打得狠」必须一眼看得出来
+	var size := HIT_SIZE_BASE + HIT_SIZE_PER_TIER * float(tier)
+	# MISS（0）不画星芒：打空了却炸一团光，等于告诉玩家"打中了"
+	if tier <= 0:
+		size *= 0.55
+	var energy := 2.0 + float(tier) * 0.22
+	_make_burst(0, pos_meters, size, HIT_LIFE, core, edge, energy, 4.0)
 
 
-## 击毁爆炸：一大团橙红 + 短促强光
+## 击毁爆炸：白热核 + 冲击波环 + 一盏瞬时点光
+##
+## ★ 2026-10-17：旧版是「一个 3.4 → 6.1 世界单位的方片」，屏幕上比整艘船还大，
+##   而且只有一层 —— 读起来是"黄色大方块"，没有"爆开"的过程。
+##   新版拆成两层：核（极短、极亮）+ 环（稍长、向外推），
+##   再保留点光让邻近舰船被照亮（那是「冲击传到别的船上」的唯一线索）。
 func spawn_boom(pos_meters: Vector3) -> void:
 	if not fx_enabled:
 		return
-	_make_flash(pos_meters, Color(0.95, 0.55, 0.25), 3.4, BOOM_LIFE, Kind.BOOM)
+	_make_burst(0, pos_meters, BOOM_CORE_SIZE, BOOM_LIFE * 0.45,
+			Color(1.0, 0.98, 0.92), Color(1.0, 0.78, 0.45), 4.2, 8.0)
+	_make_burst(1, pos_meters, BOOM_RING_SIZE, BOOM_LIFE,
+			Color(1.0, 0.72, 0.35), Color(0.92, 0.34, 0.16), 2.4, 4.0)
 	# 击毁额外加一盏瞬时点光 —— 让周围船体被照亮一瞬，
 	# 「爆炸发生过」这件事才会传到邻近的船上，而不是只有一朵贴图。
 	var omni := OmniLight3D.new()
@@ -281,44 +332,83 @@ func _quality_color(quality: int) -> Color:
 	return QUALITY_COLORS[q]
 
 
-## 造一团「billboard 方片」闪光。
+## 造一片「billboard 程序化形状」闪光（星芒 / 冲击波环）。
 ##
-## ⚠️ 用方片而不是球：方片 + 加色发光看起来就是「爆点」，
-##    而球体在无头环境下多一层细分，且缩放时轮廓更软、不够「锐」。
-##    战术视角下这一层的读法是「哪里被打了一下」，锐比圆重要。
-func _make_flash(pos_meters: Vector3, col: Color, size: float,
-		life: float, kind: int) -> void:
+## ══════════════════════════════════════════════════════════════════
+##  ★ 2026-10-17 之前这里是**纯色 QuadMesh**
+## ══════════════════════════════════════════════════════════════════
+##  旧实现（已删）：一个 `StandardMaterial3D` + `albedo_color` + `emission`，
+##  没有任何纹理 ⇒ 屏幕上就是一块**实心方块**。实测：
+##    · 命中：90×85 px 的黄块
+##    · 护盾：240×160 px 的蓝块，直接把舰船和背景一起盖掉
+##    · 占中央战斗区 4~9%
+##  这不是"参数没调好"，是**形状语言缺失**。
+##
+##  现在改成 `fx_impact.gdshader` 程序化绘制：
+##    kind 0 = 白热核心 + 十字/米字星芒 + 短外晕
+##    kind 1 = 薄冲击波环 + 拖尾
+##  统一 `blend_add` + `depth_draw_never` ⇒ 亮而不遮、不写深度。
+##
+##  ⚠️ 每个实例都 new 一份 ShaderMaterial（不像旧版共用 StandardMaterial3D）：
+##     `progress` 是 per-instance 的，共用会让所有特效同步淡出。
+##     成本可接受：`MAX_FX` 上限就是为这件事定的。
+func _make_burst(kind: int, pos_meters: Vector3, size: float, life: float,
+		core: Color, edge: Color, energy: float, rays: float) -> void:
 	var mi := MeshInstance3D.new()
 	var q := QuadMesh.new()
 	q.size = Vector2(size, size)
 	mi.mesh = q
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = Color(col.r, col.g, col.b, 0.92)
-	mat.emission_enabled = true
-	mat.emission = col
-	mat.emission_energy_multiplier = 3.0
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	mat.billboard_keep_scale = true
-	mat.disable_fog = true
+	var mat := ShaderMaterial.new()
+	mat.shader = FX_SHADER
+	mat.set_shader_parameter("kind", kind)
+	mat.set_shader_parameter("progress", 0.0)
+	mat.set_shader_parameter("core_color", core)
+	mat.set_shader_parameter("edge_color", edge)
+	mat.set_shader_parameter("intensity", energy)
+	mat.set_shader_parameter("ray_count", rays)
 	mi.material_override = mat
 	mi.position = pos_meters / METERS_PER_UNIT
 	add_child(mi)
-	_push(mi, life, kind)
+	_push(mi, life, Kind.HIT if kind == 0 else Kind.BOOM, mat)
+
+
+## 护盾壳：真球 + 菲涅尔（包住船体、正面全透、边缘发亮）
+##
+## ⚠️ 用 SphereMesh 而不是 billboard：护盾的语义是「一层包住船的壳」，
+##    方片永远只能在屏幕上画一个圈，读起来像冲击波，会和击毁爆炸混在一起。
+func _make_shield(pos_meters: Vector3) -> void:
+	var mi := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = 0.5
+	sm.height = 1.0
+	# 低细分就够：菲涅尔只依赖法线，16x8 在屏幕上已经看不出棱
+	sm.radial_segments = 20
+	sm.rings = 10
+	mi.mesh = sm
+	var mat := ShaderMaterial.new()
+	mat.shader = SHIELD_SHADER
+	mat.set_shader_parameter("progress", 0.0)
+	mat.set_shader_parameter("tint", Color(0.38, 0.74, 1.00))
+	mi.material_override = mat
+	mi.position = pos_meters / METERS_PER_UNIT
+	# 起始 scale 必须与 `_apply_envelope` 的 k=0 值一致（0.88），
+	# 否则第一帧会从满尺寸"缩"一下（一帧的跳变在护盾上很明显）。
+	mi.scale = Vector3.ONE * (SHIELD_DIAMETER * 0.88)
+	add_child(mi)
+	_push(mi, SHIELD_LIFE, Kind.SHIELD, mat)
 
 
 ## 登记一个特效并执行上限淘汰。
 ##
 ## ⚠️ 淘汰是「从最老的开始丢」而不是「拒绝新的」：
 ##    最新的那一条永远是玩家最该看到的（刚发生的打击）。
-func _push(node: Node3D, life: float, kind: int) -> void:
+func _push(node: Node3D, life: float, kind: int, mat: Material = null) -> void:
 	while _fx.size() >= MAX_FX:
 		var old: Dictionary = _fx.pop_front()
 		var n = old["node"]
 		if is_instance_valid(n):
 			n.queue_free()
-	_fx.append({"node": node, "t": 0.0, "life": maxf(0.01, life), "kind": kind})
+	_fx.append({"node": node, "t": 0.0, "life": maxf(0.01, life), "kind": kind, "mat": mat})
 
 
 func _process(delta: float) -> void:
@@ -334,7 +424,7 @@ func _process(delta: float) -> void:
 		if k >= 1.0:
 			n.queue_free()
 			continue
-		_apply_envelope(n, f["kind"], k)
+		_apply_envelope(n, f, k)
 		alive.append(f)
 	_fx = alive
 
@@ -347,8 +437,9 @@ func _process(delta: float) -> void:
 ##    （旧版做的是「长度收缩」，那是配合 flash 曳光的读法；新版不需要。）
 ## ⚠️ 淡出曲线用 `fade²`：线性淡出在线很细的时候会让「灭」这一步看不出来，
 ##    平方收尾能做出「啪一下没了」的干脆感。
-func _apply_envelope(n: Node3D, kind: int, k: float) -> void:
+func _apply_envelope(n: Node3D, f: Dictionary, k: float) -> void:
 	var fade := 1.0 - k
+	var kind: int = int(f["kind"])
 	if kind == Kind.TRACER:
 		var mi := n as MeshInstance3D
 		if mi != null and mi.material_override != null:
@@ -356,21 +447,25 @@ func _apply_envelope(n: Node3D, kind: int, k: float) -> void:
 			m.albedo_color.a = fade * fade
 			m.emission_energy_multiplier = m.emission_energy_multiplier * 0.997 + 0.003 * fade
 		return
-	# 命中 / 护盾 / 爆炸：膨胀 + 淡出（EVE 的爆点是「炸开」，不是「闪一下就没」）
-	# ⚠️ 护盾单独一档、系数最大：它的读法是「一层壳被点亮后扩散开」，
-	#    用命中爆点的 0.9 会看着像一颗普通火星，读不出「盾还在扛」。
-	var grow_k := 1.8
-	if kind == Kind.HIT:
-		grow_k = 0.9
-	elif kind == Kind.SHIELD:
-		grow_k = 2.4
-	var grow := 1.0 + k * grow_k
-	n.scale = Vector3.ONE * grow
 	if n is OmniLight3D:
 		(n as OmniLight3D).light_energy = 3.0 * fade * fade
 		return
-	var mi2 := n as MeshInstance3D
-	if mi2 != null and mi2.material_override != null:
-		var m2 := mi2.material_override as StandardMaterial3D
-		m2.albedo_color.a = fade * fade * 0.92
-		m2.emission_energy_multiplier = 3.0 * fade
+	# ── shader 特效：进度写进 uniform，形状自己在新版 shader 里算 ──────
+	# ⚠️ 不再用 `albedo_color.a` 淡出：ShaderMaterial 没有那个属性，
+	#    写它不报错但**完全没效果**（旧代码在 shader 化后会静默失效）。
+	var mat: Variant = f.get("mat")
+	if mat is ShaderMaterial:
+		(mat as ShaderMaterial).set_shader_parameter("progress", clampf(k, 0.0, 1.0))
+	# ── 尺寸包络 ────────────────────────────────────────────────────
+	# 命中：几乎不外扩（"啪"一下）。护盾：轻微外扩（壳被顶了一下）。
+	# 爆炸：明显外扩（冲击波推出去）。
+	var grow_k := 0.35
+	if kind == Kind.SHIELD:
+		grow_k = 0.28
+	elif kind == Kind.BOOM:
+		grow_k = 1.1
+	var base_scale := 1.0
+	if kind == Kind.SHIELD:
+		# 球直径来自常量：球网格本身是 1 单位，scale 就是"世界直径"
+		base_scale = SHIELD_DIAMETER * (0.88 + 0.22 * k)
+	n.scale = Vector3.ONE * (base_scale * (1.0 + k * grow_k))

@@ -195,6 +195,20 @@ var attached: bool = true
 ## 相机节点
 var camera: Camera3D = null
 
+## ── 受击震屏（2026-10-17 打击感改造 · 用户选定「轻微」档）────────────
+##
+##  trauma 模型：外部只投喂 0..1 的"冲击量"，实际幅度取 **平方** ——
+##  小冲击几乎看不出、大冲击（击毁）才明显，这是打击感的常见做法。
+##
+##  ⚠️ 0.2° 是**用户拍板值**（"只有击毁时轻颤，不干扰瞄准"）。
+##     要加档就改这三个数，别在调用点散布魔法数字。
+##  ⚠️ 只作用于相机**局部**位置与 roll，绝不碰 focus / yaw / pitch ——
+##     否则自动取景会把抖动累积成"视角漂移"，玩家会认为相机坏了。
+const SHAKE_MAX_ROLL := 0.00349     ## 0.2°（弧度）
+const SHAKE_MAX_SHIFT := 0.035      ## 世界单位；2.6 单位船身 ≈ 121px，约 1.6px
+const SHAKE_DECAY := 0.55           ## 从满强度衰减到 0 的秒数
+var trauma := 0.0
+
 ## 上一帧视角是否还在收敛（供外部判断「是否还在动」）
 var animating: bool = false
 
@@ -317,6 +331,13 @@ func _process(delta: float) -> void:
 	if camera == null:
 		return
 	var changed := _step(delta)
+	# ── 受击震屏（2026-10-17 打击感改造）──────────────────────────
+	# ⚠️ 每帧都要重算：`apply_to_camera` 是**覆盖式**写入（position = focus + offset），
+	#    如果只在 trauma 变化时写，最后一帧的随机偏移会永久留在相机上。
+	#    这是一类很隐蔽的"镜头慢慢跑偏" bug，别改成条件写入。
+	if trauma > 0.0:
+		trauma = maxf(0.0, trauma - delta / SHAKE_DECAY)
+		changed = true
 	if changed:
 		apply_to_camera()
 
@@ -540,6 +561,30 @@ func apply_to_camera() -> void:
 	camera.position = focus + offset
 	camera.look_at(focus, Vector3.UP)
 	camera.far = maxf(20_000.0, dist * 30.0)
+	_apply_shake()
+
+
+## 外部投喂震屏冲击量（0..1）。击毁约 0.85、重击约 0.15、普通命中小于 0.02。
+##
+## ⚠️ 累加并夹到 1：连杀时连续投喂会叠加成一次更强的震，
+##    这正是"多艘船同时炸"该有的读法。
+func add_trauma(v: float) -> void:
+	trauma = clampf(trauma + v, 0.0, 1.0)
+
+
+## 把当前 trauma 写进相机（局部位置 + roll）。
+##
+## ⚠️ 必须在 `look_at` **之后**做：look_at 会覆盖整份 basis，
+##    先抖后看向焦点等于白抖。
+func _apply_shake() -> void:
+	if trauma <= 0.0 or camera == null:
+		return
+	var s := trauma * trauma
+	var b := camera.transform.basis
+	var jitter := (b.x * randf_range(-1.0, 1.0) + b.y * randf_range(-1.0, 1.0)) \
+			* (SHAKE_MAX_SHIFT * s)
+	camera.position += jitter
+	camera.rotate_object_local(Vector3(0, 0, 1), randf_range(-1.0, 1.0) * SHAKE_MAX_ROLL * s)
 
 
 ## 相机到焦点的距离（世界单位）

@@ -125,18 +125,24 @@ func _dump_ships() -> void:
 	if cam3 == null or not (cam3 is Camera3D):
 		return
 	var c: Camera3D = cam3
-	var nodes: Variant = arena.get("_ship_nodes")
-	if nodes == null or not (nodes is Dictionary):
-		return
+	# ★ 遍历整棵场景树找「带 ship 字段的 Node3D」——
+	#   只查 arena._ship_nodes 会漏掉敌方（它们由 sim 的另一套节点渲染），
+	#   第一次跑就是这么漏掉左下角那艘贴镜头的船的。
+	var found: Array = []
+	_collect_ships(self, found)
 	var vp_size := get_viewport().get_visible_rect().size
-	print("  舰船盘点（屏幕 %dx%d）：" % [int(vp_size.x), int(vp_size.y)])
-	for k in (nodes as Dictionary).keys():
-		var n: Variant = (nodes as Dictionary)[k]
-		if n == null or not is_instance_valid(n):
-			continue
+	print("  舰船盘点（屏幕 %dx%d，共 %d 个 visual）：" % [
+			int(vp_size.x), int(vp_size.y), found.size()])
+	for n in found:
 		var n3 := n as Node3D
 		if n3 == null or not n3.visible:
 			continue
+		var sh: Variant = n3.get("ship")
+		var key := "?"
+		var team := -1
+		if sh != null:
+			key = str(sh.get("ship_key"))
+			team = int(sh.get("team"))
 		var wp := n3.global_position
 		var sp := c.unproject_position(wp)
 		var d := c.global_position.distance_to(wp)
@@ -146,9 +152,19 @@ func _dump_ships() -> void:
 		var p2 := c.unproject_position(wp - Vector3(half, 0, 0))
 		var px := p1.distance_to(p2)
 		var onscreen := sp.x >= 0 and sp.x <= vp_size.x and sp.y >= 0 and sp.y <= vp_size.y
-		print("    %-12s 屏幕(%5d,%5d) %s  距相机%5.1f  跨度%4.0fpx" % [
-				str(k), int(sp.x), int(sp.y), "画面内" if onscreen else "★画面外",
+		print("    %-12s team=%d 屏幕(%5d,%5d) %s  距相机%5.1f  跨度%4.0fpx" % [
+				key, team, int(sp.x), int(sp.y), "画面内" if onscreen else "★画面外",
 				d, px])
+
+
+## 递归收集「带 ship 字段」的 Node3D（= EveShipVisual）
+func _collect_ships(n: Node, out: Array) -> void:
+	if n is Node3D and "ship" in n:
+		var sh: Variant = n.get("ship")
+		if sh != null:
+			out.append(n)
+	for c in n.get_children():
+		_collect_ships(c, out)
 
 
 func _fx() -> int:

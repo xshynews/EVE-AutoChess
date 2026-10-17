@@ -236,6 +236,78 @@ func _build_banks() -> void:
 	_sfx_bank = _scan_dir(DIR_SFX)
 	_amb_bank = _scan_dir(DIR_AMB)
 	_mus_bank = _scan_dir(DIR_MUS)
+	_cull_overlong_sfx()
+
+
+## ══════════════════════════════════════════════════════════════════
+##  素材时长闸（2026-10-17 打击感改造）
+## ══════════════════════════════════════════════════════════════════
+##  2026-10-01 用户关掉全部战斗音效，原话是「音效和攻击的动画都不是认真做的，
+##  所以看着听着很别扭」。当时大家以为是"音色风格问题"，实测下来不是：
+##
+##    assets/audio/sfx 实测时长
+##      boom_01.ogg       36.24 s   ← 一整段，不是一次爆炸
+##      fire_capital_01   3.82 s
+##      fire_heavy_01     2.81 s
+##      fire_01           0.98 s
+##      hit_*             0.09~0.32 s   ✅ 正常
+##
+##  战斗事件间隔是 0.07~0.3 s（6v6 实测每 70ms 一次开火）。
+##  一发 2.8 秒的重炮音会盖住后面**十几发**；36 秒的"爆炸"会一直响到
+##  下一次击毁之后 ⇒ 声音层叠成一堵墙。**这就是"别扭"的物理原因**，
+##  和音色好不好听是两件事。
+##
+##  ⇒ 每个音色族给时长上限，超长的变体**不入选**。
+##  ⛔ 为什么不是"截断前 N 秒"：截断会把爆炸的尾音切在任意相位上，
+##     听起来是"被掐断"，比长音更假。宁可少一个变体。
+##  ⛔ 这是修素材错配，不是改游戏默认行为 —— 删掉本函数即完整回滚。
+const MAX_SFX_SECONDS := {
+	&"fire_light": 0.80,
+	&"fire": 1.20,
+	&"fire_heavy": 1.70,
+	&"fire_capital": 2.10,
+	&"hit_light": 0.60,
+	&"hit_shield": 0.60,
+	&"hit_armor": 0.60,
+	&"hit_structure": 0.90,
+	&"miss": 0.50,
+	&"boom": 2.60,
+}
+
+
+func _cull_overlong_sfx() -> void:
+	var dropped: PackedStringArray = []
+	for key in MAX_SFX_SECONDS.keys():
+		var list: Array = _sfx_bank.get(key, [])
+		if list.is_empty():
+			continue
+		var keep: Array = []
+		var shortest: AudioStream = null
+		var shortest_len := INF
+		for st in list:
+			var secs := _stream_seconds(st)
+			if secs < shortest_len:
+				shortest_len = secs
+				shortest = st
+			if secs <= float(MAX_SFX_SECONDS[key]):
+				keep.append(st)
+			else:
+				dropped.append("%s(%.1fs)" % [String(key), secs])
+		# 兜底：整族都被判超长时，至少留最短的那一个 ——
+		# 「这族没声音」比「这族声音长」更难排查（前者是静默失效）。
+		if keep.is_empty() and shortest != null:
+			keep.append(shortest)
+		_sfx_bank[key] = keep
+	if not dropped.is_empty():
+		print("[EveAudio] 已剔除超长音效变体（防止叠成噪音墙）：%s"
+				% ", ".join(dropped))
+
+
+## 取音频流时长（秒）。未知格式返回 0 = 不参与剔除（宁放行不错杀）。
+func _stream_seconds(st: AudioStream) -> float:
+	if st is AudioStreamOggVorbis:
+		return (st as AudioStreamOggVorbis).get_length()
+	return 0.0
 
 
 ## 扫一个目录，返回 {逻辑名: [AudioStream, ...]}。

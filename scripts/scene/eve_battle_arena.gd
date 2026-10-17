@@ -726,15 +726,23 @@ func fx_tracer(from_meters: Vector3, to_meters: Vector3, hit: bool,
 
 
 ## 命中爆点（`layer` = 真实受击层：shield / armor / hull）
+##
+## ★ 2026-10-17：重击（SMASHING / WRECKING，品质 ≥ 5）额外给相机一点冲击。
+##   普通命中**不给** —— 6v6 高频射击下每一次都震 = 镜头永远在抖 = 晕。
 func fx_hit(pos_meters: Vector3, quality: int, layer: StringName = &"") -> void:
 	if battle_fx != null:
 		battle_fx.spawn_hit(pos_meters, quality, layer)
+	if quality >= 5 and orion_cam != null:
+		orion_cam.call("add_trauma", 0.05 * float(quality - 4))
 
 
 ## 击毁爆炸
 func fx_boom(pos_meters: Vector3) -> void:
 	if battle_fx != null:
 		battle_fx.spawn_boom(pos_meters)
+	# 击毁是整套打击感里唯一「必须震」的事件（用户拍板：轻微档）
+	if orion_cam != null:
+		orion_cam.call("add_trauma", 0.85)
 
 
 ## 清空特效（重开一局 / 清场时调）
