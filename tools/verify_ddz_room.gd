@@ -46,6 +46,10 @@ func _ok(cond: bool, msg: String) -> void:
 
 func _run() -> void:
 	# ── 建房 ────────────────────────────────────────────────
+	# ★ 头像字节：三张不同颜色 32×32 图，分别随建房/加入发出去（验证「远端可读取」）。
+	var host_av: PackedByteArray = _make_avatar(Color(0.85, 0.25, 0.25))
+	var c1_av: PackedByteArray = _make_avatar(Color(0.25, 0.85, 0.35))
+	var c2_av: PackedByteArray = _make_avatar(Color(0.35, 0.45, 0.9))
 	_host = ROOM.new()
 	_host.skip_tunnel = true
 	_host.needs_approval = true      # ★ 走「房主确认」这条路（产品规则）
@@ -54,8 +58,8 @@ func _run() -> void:
 	_host.join_requested.connect(func(pid: int, _nm: String):
 		approved.append(pid)
 		_host.approve(pid))
-	_ok(_host.create_room("云南的我", Time.get_ticks_msec(), 12345),
-			"房主建房成功")
+	_ok(_host.create_room("云南的我", Time.get_ticks_msec(), 12345, host_av),
+			"房主建房成功（带头像）")
 	_ok(_host.code.length() == 8, "房间码 8 位（%s）" % _host.code)
 	await _frames(4)
 	_ok(_host.state == ROOM.State.LISTENING, "房主进入等待加入")
@@ -67,8 +71,8 @@ func _run() -> void:
 	_c2 = ROOM.new()
 	_c2.skip_tunnel = true
 	add_child(_c2)
-	_ok(_c1.join_room(_host.code, "北京A", Time.get_ticks_msec()), "加入者1 发起加入")
-	_ok(_c2.join_room(_host.code, "杭州B", Time.get_ticks_msec()), "加入者2 发起加入")
+	_ok(_c1.join_room(_host.code, "北京A", Time.get_ticks_msec(), c1_av), "加入者1 发起加入（带头像）")
+	_ok(_c2.join_room(_host.code, "杭州B", Time.get_ticks_msec(), c2_av), "加入者2 发起加入（带头像）")
 	var ok1 := await _wait(func(): return _c1.state == ROOM.State.PLAYING or _c1.state == ROOM.State.FAILED)
 	var ok2 := await _wait(func(): return _c2.state == ROOM.State.PLAYING or _c2.state == ROOM.State.FAILED)
 	_ok(ok1 and _c1.state == ROOM.State.PLAYING, "加入者1 入座成功（%s）" % _c1.last_error)
@@ -77,6 +81,23 @@ func _run() -> void:
 	_ok(_c1.my_seat() != _c2.my_seat(), "两个加入者座位不同（%d / %d）" % [_c1.my_seat(), _c2.my_seat()])
 	_ok(_c1.my_seat() != 0 and _c2.my_seat() != 0, "加入者拿到的是 1/2 号位")
 	_ok(_c1.my_seat() < _c2.my_seat(), "先来的坐 1 号位（%d <%d）" % [_c1.my_seat(), _c2.my_seat()])
+
+	# ── 头像：进房时上传、远端可读取（独立通道，不进快照、不碰手牌隔离）──
+	await _frames(30)   # 让 AVATAR 包在真实 ENet 上跑完
+	_ok(not host_av.is_empty() and _host.avatar_bytes(0) == host_av, "★ 房主头像已存（座位0）")
+	_ok(_c1.avatar_bytes(_c1.my_seat()) == c1_av, "★ 加入者1 本地头像已存")
+	_ok(_c2.avatar_bytes(_c2.my_seat()) == c2_av, "★ 加入者2 本地头像已存")
+	_ok(_host.avatar_bytes(_c1.my_seat()) == c1_av, "★ 房主收到了加入者1 的头像")
+	_ok(_host.avatar_bytes(_c2.my_seat()) == c2_av, "★ 房主收到了加入者2 的头像")
+	_ok(_c1.avatar_bytes(0) == host_av, "★ 加入者1 收到了房主头像")
+	_ok(_c1.avatar_bytes(_c2.my_seat()) == c2_av, "★ 加入者1 收到了加入者2 头像")
+	_ok(_c2.avatar_bytes(_c1.my_seat()) == c1_av, "★ 加入者2 收到了加入者1 头像")
+	# 解码出的贴图非空、尺寸正确（牌桌 render 用）
+	var av_tex := ROOM.bytes_to_texture(host_av)
+	_ok(av_tex != null and av_tex.get_width() == 32 and av_tex.get_height() == 32,
+			"★ 头像字节能解出 32×32 贴图")
+	# 空字节不该解出贴图（牌桌据此画几何占位）
+	_ok(ROOM.bytes_to_texture(PackedByteArray()) == null, "★ 空头像字节解出 null（占位分支正确）")
 
 	# ── 房间满员时再挤一个 ──────────────────────────────────
 	var c3 := ROOM.new()
@@ -294,6 +315,13 @@ class TunSpy:
 func _frames(n: int) -> void:
 	for i in n:
 		await get_tree().process_frame
+
+
+## 造一张单色 32×32 的 PNG 字节（给头像通道测试用）。
+func _make_avatar(col: Color) -> PackedByteArray:
+	var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+	img.fill(col)
+	return img.save_png_to_buffer()
 
 
 ## 等条件成立（轮询帧 + 超时）。

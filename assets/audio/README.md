@@ -48,6 +48,51 @@ EVE 的 SoundBank **不带「媒体 → 名字」映射**：
 ⚠️ 没有取 RMS 垫底的两首（-43.9 / -46.3 dB）：那是近乎听不见的长环境声，
 当 BGM 会让人以为音乐没放。
 
+#### 斗地主 BGM：`ddz_01.ogg`（Start the Battle）—— BGM 无缝循环配方
+
+★ 2026-10-17 换曲：牌桌 BGM 从 **Lantern** 换成 **Start the Battle**
+（同作者「免费可商用」合集，B 站 `BV1uFcwe1EDV` 的 p24）。
+Lantern 改名 `lantern_01.ogg` 留在库里、**不再被任何场景调用**。
+
+原曲是 1:55 的完整曲目（有引子 / 桥段 / 尾奏），直接首尾相接会在结尾断一次。做法五步：
+
+**① 量节拍网格**（⛔ 切点必须落在小节线上 —— 切错一拍会把 kick 和 snare 的位置对调，
+听感立刻"别扭"，而这种错**不会报错**）：
+取低采样率 PCM，逐帧算 RMS → 求 onset 自相关 + 相位网格拟合。
+本曲实测 = **BPM 125.0 · 拍长 0.480s · 相位 0.232s**（1 小节 1.92s）。
+
+**② 定切点**（听不出来就靠能量图找"重音落点"）：
+drop 重音在 **7.905s**（第 16 拍，前面有 0.12s 静音铺垫，是教科书式的 drop）、
+曲体收尾在 **100.072s**（第 208 拍）⇒ 正好 **192 拍 = 48 小节**。
+长度取小节的整数倍，循环时鼓型才不会转位。
+
+**③ 切断 + 短交叉淡化**（⛔ 不要用 fade 收尾 —— 每次循环都会留下一道缝）：
+
+```bash
+FF="C:/godot/_export/ffmpeg/bin/ffmpeg.exe"
+"$FF" -y -i star_the_battle_raw.m4a -filter_complex \
+ "[0:a]asplit=3[a1][a2][a3];\
+  [a1]atrim=start=5.990:end=100.042,asetpts=N/SR/TB[main];\
+  [a2]atrim=start=100.042:end=100.072,asetpts=N/SR/TB[tail];\
+  [a3]atrim=start=5.990:end=6.020,asetpts=N/SR/TB[head];\
+  [tail][head]acrossfade=d=0.03:c1=qsin:c2=qsin[xf];\
+  [main][xf]concat=n=2:v=0:a=1,volume=-10.1dB[out]" \
+ -map "[out]" -c:a libvorbis -q:a 6 -ar 44100 -ac 2 ddz_01.ogg
+```
+
+淡化只用 **30ms** 且用 **qsin（等功率）**：节奏型素材的交叉淡化**越长越糟**
+（会把这 0.03s 的鼓和和弦叠成双份）；短淡化只为消掉波形断口，不负责"藏接缝"。
+
+**④ 响度对齐**：`volume=-10.1dB` 让整轨 = **-18.4 LUFS**，与别的 BGM 一致
+（真峰值 ≈ -7 dBFS，不削波）。⛔ 别让新曲子比别的响一截 —— 玩家切场景会听出来。
+
+**⑤ 必须重导**：新 ogg 落盘后跑一次
+`Godot_v4.7.2-stable_win64_console.exe --headless --path . --import`，
+⛔ 不重导则 `ResourceLoader.exists()` 为假 ⇒ 整轨**静默哑音且不报错**（实测踩过）。
+
+⚠️ 以上规则（切在小节线 / 循环点用很短且等功率的淡化 / 别用 fade 收尾）来自业界通行做法，
+调研出处见 [`docs/音效落地执行方案-1016.md`](../../docs/音效落地执行方案-1016.md)。
+
 ## 三、可调旋钮
 
 全部在 `scripts/core/eve_audio.gd`：

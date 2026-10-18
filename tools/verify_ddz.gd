@@ -397,6 +397,38 @@ func _t_table() -> void:
 	add_child(t)
 	# ⚠️ 必须先定尺寸再开局：所有坐标都是按 `size` 算的
 	t.size = Vector2(1920, 1080)
+
+	# ── ⓪ 前置：BGM 鸭音的「响」态（⛔ 必须在**任何点击之前**断言，之后就被鸭掉了）──
+	#    用户：空桌时音乐比基准响 5 dB，玩家点过任意按钮后回到基准。
+	var au: Variant = t.get("_audio")
+	_ok(au != null, "牌桌建起了音频层（鸭音挂在它上面）")
+	if au != null:
+		_ok(is_equal_approx(float(au.call("music_gain_db")), 5.0),
+				"★★ 进牌桌：BGM 处于「响」态（基准 +5 dB，实际 %s）"
+						% str(au.call("music_gain_db")))
+	_ok(not bool(t.get("_bgm_ducked")), "★ 还没点过任何按钮 ⇒ 鸭音未触发")
+
+	# ── ★★ DEAL_SEC 必须等于发牌音的实测时长（"换音源忘了改数"的唯一守护）──
+	#    ⚠️ `DEAL_SEC` 是由 `DEAL_SEG_SOUND / DEAL_SEG_GAP / DEAL_TAIL / DEAL_BURSTS`
+	#    四个常量**算出来**的；只要入库脚本那边改了结构而这里没跟，音源实测就会红。
+	#    「牌发完了声音还在」或「声音放完了牌还没发完」——**不报错**，只能靠听出来。
+	#    ⛔ 这条断言把"换音源必须重测"从注释里的纪律变成机器可查的事实。
+	var deal_len := -1.0
+	if au != null:
+		var bank: Dictionary = au.get("_sfx_bank")
+		var list: Array = bank.get("ddz_deal", [])
+		if not list.is_empty():
+			deal_len = (list[0] as AudioStream).get_length()
+	_ok(deal_len > 0.0, "音库里读得到发牌音（实测 %.4f s）" % deal_len)
+	if deal_len > 0.0:
+		_ok(absf(float(T.DEAL_SEC) - deal_len) <= 0.02,
+				"★★ DEAL_SEC(%.4f) == 发牌音实测时长(%.4f) —— 换音源没同步就会在这儿红"
+						% [float(T.DEAL_SEC), deal_len])
+		_ok(deal_len + 0.02 >= float(T.DEAL_SEC),
+				"★★ 音源盖得住整条动画时间轴（音 %.4f ≥ 时间轴 %.4f）—— ⛔ 短了就说明"
+						% [deal_len, float(T.DEAL_SEC)]
+						+ "入库脚本拼的段数比动画的少，末段发牌会没声音")
+
 	# ★ 随机起点（抢地主制）⇒ 先重发到「起点 = 座位 0」，保住「玩家先表态」的测试前提
 	var sv0: int = _redeal_until_starter0(t)
 	var g = t.get("game")
@@ -412,6 +444,7 @@ func _t_table() -> void:
 
 	# ── ② 点「叫地主」→ 进抢阶段 → AI 表态 → 轮到玩家就反抢 ⇒ 玩家必是最后一个抢的人 ──
 	_click_btn(t, "bid1")
+	_ok(bool(t.get("_bgm_ducked")), "★★ 点过任意按钮 ⇒ BGM 鸭音已触发（之后一直保持轻）")
 	_ok(int(g.bid_stage) == int(G.BidStage.GRAB), "★ 叫完进入抢地主阶段")
 	_drive_bid_to_play(t)
 	_ok(int(g.phase) == int(G.Phase.PLAY), "叫/抢收口 ⇒ 进入出牌阶段")
@@ -511,7 +544,77 @@ func _t_table() -> void:
 			cb.gui_input.emit(ev)
 		_ok(not bool(sw.get("visible")), "★★ 点 ✕ ⇒ 牌桌设置窗关闭")
 
-	# ── ⑪ 收尾：把测试用的牌桌摘掉（它的 `_process` 还会继续跑）──
+	# ── ⑪ 音效映射（报牌音 28 条 + 按钮点击音）──
+	#    ⛔ 这是**唯一**查得出「键名拼错」的地方：拼错时 `play_cue` 只是安静地记
+	#    一次 missing，那个点数就**永久哑音**（要真出到那张牌才听得出来）。
+	#    这里钉的是「牌型 + 点数 → 逻辑名」这条映射本身（音库有没有那个键，
+	#    由 `verify_audio._cue_test()` 对着磁盘逐个点名）。
+	#    ⚠️ 点数口径别记错：J=11 / Q=12 / K=13 / A=14 / 2=15 / 小王=16 / 大王=17。
+	_ok(String(t.call("_combo_cue", int(R.Type.SINGLE), 3)) == "ddz_card_3",
+			"★ 单张 3 ⇒ ddz_card_3（报点数）")
+	_ok(String(t.call("_combo_cue", int(R.Type.SINGLE), 11)) == "ddz_card_11",
+			"★ 单张 J ⇒ ddz_card_11（⛔ 键名按点数拼，不按牌面文字拼 J）")
+	_ok(String(t.call("_combo_cue", int(R.Type.SINGLE), 14)) == "ddz_card_14",
+			"★ 单张 A ⇒ ddz_card_14（⛔ 不是 1）")
+	_ok(String(t.call("_combo_cue", int(R.Type.SINGLE), 16)) == "ddz_card_16",
+			"★ 单张 小王 ⇒ ddz_card_16")
+	_ok(String(t.call("_combo_cue", int(R.Type.SINGLE), 17)) == "ddz_card_17",
+			"★ 单张 大王 ⇒ ddz_card_17（大小王各有音）")
+	_ok(String(t.call("_combo_cue", int(R.Type.PAIR), 13)) == "ddz_pair_13",
+			"★ 对 K ⇒ ddz_pair_13（对子报「对X」）")
+	_ok(String(t.call("_combo_cue", int(R.Type.PAIR), 15)) == "ddz_pair_15",
+			"★ 对 2 ⇒ ddz_pair_15")
+	_ok(String(t.call("_combo_cue", int(R.Type.PAIR), 17)) == "ddz_play",
+			"★★ 对王不存在（王各一张）⇒ 越界退通用音（⛔ 不是漏做音源）")
+	_ok(String(t.call("_combo_cue", int(R.Type.STRAIGHT), 10)) == "ddz_combo_straight",
+			"★★ 顺子仍报**牌型**、⛔ 不报点数（报 5 个牌名没人听得懂）")
+	_ok(String(t.call("_combo_cue", int(R.Type.TRIPLE), 5)) == "ddz_play",
+			"三张没给音源 ⇒ 通用 ddz_play")
+	_ok(String(t.call("_combo_cue", int(R.Type.ROCKET), 17)) == "ddz_rocket",
+			"★ 王炸 ⇒ ddz_rocket（⛔ 不走单张的 ddz_card_16/17）")
+
+	# ── 按钮点击音（用户 2026-10-17：`FL_CARD_SELECT` 当点击音，
+	#    「有鼠标点击又没有规定其他声音的话，就放这个音效」）──
+	#    ⛔ 这份名单错了**不会报错**：表现是"某个按钮点了没声"或"两声叠响"，
+	#    两种都要靠人听出来 ⇒ 所以在这里把名单钉死。
+	_ok(String(t.call("_button_cue", "hint")) == "ddz_click", "提示 ⇒ 补点击音")
+	_ok(String(t.call("_button_cue", "auto")) == "ddz_click", "托管 ⇒ 补点击音")
+	_ok(String(t.call("_button_cue", "settings")) == "ddz_click", "设置 ⇒ 补点击音")
+	_ok(String(t.call("_button_cue", "style")) == "ddz_click", "样式 ⇒ 补点击音")
+	_ok(String(t.call("_button_cue", "online")) == "ddz_click", "联机 ⇒ 补点击音")
+	_ok(String(t.call("_button_cue", "play")) == "",
+			"★★ 出牌：自己有音（报牌/牌型/拒绝）⇒ ⛔ 不叠点击音")
+	_ok(String(t.call("_button_cue", "pass")) == "", "★★ 不要：自己有音 ⇒ ⛔ 不叠点击音")
+	_ok(String(t.call("_button_cue", "bid0")) == "", "★★ 不叫/不抢：自己有音 ⇒ ⛔ 不叠点击音")
+	_ok(String(t.call("_button_cue", "bid1")) == "", "★★ 叫/抢地主：自己有音 ⇒ ⛔ 不叠点击音")
+	_ok(String(t.call("_button_cue", "start")) == "", "★★ 开始游戏：自己有发牌音 ⇒ ⛔ 不叠点击音")
+	_ok(String(t.call("_button_cue", "again")) == "", "★★ 再来一局：自己有发牌音 ⇒ ⛔ 不叠点击音")
+	_ok(String(t.call("_button_cue", "back")) == "",
+			"返回：音频层随换场景一起释放 ⇒ 给了也只是半声杂音（⛔ 故意不给）")
+	_ok(String(t.call("_button_cue", "some_future_button")) == "ddz_click",
+			"★ 新按钮**默认就补点击音**（要「不响」必须显式写进那行）")
+
+	# ── 「叫 / 抢」音效规则（用户 2026-10-18：「我抢」）──
+	#    ⛔ 名单错了**不报错**（只是那一句听着不对），所以把判据全钉在这里。
+	_ok(String(t.call("_bid_cue", false, false, 0)) == "ddz_bid_nocall", "不叫 ⇒ ddz_bid_nocall")
+	_ok(String(t.call("_bid_cue", true, false, 0)) == "ddz_bid_call", "叫地主 ⇒ ddz_bid_call")
+	_ok(String(t.call("_bid_cue", false, true, 1)) == "ddz_bid_nograb", "不抢 ⇒ ddz_bid_nograb")
+	_ok(String(t.call("_bid_cue", true, true, 0)) == "ddz_bid_grab",
+			"★★ 第 1 个抢（还没人抢过）⇒ 抢地主")
+	_ok(String(t.call("_bid_cue", true, true, 1)) == "ddz_bid_rob",
+			"★★ 已经有人抢过 ⇒ 我抢（⛔ 不是连着两声「抢地主」）")
+	_ok(String(t.call("_bid_cue", true, true, 3)) == "ddz_bid_rob", "第 3 个及以后的抢也用「我抢」")
+
+	# ── BGM 鸭音：点到这一步，增益应已落到基准，且**不会一路往下** ──
+	if au != null:
+		# ⚠️ 手动把淡化走完：无头下引擎帧不一定推到音频层的 `_process`，
+		#    而这条断言要验的正是"淡化终点的值"，不是"触发过"。
+		au.call("_process", 3.0)
+		_ok(is_equal_approx(float(au.call("music_gain_db")), 0.0),
+				"★★ 点过按钮后 BGM 停在基准（实际 %s dB）" % str(au.call("music_gain_db")))
+	_ok(bool(t.get("_bgm_ducked")), "★★ 鸭音只触发一次（一路上又点了十几颗按钮，不会继续降）")
+
+	# ── ⑫ 收尾：把测试用的牌桌摘掉（它的 `_process` 还会继续跑）──
 	t.queue_free()
 	print("  牌桌交互检查完成（点击全走 _gui_input 真实通道）")
 
@@ -1007,8 +1110,11 @@ func _t_deal_anim() -> void:
 	var feed0: int = (t.get("_feed") as Array).size()
 	var turn0: int = int(g.turn)
 	var phase0: int = int(g.phase)
-	t.call("_process", 1.0)
-	_ok(bool(t.get("_dealing")), "推进 1 秒仍在发牌中（总长 %.1f s）" % float(T.DEAL_SEC))
+	# ⚠️ 推步一律按 `DEAL_SEC` 的**比例**走，⛔ 别写死秒数：DEAL_SEC 会随发牌音换文件而变
+	#    （2026-10-18 从 4.0s 缩到 0.6s），写死「1 秒」会一步越过整段动画 ⇒ 假红。
+	var quarter := float(T.DEAL_SEC) * 0.25
+	t.call("_process", quarter)
+	_ok(bool(t.get("_dealing")), "推进 1/4 时长仍在发牌中（总长 %.2f s）" % float(T.DEAL_SEC))
 	_ok((t.get("_feed") as Array).size() == feed0,
 			"★★ 发牌期间记录条数不变 ⇒ AI 一步都没走（%d → %d）"
 			% [feed0, (t.get("_feed") as Array).size()])
@@ -1023,16 +1129,16 @@ func _t_deal_anim() -> void:
 	#    「逐张出现」是**纯视觉**的，断言钉不住 ⇒ 那份自检等于没测。
 	#    （同 2026-10-06 距离环那次：纯视觉改动，只能靠出图目视。）
 	var c0 := _visible_hand(t)
-	t.call("_process", 0.85)
+	t.call("_process", quarter)
 	var c1 := _visible_hand(t)
-	t.call("_process", 0.85)
+	t.call("_process", quarter)
 	var c2 := _visible_hand(t)
 	_ok(c0 < c1 and c1 < c2,
-			"★★ 手牌**逐张**出现（可见张数 %d → %d → %d 递增）" % [c0, c1, c2])
+			"★★ 手牌**逐张**出现（可见张数 %d → %d → %d 递增；采样点 = 时长的 1/4、2/4、3/4）"
+					% [c0, c1, c2])
 	_ok(c0 >= 0 and c2 <= 17, "可见张数落在 0~17（%d~%d）" % [c0, c2])
 	# 发牌**中途**不该是「全画出来」（否则动画等于没有）。
-	# ⚠️ 用 c1 而不是 c2：c2 已经逼近动画末尾（2.70s ≈ 16.4 张）⇒ 它会等于 17，
-	#    拿它判「没画满」会假红（实测踩过）。
+	# ⚠️ 用 c1（50% 处，约 8~9 张）而不是 c2：c2 已接近末尾，拿它判「没画满」容易假红。
 	_ok(c1 < 17, "发牌中途还没画满 17 张（c1 = %d）" % c1)
 	_ok(t.get("game") != null and (g.hand_of(0) as Array).size() == 17,
 			"发牌推进过程中手牌数据仍是 17 张（只增「画出来的」，不增数据）")
@@ -1053,12 +1159,42 @@ func _t_deal_anim() -> void:
 	_ok(String(t.get("_status")).contains("叫"),
 			"状态栏切到叫分（实际「%s」）" % String(t.get("_status")))
 
-	# ── ⑤ 「再来一局」走同一条路 ⇒ 重发一次牌 ──
+	# ── ⑤ 「再来一局」走同一条路 ⇒ 重发一次牌；顺手验**分段发牌** ──
 	t.call("_start_game", 20261006)
 	_ok(bool(t.get("_dealing")), "★ 「再来一局」同样重发一次牌（动画再走一遍）")
 	_ok(not _has_bid(_btn_ids(t)), "重发期间又叫分按钮消失了")
-	t.call("_process", float(T.DEAL_SEC) + 0.2)
-	_ok(not bool(t.get("_dealing")), "第二次发牌也能正常结束")
+	# ★★ 分段发牌（用户 2026-10-18 定稿）：**一段音发一批 → 停 0.1 秒 → 再一段**，
+	#    4 段共 4-4-4-5 张，末段走完再停 0.5 秒才开始叫地主。
+	#    ⛔ 判据同源：批大小问 `_deal_batch()`、手牌张数问 `_visible_hand()`（= `_draw()` 的判据）。
+	_ok(int(t.call("_deal_batch", 0)) == 4 and int(t.call("_deal_batch", 1)) == 4
+			and int(t.call("_deal_batch", 2)) == 4 and int(t.call("_deal_batch", 3)) == 5,
+			"★★ 批量序列 = 4-4-4-5（用户点名要这个顺序）")
+	var acc := 0
+	for k in range(int(T.DEAL_BURSTS)):
+		acc += int(t.call("_deal_batch", k))
+		# ① 段内**发牌窗口**走完（它比音短）：这一批应当已经**全部落完**
+		t.call("_process", float(T.DEAL_SEG_DEAL))
+		_ok(_visible_hand(t) == acc,
+				"★★ 第 %d 段发牌窗口走完：手牌正好 %d 张（发牌只占 %.2fs，比音短）"
+						% [k + 1, _visible_hand(t), float(T.DEAL_SEG_DEAL)])
+		# ② **音尾**（音还在响、牌已经落完）：⛔ 一张都不许再动
+		t.call("_process", float(T.DEAL_SEG_SOUND) - float(T.DEAL_SEG_DEAL))
+		_ok(_visible_hand(t) == acc,
+				"★★ 音尾里手牌保持 %d 张（音还在响，牌已经不动了）" % _visible_hand(t))
+		# ③ 段间**停顿**：同样一张不动（这就是「段落感」的可断言形态）
+		if k < int(T.DEAL_BURSTS) - 1:
+			t.call("_process", float(T.DEAL_SEG_GAP))
+			_ok(_visible_hand(t) == acc,
+					"★★ 第 %d 段后的停顿里手牌保持 %d 张（停顿时不发牌）"
+							% [k + 1, _visible_hand(t)])
+	_ok(acc == int(T.DEAL_FACE), "★ 各段批量合计 = 17 张（实际 %d）" % acc)
+	_ok(float(T.DEAL_SEG_DEAL) < float(T.DEAL_SEG_SOUND),
+			"★ 段内发牌窗口比一段音短（%.3f < %.3f）——「加快发牌」就落在这儿"
+					% [float(T.DEAL_SEG_DEAL), float(T.DEAL_SEG_SOUND)])
+	# 收尾的长停顿（0.5s）：牌早就发完了，这一步只是给玩家一个"发完了"的呼吸
+	t.call("_process", float(T.DEAL_TAIL) + 0.1)
+	_ok(not bool(t.get("_dealing")),
+			"★ 收尾停顿走完 ⇒ 发牌结束（声音也刚好放完，⛔ 不是「牌发完声音还在」）")
 
 	t.queue_free()
 	print("  发牌流程检查完成（空桌 → 发牌 → 才出叫分）")

@@ -174,10 +174,44 @@ const FLOAT_SEC := 2.8          ## 结算飘字的时长（秒）
 ## ★ 2026-10-07 发牌流程（用户：「进游戏之后不能直接开始，还需要点击一下开始游戏」
 ##   + 「要有个发牌的动画，让手牌一张一张的出现」）。
 ##   形态照欢乐斗地主录像 8~14s：**牌从桌面中央一张张飞向落位**，手牌从左往右长出来。
-##   ⚠️ 时长是**从录像量化出来的**（逐帧统计手牌区亮像素的增量）⇒ 正片约 3.0s 发完 17 张。
-const DEAL_SEC := 2.8            ## 发牌动画总时长（17 张 ⇒ 每张 ≈0.165s，与录像同档）
+##
+## ★★ 发牌动画 = **一段音发一批牌 → 停一下 → 再一段**（用户 2026-10-18 定稿）：
+##   0.6 秒洗牌音发 4 张 → 停 **0.4 秒** → 再发 4 张 → …… 共 4 段，末段 5 张
+##   ⇒ **4-4-4-5 = 17**；发完再停 0.5 秒（比段间长）才进叫地主。总长 **4.09s**。
+##   历史：2.8s（录像逐帧估算）→ 4.0s（`ddz_发牌17张.wav`）→ 0.6s（单段洗牌音，
+##   一把落下太快）→ 3.59s（拼 6 段无缝）→ 3.19s（4 段但停顿只有 0.1s，用户：
+##   「并没有感受到那种段落感」）→ **4.09s（停顿 0.4s，本方案）**。
+##
+## ★ 停顿 0.4s 不是随手取的：0.1s 只占一段音的 17%，**眼睛抓不到**（连拍探针
+##   `tools/probe_ddz_deal.gd` 实测：0.2s 采样下每行手牌数都在涨，看不出分段）；
+##   0.4s 让「一段音 + 一次停顿」凑成**整整 1 秒的节拍**（0.598 + 0.4 ≈ 1.0）
+##   ⇒ 段落感立刻出来，且总长仍在用户给的上限（5s）内。
+##
+## ★ 音画同源：**音源文件就是这条时间线**（入库脚本把「音 ×4 + 3 个 0.4s 静音
+##   + 0.5s 收尾静音」直接编出来，见 `$MAP` 发牌那行的 burst/gap/tail）。
+##   ⇒ 下面这四个常量**必须与入库脚本一致**；`DEAL_SEC` 由它们算出，⛔ 别手抄。
+##   ⚠️ 改一处要同步另一处，否则「牌发完了声音还在」/「声音放完牌还没发完」，
+##      两种都**不报错** ⇒ 由 `verify_ddz` 的「DEAL_SEC == 发牌音实测时长」断言兜住。
+const DEAL_SEG_SOUND := 0.598    ## 一段发牌音的时长（= 音源里那一段的长度，⛔ 不能凭空改）
+## 一段里**真正在发牌**的时长 —— 牌在这段时间内落完，剩下的音尾牌**就不再动了**。
+##
+## ★ 2026-10-18 用户：「每段的发牌时间稍微慢了点，可以加快点发牌速度，也就是
+##   缩短发牌时长，我觉得缩短 0.2 秒比较合适」⇒ 0.598 - 0.2 = **0.398**。
+## ⛔ 别去改 `DEAL_SEG_SOUND`（那是音源本身的长度，缩短它就得重编整条音源）；
+##    "加快发牌"在这里的正确落点就是**缩短段内发牌窗口**。
+## ★ 副作用是好的：一段里"牌不动"的时间变成 (0.598-0.398) 音尾 + 0.4 停顿 = **0.6s**，
+##    比原来更长 ⇒ 段落感只会更清楚（上一轮刚被用户认可，不能削弱）。
+const DEAL_SEG_DEAL := 0.398
+const DEAL_SEG_GAP := 0.4        ## 段间停顿：牌不动 —— **段落感就靠它**（别缩回 0.1）
+const DEAL_TAIL := 0.5           ## 发完后的收尾停顿（比段间长，给玩家一个"发完了"的呼吸）
+const DEAL_BURSTS := 4           ## 播几段 = 发几批牌
+const DEAL_STEP := DEAL_SEG_SOUND + DEAL_SEG_GAP   ## 一段占的时间（音 + 停顿）
+const DEAL_SEC := DEAL_STEP * float(DEAL_BURSTS - 1) + DEAL_SEG_SOUND + DEAL_TAIL
 const DEAL_FACE := 17            ## 每人张数。⚠️ 写死是**故意的**：这是斗地主规则，不是可配参数
-const DEAL_BOTTOM_LEAD := 0.30   ## 底牌提前这么久出现（最后 3 张一并落到顶部）
+## 底牌出现的时机：在**最后一段音**里提前这么多（0.5 = 段过半就露脸）。
+## ⚠️ 用比例、⛔ 不用绝对秒数：绝对秒数是配固定动画时长定的（当年 0.30s 占 4.0s 的 7.5% 算合理），
+##    动画一缩短就变成"发到一半底牌就冒出来"，与「最后 3 张一并落到顶部」的意图相反。
+const DEAL_BOTTOM_LEAD_FRAC := 0.5
 ## ★ 2026-10-06 加头像位：236×92 → 264×104。
 ##   依据（欢乐斗地主实机截图）：每个座位是「一张人物立绘 + 名牌 + 金币」，
 ##   有"人"的存在感 —— 我们原来只有一块空面板。
@@ -188,6 +222,8 @@ const AVATAR_R := 10.0          ## 头像圆角
 const LIFT := 22.0              ## 选中的手牌上移
 const HOVER_LIFT := 9.0         ## 悬停上移（即时反馈）
 const HAND_BOTTOM_GAP := 152.0  ## 手牌底边离屏底（下面留给「已选」行 + 操作栏 + 提示条）
+const ME_PANEL_GAP := 24.0      ## 「你」面板与手牌左沿的间隙（★ 2026-10-17 面板挪到手牌左侧）
+const ME_PANEL_MIN_X := 28.0    ## 「你」面板 x 的下限 —— 与对手面板同一条左边距
 
 const C_BG := Color(0.043, 0.059, 0.072)
 # ⚠️ 原来的实心桌面填充（以及它的桌沿色）**已删除** —— 用户 2026-10-07：
@@ -369,8 +405,14 @@ func _ready() -> void:
 ##
 ## ⚠️ 总线音量是**全局**的（写在 AudioServer 上），所以这里设的值
 ##    下次进战场照样生效 —— 这正是「通用设置」该有的语义。
-## ⚠️ 只调 `set_volume/set_muted/play_music`，⛔ 不碰任何 `play_*` 音效
-##    （牌桌没有打击反馈，乱播只会出怪声）。
+## ⚠️ 只调 `set_volume/set_muted/play_music/play_cue` ——
+##    ⛔ 不碰 `play_fire/play_hit/play_boom` 那一套**打击反馈**：牌桌没有炮火，
+##    乱播只会出怪声（而且那套有 30Hz 节流，按键音会被吞掉，听感是按键失灵）。
+##
+## ★ 2026-10-17：牌桌有了自己的音源（19 个，见 `tools/pipeline/intake_ddz_sfx.ps1`）
+##    ⇒ 在这里**单独打开本实例的 SFX 总开关**。
+##    ⛔ 不动 `EveAudio.SFX_ENABLED_DEFAULT`：那会把 2026-10-01 用户点名关掉的
+##       **战斗打击音**一起复活。牌桌与战场是两个场景，开关本就该各自决定。
 func _build_audio() -> void:
 	_audio = AUDIO_SCRIPT.new()
 	_audio.name = "LoungeAudio"
@@ -387,9 +429,132 @@ func _build_audio() -> void:
 	_audio.set_volume(&"amb", float(s.get("amb", 0.39)))
 	_audio.set_volume(&"music", float(s.get("music", 0.32)))
 	_audio.set_muted(bool(s.get("muted", false)))
-	# ★ 2026-10-10：牌桌 BGM 换成 Lantern（逻辑名 "ddz"，`ddz_01.ogg`，71.5s 无缝循环）。
+	# 总开关只决定「允不允许播 cue」，与音量 / 静音无关（哑音走 `set_muted` 的总线）。
+	_audio.sfx_enabled = true
+	# ★ 2026-10-17：牌桌 BGM 换成 **Start the battle**（逻辑名仍 "ddz"，`ddz_01.ogg`，
+	#   92.2s / 48 小节无缝循环）。旧曲 Lantern 改名为 `lantern_01.ogg` 留在库里，
+	#   ⛔ 牌桌不再放它（用户：「替换 Lantern」）。
 	#    它同时让设置窗的音乐滑杆**听得出效果**（⛔ 否则就是一排死旋钮）。
 	_audio.play_music("ddz")
+	# ★ 鸭音的「响」态：进牌桌、玩家**还没动手**时比基准响 5 dB（瞬时，不用淡入 ——
+	#   它发生在进场景的同一帧，没有"从 0 升上来"的过程要藏）。
+	_audio.set_music_gain(BGM_LOUD_DB, 0.0)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  牌桌音效（★ 2026-10-17 用户拍板入库）
+# ══════════════════════════════════════════════════════════════════
+
+## ══════════════════════════════════════════════════════════════
+##  BGM 鸭音（★ 2026-10-17 用户）
+## ══════════════════════════════════════════════════════════════
+##  用户原话：「BGM 应该一开始音量比较大，就现在 -5dB 的样子吧，然后到了玩家点击
+##  某个按钮之后，音量减小到 -10dB 的样子」。
+##
+##  ★ 两个数按**相对现在的音量**理解（用户拍板）：基准 = 现有 BGM 的电平
+##    （已对齐 -18.4 LUFS，和别的 BGM 一致）。
+##      · 初始比基准**响 5 dB**  → `BGM_LOUD_DB = +5`
+##      · 点击后**回到基准**      → `BGM_DUCK_DB = 0`
+##  ⛔ 不是绝对音量：它叠在设置窗「音乐音量」滑杆之上（见 `EveAudio` 字段顶注），
+##    所以滑杆读数仍然诚实 —— 玩家把音乐调小，鸭音的两档跟着一起小。
+##
+##  ⚠️ 为什么「空桌响、动手后变轻」是对的：空桌时桌面是静的（还没有任何音效），
+##    音乐顶上来是唯一的"在场感"；一动手就有报牌语音/点击音/发牌音了，
+##    音乐再响会盖住这些**信息量更大**的声音。
+const BGM_LOUD_DB := 5.0        ## 进牌桌、玩家还没动手：比基准响 5 dB
+const BGM_DUCK_DB := 0.0        ## 玩家点过任意按钮之后：回到基准
+const BGM_DUCK_SEC := 0.8       ## 降到基准的时长（⛔ 瞬时切会「嗒」一声）
+
+## 鸭音是否已经触发（只会触发一次，见 `_on_button`）。
+var _bgm_ducked := false
+
+
+## 牌桌音效的**唯一出口**：只给逻辑名，不去关心音源躺在哪个目录
+## （`EveAudio.play_cue` 自己会去 sfx / ambience 两个库里找，理由见它顶注）。
+##
+## ⚠️ `_audio` 可能是 null：验收脚本走到本类时 `_build_audio()` 未必跑过
+##    （它由 `_ready()` 调），所以这里必须自己兜住 —— 否则一个 `_sfx()` 调用
+##    就能让整局自检**崩在空引用**上。
+## ⚠️ 空键也兜住：`play_cue("")` 在库里必然找不到 ⇒ 会记一次 `missing`，
+##    于是「某条路径没声音」会伪装成「音源缺失」告警（`_button_cue` 会返回空串）。
+func _sfx(key: String) -> void:
+	if _audio != null and key != "":
+		_audio.play_cue(key)
+
+
+## 牌型 → 音效逻辑名。下标口径 = `ddz_rules.gd` 的 `TYPE_IDS` 顺序。
+##
+## ⚠️ 只给「用户点名要音效的牌型」发专属音；其余（三张 / 飞机三型）退到通用
+##    `ddz_play` —— ⛔ 不是漏做，是用户 2026-10-17 没为它们选音源。
+## ⚠️ 炸弹复用现成的 `boom`（EVE 爆炸音，`assets/audio/sfx/boom_0N.ogg`，
+##    一个键多份变体 ⇒ `play_cue` 会随机挑一发，不会每局都一样）。
+##
+## ★ 2026-10-17 第二批入库（用户：「可以直接写进游戏」）⇒ 单张与对子改**报牌名**：
+##   `ddz_card_3..17_01.ogg`（15 条）/ `ddz_pair_3..15_01.ogg`（13 条），
+##   源 = `F:\evezzq\音频\牌`。`rank` 由 `R.classify()` 给（主点数）。
+##   ⛔ 顺子 / 连对 / 三带X **不报点数**：一口气报 5 个牌名没人听得懂，
+##      它们仍用整型的牌型音（「顺子」「连对」）。
+func _combo_cue(t: int, rank: int) -> String:
+	match t:
+		# 1 = SINGLE 单张 ⇒ 报点数（小王 16 / 大王 17 也有音）
+		1:
+			return _rank_cue("ddz_card_", rank, 17)
+		# 2 = PAIR 对 ⇒ 报「对X」（⛔ 王各一张 ⇒ 没有对王，上界 15）
+		2:
+			return _rank_cue("ddz_pair_", rank, 15)
+		# 4 = TRIPLE_ONE 三带一
+		4:
+			return "ddz_combo_trio"
+		# 5 = TRIPLE_TWO 三带二
+		5:
+			return "ddz_combo_trio_pair"
+		# 6 = STRAIGHT 顺子
+		6:
+			return "ddz_combo_straight"
+		# 7 = STRAIGHT_PAIR 连对
+		7:
+			return "ddz_combo_pairs"
+		# 11 = FOUR_TWO_SINGLE 四带一
+		11:
+			return "ddz_combo_quad"
+		# 12 = FOUR_TWO_PAIR 四带二
+		12:
+			return "ddz_combo_quad_pair"
+		# 13 = BOMB 炸弹
+		13:
+			return "boom"
+		# 14 = ROCKET 王炸
+		14:
+			return "ddz_rocket"
+		# 3 = TRIPLE 三张 等「没给音源」的牌型 ⇒ 通用出牌音
+		_:
+			return "ddz_play"
+
+
+## 报牌音的逻辑名：`<前缀><点数>`。
+##
+## ⚠️ 区间是**有音源的点数**（单张 3~17 / 对子 3~15），越界退通用 `ddz_play`。
+## ⛔ 不在这里「先探库、没有就兜底」：写错键名时 `play_cue` 只会安静地记一次
+##    `missing`，而"库里到底有没有"由 `tools/verify_audio.gd` 对着磁盘逐个点名守着。
+##    在运行时偷偷兜底会把那个信号也一起吃掉 —— 那之后就再也查不出哑音了。
+func _rank_cue(prefix: String, rank: int, hi: int) -> String:
+	return (prefix + str(rank)) if rank >= 3 and rank <= hi else "ddz_play"
+
+
+## 「叫 / 抢」的音效逻辑名 —— 抽成纯函数是为了让**规则可断言**
+## （`_do_bid()` 只管用，判据全在这里；同 `_combo_cue` / `_button_cue` 的理由）。
+##
+## ★ 用户 2026-10-18：「我抢」要专门加一条规则 —— **已经有人抢过地主**时，
+##   下一个顺位再抢就用「我抢」，⛔ 不是再来一遍「抢地主」（连着两声听着乏味）。
+##   `grabs_before` = **表态前**的抢次数（`ddz_game.bid()` 里抢成功会 +1）：
+##     · 第 1 个抢（= 0）    ⇒ 抢地主
+##     · 第 2 个及以后（> 0）⇒ 我抢
+func _bid_cue(grab: bool, was_grab: bool, grabs_before: int) -> String:
+	if not grab:
+		return "ddz_bid_nograb" if was_grab else "ddz_bid_nocall"
+	if not was_grab:
+		return "ddz_bid_call"
+	return "ddz_bid_rob" if grabs_before > 0 else "ddz_bid_grab"
 
 
 ## 设置窗（**与战场共用同一个类**，只是换 `profile`）。
@@ -503,7 +668,7 @@ func _reset_state() -> void:
 ##
 ## `animate_deal`：是否播发牌动画。**默认 false** ⇒ 一建局手牌就是全的。
 ## ⚠️ 默认值故意是 false：验收脚本直接调 `_new_game(seed)` 拿到的必须是**立刻可打**的局面，
-##    ⛔ 不能被发牌动画挡住（那会让每次自检都变成「要等 2.8 秒」）。
+##    ⛔ 不能被发牌动画挡住（那会让每次自检都变成「要等 4 秒」）。
 func _new_game(seed_value: int = -1, animate_deal := false) -> void:
 	_seed = (int(Time.get_unix_time_from_system()) & 0xFFFF) if seed_value < 0 else seed_value
 	game = G.new()
@@ -513,6 +678,12 @@ func _new_game(seed_value: int = -1, animate_deal := false) -> void:
 	_started = true
 	_dealing = animate_deal
 	_deal_t = 0.0
+	# ★ 发牌音的实测时长就是 `DEAL_SEC` 的来源（3.5912s，见该常量顶注）⇒ 两边已经对齐，
+	#    这里只管起播，⛔ 不需要任何「按音频长度换算动画」的中间层。
+	# ⚠️ 只在真有动画时播：验收走 `_new_game(seed)`（`animate_deal` 默认 false），
+	#    给自检配一声发牌音纯属噪音。
+	if animate_deal:
+		_sfx("ddz_deal")
 	_push(T.t("DDZ_LOG_NEW_GAME", "—— 新一局（seed %d）——") % _seed)
 	_refresh_status()
 	queue_redraw()
@@ -618,6 +789,11 @@ func _settle() -> void:
 		if seat == _my_seat():
 			_my_delta = gain
 			COIN.record(gain, _human_won())
+	# ★ 胜负音跟的是**玩家视角**（⛔ 不是「地主有没有赢」）：
+	#   胜 = `ddz_win`（拍板选的那条 UNO 终局乐），负 = `resolve`（复用现成的 ambience 音）。
+	#   ⚠️ `_human_won()` 自己判过 `winner < 0`，这里不必再兜；能走到本行就说明
+	#   `game.is_over()` 已成立（调用方刚查过），winner 一定是有效座位。
+	_sfx("ddz_win" if _human_won() else "resolve")
 
 
 func _is_human_turn() -> bool:
@@ -661,20 +837,29 @@ func _do_bid(seat: int, grab: bool) -> bool:
 	# ★ 先记下**表态前**的阶段：叫地主这一下会把阶段从 CALL 切到 GRAB，
 	#   事后读 `bid_stage` 就会把这个「叫」误写成「抢」。
 	var was_grab := int(game.bid_stage) == int(G.BidStage.GRAB)
+	# ★ 「我抢」的判据要取**表态前**的抢次数（`game.bid()` 里抢成功会 `grabs += 1`）
+	var grabs_before := int(game.grabs)
 	var res: Dictionary = game.bid(seat, grab)
 	if not bool(res.get("ok", false)):
 		_reject(String(res.get("reason", "")))
 		return false
-	# ★ 流局（三家都不叫）⇒ 重新发牌（单机路径；联机路径由房主的 ddz_net 处理）
-	if bool(res.get("redeal", false)):
-		_push(T.t("DDZ_LOG_REDEAL", "三家都不叫 ⇒ 流局，重新发牌"))
-		_start_game()
-		return true
+	# ⚠️ 文案与音效都必须**先算、先播**，⛔ 不能等流局分支 return 之后再做 ——
+	#    「三家都不叫」时最后那家的这一声「不叫」会被整条吃掉（玩家该听得见）。
+	#    `was_grab` 是表态**前**的阶段 ⇒ 叫/抢 的四种组合全在这一个 if 里分流。
 	var what: String
 	if was_grab:
 		what = (T.t("DDZ_BID_GRAB", "抢地主") if grab else T.t("DDZ_BID_NOPASS", "不抢"))
 	else:
 		what = (T.t("DDZ_BID_CALL", "叫地主") if grab else T.t("DDZ_BID_PASS", "不叫"))
+	# ★ 音效名走 `_bid_cue()`（纯函数 ⇒ 规则可断言）。
+	#   ⚠️ 桌面/日志文案仍是「抢地主」：那是**动作**的名字，「我抢」只是这一声的口气 ——
+	#      两者不必同字（用户 2026-10-18 只要求音频换，文案保持原样）。
+	_sfx(_bid_cue(grab, was_grab, grabs_before))
+	# ★ 流局（三家都不叫）⇒ 重新发牌（单机路径；联机路径由房主的 ddz_net 处理）
+	if bool(res.get("redeal", false)):
+		_push(T.t("DDZ_LOG_REDEAL", "三家都不叫 ⇒ 流局，重新发牌"))
+		_start_game()
+		return true
 	_push("%s %s" % [_seat_name(seat), what])
 	_bid_text[seat] = what
 	if int(game.phase) == int(G.Phase.PLAY):
@@ -707,9 +892,17 @@ func _do_play(seat: int, cards: Array) -> bool:
 	_shown[seat] = (cards as Array).duplicate()
 	_passed[seat] = false
 	_bid_text[seat] = ""        # 资料惯例：出牌阶段首次落牌 ⇒ 清掉叫分遗留文本
+	# ★ 牌型在下面要用两次（日志文案 + 音效）⇒ 提成局部变量：
+	#   ⛔ 别算两遍 —— `R.classify` 不是纯查表，重复调用既浪费，
+	#   也容易让「文案写的牌型」和「响的音效」对不上（两边判断分家）。
+	# ★ 2026-10-17 第二批报牌音：单张/对子要按**点数**报牌名 ⇒ `rank` 也一起取
+	#   （`classify` 给的就是主点数，单张=那张牌、对子=对子的点数）。
+	var info := R.classify(cards)
+	var t: int = int(info.get("type", 0))
+	_sfx(_combo_cue(t, int(info.get("rank", 0))))
 	_push(T.t("DDZ_LOG_PLAY", "%s 出 %s（%s）") % [_seat_name(seat),
 			_cards_text(cards),
-			R.type_name(int(R.classify(cards).get("type", 0)))])
+			R.type_name(t)])
 	_sel = []
 	_hint_i = -1
 	if game.is_over():
@@ -732,6 +925,7 @@ func _do_pass(seat: int) -> bool:
 		return false
 	_shown[seat] = {}
 	_passed[seat] = true
+	_sfx("ddz_pass")
 	_push(T.t("DDZ_LOG_PASS", "%s 不要") % _seat_name(seat))
 	if game.last_play.is_empty():
 		# 其余两家都过 ⇒ 新的一轮。桌面必须清空，否则上一轮的牌会一直挂着，
@@ -900,6 +1094,11 @@ func _on_click(p: Vector2) -> void:
 			_hint_i = -1
 			_toast = ""
 			_toast_t = 0.0
+			# ★ 「选牌 / 取消选牌」在拍板表里是**同一个**音源 ⇒ 选中与取消共用本行，
+			#   ⛔ 别再按 `_sel` 的增删去分两路：听感完全一样，只会多一处判断。
+			#   ⚠️ 只有「点」会响；拖划选手牌走的是另一条路径，到不了本函数
+			#   —— 属于已知取舍，不是漏做。
+			_sfx("ddz_pick")
 			queue_redraw()
 			return
 
@@ -957,7 +1156,52 @@ func _drag_paint(a: Vector2, b: Vector2) -> void:
 		queue_redraw()
 
 
+## 按钮 → 点击音的逻辑名。返回 `""` = **这个按钮自己会出声**，⛔ 不补点击音。
+##
+## ★ 2026-10-17 用户（`FL_CARD_SELECT`）：「我觉得这个文件非常适合放进斗地主的
+##   鼠标点击声，**有鼠标点击又没有规定其他声音的话**，就放这个音效」
+##   ⇒ 规则 = **默认补一声**点击音，只有「已经点了名有专属音」的按钮除外。
+##   音源 `uno_FL_Card_Select.wav`（⚠UNO），正式音库里落成独立键 `ddz_click`。
+##
+## ⛔ 不做成"给每个按钮各配一声"：那会导致同一个动作**两声叠响**
+##    （按下是点击音、动作自己又响一次），听起来像回声。这就是这里返回空串的意义。
+##
+## ⚠️ `back`（返回主菜单）**故意不给**：牌桌的音频层是这张桌子自己 new 的子节点
+##    （`_build_audio()`），`change_scene_to_file` 会**连它一起释放** ⇒ 点击音被掐在
+##    半声上，听感是"滋"的一下杂音，比不响更糟。要修得先让音频层常驻（autoload），
+##    ⛔ 不在本次范围内 —— 记在这里，别当成漏做。
+func _button_cue(id: String) -> String:
+	# ⚠️ 判据与 `_on_button()` 里的分发**逐字对齐**（都用 `begins_with("bid")`）：
+	#    在那儿是 `_try_bid`，在这儿是"叫分按钮自己有叫/抢/不叫/不抢四声"。
+	if id.begins_with("bid"):
+		return ""
+	match id:
+		# 出牌 → 报牌音 / 牌型音（或失败时的拒绝音）
+		# 不要 → `ddz_pass`（或拒绝音）
+		# 开始 / 再来一局 → 发牌音（`_start_game()` ⇒ `_new_game(seed, true)`）
+		# 返回 → 见顶注
+		"play", "pass", "start", "again", "back":
+			return ""
+		# 其余（提示 / 托管 / 设置 / 样式 / 联机…）⇒ 补点击音。
+		# ★ 用 `_` 兜底而不是逐个点名：新加按钮**默认就有点击音**，
+		#   要「不响」必须显式写进上面那行 —— 正好与用户的规则同向。
+		_:
+			return "ddz_click"
+
+
 func _on_button(id: String) -> void:
+	# ★ BGM 鸭音（★ 2026-10-17 用户：空桌时响、玩家一动手就变轻）。
+	#   ⛔ 只降一次：本函数**每次点按钮**都会被调用，若每次都 `set_music_gain(0.0)`，
+	#      量会一路被拖到听不见（每次调用都是一次"再降一点"，见 EveAudio 顶注）。
+	#   ⚠️ 判据是 `_bgm_ducked` 而不是"当前音量"：淡化要 0.8 秒，淡化期间再点按钮
+	#      时音量还没到位，拿音量当判据会重复触发。
+	if not _bgm_ducked:
+		_bgm_ducked = true
+		if _audio != null:
+			_audio.set_music_gain(BGM_DUCK_DB, BGM_DUCK_SEC)
+	# ★ 点击音在**分发之前**补：分发里的 `play` / `pass` / 叫分 自己会出声（上面返回空串
+	#   的那些），被拒时也有 `_reject` 的拒绝音 —— 三条路径都不会漏掉"按下去有反馈"。
+	_sfx(_button_cue(id))
 	match id:
 		"back":
 			get_tree().change_scene_to_file(MAIN_MENU)
@@ -1057,7 +1301,11 @@ func _hint_key(cards: Array) -> int:
 	return int(info["rank"]) * 100 + (cards as Array).size()
 
 
+## ⚠️ 这里**同时**是「非法操作」的音效触发点 —— 所有被拒的路径都汇集到本函数
+##    （AI 走 `_do_*` 的失败分支，人走 `_try_*` 的前置校验），⛔ 别在别处另补一个
+##    `_sfx("ddz_deny")`，否则一次拒绝会响两声。
 func _reject(reason: String) -> void:
+	_sfx("ddz_deny")
 	_toast = reason
 	_toast_t = TOAST_SECONDS
 	queue_redraw()
@@ -1369,8 +1617,8 @@ func _table_pt(dir: int, k: float) -> Vector2:
 
 ## 某座位在桌面上的方位点（出牌 / 亮牌 / 飘字都用它 —— 单一真相源）。
 ##
-## ★ 2026-10-13 样式微调：牌放大时，**我的**出牌行要抬到「我」面板上方
-##   （面板自己也在给手牌让位，两边都按同一个 `_me_panel_y()` 算 ⇒ 不会打架）。
+## ★ 2026-10-13 样式微调：牌放大时，**我的**出牌行要往上抬一点，
+##   免得压在底下那排手牌上（抬到多高由 `_me_panel_y()` 那条参考线给定）。
 ##   ⚠️ 只在默认 `k`（= PLAY_OUT）上生效：显式传 k 的调用方（方向刻度等）不动。
 func _seat_pt(seat: int, k: float = PLAY_OUT) -> Vector2:
 	var dir := _dir_of(seat)
@@ -1381,9 +1629,14 @@ func _seat_pt(seat: int, k: float = PLAY_OUT) -> Vector2:
 	return pt
 
 
-## 「我」面板（正下方那块：头像 + 角色 + 娱乐币）的顶边 y —— **唯一真源**。
-##   两处读它：`_draw_me()` 画它、`_seat_pt()` 给「我的出牌行」让位。
-##   规则：① 不低于设计位 h-424；② 给手牌让位（手牌越高，面板越上）。
+## 「我的出牌行」往上抬的**参考线** y。
+##
+## ⚠️ 名字保自上一版 —— 那时它是「我」面板的顶边（面板在手牌正上方居中），
+##   两处读它：`_draw_me()` 画面板、`_seat_pt()` 给出牌行让位。
+##   ★ 2026-10-17 面板挪到手牌**左侧**后，面板的位置改由 `_me_panel_rect()` 决定，
+##   本函数**只剩一个读者**：`_seat_pt()`（给「我的出牌行」让位）。
+##   ⇒ 它现在不代表任何面板的坐标，⛔ 别再当成面板的顶边用。
+##   规则：① 不低于设计位 h-424；② 给手牌让位（手牌越高，参考线越上）。
 func _me_panel_y() -> float:
 	var hand_top := BASE.y - HAND_CARD_H * card_scale - HAND_BOTTOM_GAP - LIFT
 	return minf(BASE.y - 424.0, hand_top - 6.0 - SEAT_H)
@@ -1439,13 +1692,25 @@ func _draw_top_bar(w: float) -> void:
 	#   去掉的只是"给玩家看的那个面板"。
 
 
+## 底牌提前出现的**实际**秒数 —— 全工程唯一来源。
+##
+## ★ 语义是「在**最后一段**里提前多少」：底牌是整副牌最后剩下的 3 张，
+##   它该在牌快发完时才露脸（用户：「最后 3 张一并落到顶部」）。
+## ⛔ 别改成"总时长的百分之几"（见 `DEAL_BOTTOM_LEAD_FRAC` 顶注）：分段发牌的节奏
+##   不是线性的，按总长取比例会让底牌落在**倒数第二段**里，与"最后 3 张"的意图错开。
+## ★ 抽成函数是为了让判据只有一份：`_draw_bottom_cards()` 与自检都读它，
+##   ⛔ 别在两边各写一遍算式（那种分叉不报错，只在换音源之后才现形）。
+func _bottom_lead() -> float:
+	return DEAL_SEG_SOUND * DEAL_BOTTOM_LEAD_FRAC
+
+
 ## 底牌（顶部中央）。叫分阶段盖着 —— 叫完才亮。
 func _draw_bottom_cards(w: float) -> void:
 	# ⛔ 还没点「开始游戏」⇒ 底牌也不画：**桌上空空**才是「还没开始」该有的样子。
 	if game == null:
 		return
 	# ★ 发牌动画最后 3 张才是底牌 ⇒ 手牌没发完之前它们不出现（与录像一致）。
-	if _dealing and _deal_t < DEAL_SEC - DEAL_BOTTOM_LEAD:
+	if _dealing and _deal_t < DEAL_SEC - _bottom_lead():
 		return
 	# ★ 2026-10-13 样式微调：底牌随 `card_scale`
 	var cw := 44.0 * card_scale
@@ -1561,25 +1826,37 @@ func _draw_seat(seat: int) -> void:
 				C_ACCENT if not is_ll else C_GOLD, 3.0)
 
 
-## 玩家自己的头像块（左下角）。
+## 「你」面板的**唯一几何真源** —— 手牌左侧、与手牌行垂直居中（★ 2026-10-17 改位）。
+##
+## 横：按**最宽的手牌**（地主 20 张）预留，⛔ 不按当前张数 ——
+##   否则打牌时手牌一张张变短、左边越来越空，面板会**一路往右漂**；
+##   按 20 张算，整局面板纹丝不动，且**永远压不到最左边那张牌**。
+##   ⚠️ `card_scale` 拉到很大时（调参台量程 0.6~2.2），20 张的手牌几乎顶满屏宽，
+##      左边就没地方了 ⇒ 退到左边缘 `ME_PANEL_MIN_X`。
+##      ⛔ 不改成"缩窄面板"：「地主/农民 + 娱乐币」会被裁掉，比压住一张牌更糟。
+## 纵：与手牌行**垂直居中**（用户：「跟它平齐」）。
+##   两块高度不同（面板 104 / 手牌 ch），居中比顶对齐、底对齐看着更"齐"。
+func _me_panel_rect() -> Rect2:
+	const LANDLORD_N := 20          ## 地主手牌张数（斗地主：17 + 3 张底牌）
+	var hr := _hand_base_rect(0, LANDLORD_N)
+	var x := maxf(ME_PANEL_MIN_X, hr.position.x - ME_PANEL_GAP - SEAT_W)
+	var y := hr.position.y + hr.size.y * 0.5 - SEAT_H * 0.5
+	return Rect2(Vector2(x, y), Vector2(SEAT_W, SEAT_H))
+
+
+## 「你」资料板（**左下角**）。
 ##
 ## ★ 与参考图的「自己的头像 + 名字 + 金币」同位 —— 参考图左下角就是玩家自己。
 ## ★★ 这里同时是**代币显示位**的预留处（`代币` 那行注释）。
 ## ⛔ 不画假数字：没有数据来源的读数比空着更糟。
+##
+## ★ 2026-10-17 用户：「第一个玩家的头像框，需要挪到牌面的左边，跟它平齐就行」
+##   ⇒ 从「手牌正上方居中」改到**手牌左侧**（几何全在 `_me_panel_rect()`）。
+##   ⛔ 旧的 `BASE.x * 0.5 - SEAT_W * 0.5` + `_me_panel_y()` 写法已废弃，
+##      那是上一版「正上方居中」的算位方式，⛔ 别再抄回来。
 func _draw_me() -> void:
-	# ★ 用户 2026-10-06：「玩家头像 ID 代币位置也不对，需要更靠近自己的位置一些，
-	#   哪怕就在正上正左正右也比现在歪一大截好很多」⇒ 自己的方位是**正下**，
-	#   所以这块**水平居中、就在手牌正上方**。
-	# ⚠️ 上移量是出图调的：`h-390` 时手牌张数少（标题靠中间）会被这块压住一行。
-	# ⚠️ 牌桌下移后这里也从 h-404 微调到 h-400（仍留 11px 给手牌标题）
-	# ★ 2026-10-13 牌 ×1.3：h-400 → **h-424** —— 140 高的手牌 + 22 抬起
-	#   （顶 766）会顶进面板（h-400 时面板底 784 > 766 就叠了）；上移后
-	#   面板底 760，留 6px；下方与出牌区（底 644.5）仍留 11px。
-	# ★ 2026-10-13 样式微调：再按 `card_scale` 自动让位（牌越大面板越上，
-	#   ⛔ 绝不让抬起的牌压进面板 —— 那会挡住「地主/农民」和娱乐币）。
-	#   与「我的出牌行」共用同一个顶边（`_me_panel_y()`），两边不会互相压。
-	var p := Vector2(BASE.x * 0.5 - SEAT_W * 0.5, _me_panel_y())
-	var box := Rect2(p, Vector2(SEAT_W, SEAT_H))
+	var box := _me_panel_rect()
+	var p := box.position
 	var mine: bool = _is_human_turn() and not game.is_over()
 	_round_rect(box, C_PANEL, 10.0)
 	var edge := C_ACCENT if not mine else Color(C_ACCENT, 0.45 + 0.55 * _pulse())
@@ -1718,14 +1995,54 @@ func _hand_card_visible(i: int) -> bool:
 	return float(i) < _deal_progress()
 
 
+## 第 k 段该发几张。
+##
+## ⛔ 最后一段拿**剩下的**（17 是质数除不尽）：用户点名要「**4-4-4-5**」这个顺序
+##    —— 前 3 段各 4 张、末段 5 张，合计 17。
+##   ⛔ 别改成"各自四舍五入到平均值"：各段之和会 ≠ 17，最后要么多一张要么少一张。
+func _deal_batch(k: int) -> int:
+	var base := DEAL_FACE / DEAL_BURSTS
+	if k == DEAL_BURSTS - 1:
+		return DEAL_FACE - base * (DEAL_BURSTS - 1)
+	return base
+
+
+## 第 k 段**开始前**手上应该已经有几张。
+func _deal_before(k: int) -> int:
+	var n := 0
+	for i in k:
+		n += _deal_batch(i)
+	return n
+
+
 ## 发牌进度：**已经落到手上的张数**（可以是小数 —— 小数部分就是「正在飞」的那一张）。
+##
+## ★★ 2026-10-18 按用户定稿重写（「一段发牌音对应一段发牌动画，中间需要停顿一下，
+##   0.6 秒的发牌音发 4 张，0.1 秒的停顿，……最后一个循环发 5 张」）：
+##   时间轴 = `[本段音 0.598s｜**前 0.398s 发牌**、后 0.2s 留白][停顿 0.4s｜不动]……`
+##   ⇒ **发牌期**在段内线性推进，**发完之后（音尾 + 停顿）**把进度钉在段尾。
+##   ⛔ 别用「`_deal_t / DEAL_SEC × 17` 均匀铺开」那个老写法：它没有停顿，
+##      而且牌会跨过段界落下 —— 用户要的正是"一顿一顿"的节奏。
 ##
 ## ★ 这是发牌动画与**数据层**之间唯一的接口：只读不算、不改任何状态。
 ##   ⇒ 将来做 P2P 时，两台机器各自播各自的动画即可，牌局状态不受影响。
 func _deal_progress() -> float:
 	if not _dealing:
 		return float(DEAL_FACE)
-	return clampf(_deal_t / DEAL_SEC, 0.0, 1.0) * float(DEAL_FACE)
+	# 落在第几段（音 + 停顿算一步），以及"这一段发牌窗口"里走到了几成
+	# ⚠️ 分母是 `DEAL_SEG_DEAL`（不是音长）：牌比音先落完，剩下的音尾牌不动
+	# ⚠️ 段号要夹一下：最后一刻 `_deal_t` 会等于 DEAL_SEC ⇒ 直接算会越界到 N
+	var k := mini(int(_deal_t / DEAL_STEP), DEAL_BURSTS - 1)
+	var frac := clampf((_deal_t - float(k) * DEAL_STEP) / DEAL_SEG_DEAL, 0.0, 1.0)
+	# ⚠️⚠️ epsilon 归零（浮点累加的坑，2026-10-18 自检抓出来的）：
+	#    `_deal_t` 是逐帧累加的，走到段界时会比 `k * DEAL_STEP` 大最后那 1e-15 秒
+	#    ⇒ 段号**提前翻一格**、`frac` 变成 1e-16 ⇒ 下一批的**第一张牌**被判成"正在飞"，
+	#    `_deal_fly_pos` 把它画在**桌面中央**，于是整个停顿期桌面中间僵着一张牌
+	#    （纯视觉、不报错；verify_ddz 的「停顿里手牌保持不变」断言抓到了它）。
+	#    ⛔ 别删：0.0001 个发牌窗口 = 0.04ms，肉眼无感，但正好卡掉这个漂移。
+	if frac < 0.0001:
+		frac = 0.0
+	return float(_deal_before(k)) + frac * float(_deal_batch(k))
 
 
 ## 第 i 张牌的绘制位置：进度落在 [i, i+1) 区间时，它正在从桌面中央飞到落位。
@@ -2037,8 +2354,9 @@ func _sel_text() -> String:
 	#    （别让玩家盯着「未选牌 —— 点手牌选择」发呆，那时候点了也不算数）
 	if game != null and int(game.phase) == int(G.Phase.BID):
 		if _is_human_turn():
-			return T.t("DDZ_SEL_BID",
-					"看完这手牌再决定：不叫 / 1 分 / 2 分 / 3 分（分数越高底分越大）")
+			# ★ 2026-10-17 用户：删掉冒号后面的分数提示 —— 那排分数按钮已经不在了，
+			#   再写一份按钮清单只会让玩家去找一颗**不存在的按钮**。
+			return T.t("DDZ_SEL_BID", "看完这手牌再决定")
 		return T.t("DDZ_SEL_WAIT", "等别家叫分…")
 	if _sel.is_empty():
 		return T.t("DDZ_SEL_NONE",
@@ -2117,7 +2435,9 @@ func _build_online() -> void:
 	_online = ONLINE.new()
 	_online.name = "DdzOnline"
 	add_child(_online)
-	_online.place(_ui_origin())
+	# ★ 传 `zoom`：手机上可视区是「基准区 × zoom」，窗要按它居中（见 `place()` 的注释）。
+	#   ⛔ 窗的放大倍数另有 `PANEL_SCALE`，**不乘** zoom。
+	_online.place(_ui_origin(), zoom)
 	_online.panel_closed.connect(func():
 		_leave_online()
 		queue_redraw())
@@ -2136,6 +2456,14 @@ func _on_match_started() -> void:
 	_auto = false
 	_dealing = false           # 联机不发本地发牌动画（牌来自快照，动画只会和真实状态打架）
 	_started = true
+	# 头像：接信号 + 把「进场前已经知道的脸」一次性补齐（信号可能在接管前就发过）。
+	if _room != null:
+		if not _room.avatar_updated.is_connected(_on_avatar_updated):
+			_room.avatar_updated.connect(_on_avatar_updated)
+		for seat in _room.known_avatars().keys():
+			var b: PackedByteArray = _room.avatar_bytes(int(seat))
+			if not b.is_empty():
+				set_avatar(int(seat), _room.decode_avatar(b))
 	# 先放一个**空的**渲染占位对象：第一份快照到来前的这一小段，界面不该读到 null。
 	# ⚠️ 它是空的 ⇒ `_is_human_turn()` 里有一道「还没有快照就别给按钮」的闸兜着。
 	var blank := G.new()
@@ -2144,9 +2472,16 @@ func _on_match_started() -> void:
 	queue_redraw()
 
 
+## 远程/本地头像更新 ⇒ 喂给牌桌预留的 `set_avatar()`（没图时它自己画几何剪影）。
+func _on_avatar_updated(seat: int, tex: Texture2D) -> void:
+	set_avatar(seat, tex)
+
+
 func _leave_online() -> void:
 	if _online != null:
 		_online.visible = false
+	if _room != null and _room.avatar_updated.is_connected(_on_avatar_updated):
+		_room.avatar_updated.disconnect(_on_avatar_updated)
 	_room = null
 	_online_view = {}
 	_view_seat = -1

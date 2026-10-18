@@ -85,10 +85,15 @@ CCP 原名 *Crowd Control Productions*），**本开源项目不持有这些素�
 
 ### 背景音乐（BGM）
 
-- 四首 BGM 原曲：**City of Night / Pixel Wars / DJ BO$$ / Lantern**，作者 **乌鸦Producer**
-  （取自其「免费可商用」原创音乐集合包）。
-- 本项目使用的版本为适配游戏时长与无缝循环经 **AI 重编曲**处理，**原曲版权仍归原作者所有**。
-- 对应用途：主菜单 City of Night · 守卫边境 Pixel Wars · 终局 DJ BO$$ · 斗地主 Lantern。
+- 五首 BGM 原曲：**City of Night / Pixel Wars / DJ BO$$ / Lantern / Start the Battle**，
+  作者 **乌鸦Producer**（取自其「免费可商用」原创音乐集合包，
+  B 站合集 [BV1uFcwe1EDV](https://www.bilibili.com/video/BV1uFcwe1EDV/)）。
+- 本项目使用的版本为适配游戏时长与无缝循环经 **重编曲**处理，**原曲版权仍归原作者所有**。
+- 对应用途：主菜单 City of Night · 守卫边境 Pixel Wars · 终局 DJ BO$$ ·
+  斗地主 Start the Battle（`ddz_01.ogg`，92.2s / 48 小节无缝循环）。
+  ★ 循环的具体做法（量节拍网格 → 在小节线切断 → 短交叉淡化 → 响度对齐）
+  记在 [`assets/audio/README.md`](./assets/audio/README.md) 的「BGM 无缝循环配方」。
+- ⚠️ Lantern 已从牌桌撤下，改名 `lantern_01.ogg` 留在音库里备用（当前没有任何场景播它）。
 - 其余音效与环境音提取自 EVE 客户端资源（见 [`assets/audio/README.md`](./assets/audio/README.md)）。
 
 ## 许可证

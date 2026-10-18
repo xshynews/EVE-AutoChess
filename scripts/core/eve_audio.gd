@@ -74,8 +74,23 @@ const BOOM_POOL := 4
 ## 不能复用 SFX 池，否则环境音会走打击总线（音量被打击旋钮接管）。
 const AMB_POOL := 4
 
+## 牌桌 / UI 具名音效（`play_cue`）的池，挂在 BUS_SFX 上。
+##
+## ⚠️ 为什么挂 SFX 总线却另开一个池：牌桌与战场是**两个场景**，永远不会同时响，
+##    所以共用总线（＝共用「音效音量」旋钮）是对的；
+##    但绝不能共用同一个池 —— 战斗那 12 个 player 被 30Hz 开火占满时，
+##    玩家按下「出牌」会抢不到 player，听感是**按键失灵**。
+## 6 是牌桌实测够用的档位（最密的是连点选牌，人手上限就在这附近）。
+const CUE_POOL := 6
+
 ## 音乐用两个 player 做交叉淡入（A 响 B 备），不是池
 const MUSIC_FADE := 1.2
+
+## BGM **额外增益**（鸭音）的默认淡化时长（秒）。
+##
+## ★ 2026-10-17 用户：「BGM 一开始音量比较大…玩家点击某个按钮之后，音量减小」。
+## ⛔ 不能瞬时切：整轨音乐的增益跳变就是一次**波形断口**，听感是「嗒」一声。
+const MUSIC_GAIN_FADE := 0.8
 
 # ══════════════════════════════════════════════════════════════════
 #  节流窗口（秒）
@@ -128,6 +143,7 @@ var _mus_bank: Dictionary = {}
 var _sfx_players: Array[AudioStreamPlayer] = []
 var _boom_players: Array[AudioStreamPlayer] = []
 var _amb_players: Array[AudioStreamPlayer] = []
+var _cue_players: Array[AudioStreamPlayer] = []
 var _music_a: AudioStreamPlayer
 var _music_b: AudioStreamPlayer
 
@@ -140,12 +156,43 @@ var _music_active: AudioStreamPlayer
 var _music_idle: AudioStreamPlayer
 var _music_current := ""
 
+## ══════════════════════════════════════════════════════════════
+##  BGM 额外增益（鸭音）—— `set_music_gain()`
+## ══════════════════════════════════════════════════════════════
+##  用来表达「同一首曲子在不同状态下的响度」：例如牌桌**空桌时响、玩家一动手就变轻**。
+##
+##  ⛔ 为什么**不**改总线音量（`set_volume(&"music", …)`）：
+##    ① 总线音量是**设置窗那条滑杆**的值 —— 牌桌偷偷改掉它，玩家看到的读数就是假的
+##       （工程红线：玩家看到的开关必须与实际一致）；
+##    ② Music 总线是**所有曲目共用**的（准备/战斗/主菜单/牌桌），改它会把牌桌的状态
+##       串到别的场景去。
+##  ⇒ 落点是一个挂在 Music 总线上的 `AudioEffectAmplify`：它**叠在**滑杆之上，
+##    既不动滑杆的读数，也不改任何 bus volume。
+##
+##  ⚠️⚠️ 它挂在**全局 AudioServer** 上，不是本实例的子节点 ⇒ 会被"上一个场景/上一个
+##    实例"留下来（实测：牌桌空桌态的 +5 dB 会被带进主菜单）。所以有两道归零：
+##      · `_ready()` 归零 —— 新场景/新实例从 0 开始；
+##      · `play_music()` 换曲时归零 —— 别让上一首的状态跟着下一首走。
+##    这两条由 `tools/verify_audio.gd::_music_gain_test()` 守着。
+var _music_gain_fx: AudioEffectAmplify
+var _music_gain_db := 0.0
+var _music_gain_from_db := 0.0
+var _music_gain_to_db := 0.0
+var _music_gain_t := 0.0
+var _music_gain_fade := MUSIC_GAIN_FADE
+
 ## 节流：键 -> 最近几次播放的时间戳（令牌桶，见 `_throttle`）
 var _recent: Dictionary = {}
 
+## 每个键**上一次**用过的变体下标（`_pick_variant` 用来换一句）。
+##
+## ★ 2026-10-18 用户：「过和不要需要交替出现，用来增加趣味性」、
+##   「避免出现连续两个"抢地主"听着很乏味」⇒ 同一个键连说两遍同一句最乏味。
+var _last_variant: Dictionary = {}
+
 ## 可断言的计数器（验收用）
 var _count := {
-	"fire": 0, "hit": 0, "boom": 0, "amb": 0, "music": 0, "missing": 0,
+	"fire": 0, "hit": 0, "boom": 0, "amb": 0, "cue": 0, "music": 0, "missing": 0,
 	"fire_throttled": 0, "hit_throttled": 0, "boom_throttled": 0,
 }
 
@@ -206,9 +253,13 @@ func sfx_off() -> bool:
 
 func _ready() -> void:
 	_ensure_buses()
+	_add_music_gain_effect()
 	_build_banks()
 	_build_players()
 	_apply_volumes()
+	# ★ BGM 增益归零：效果器挂在**全局** AudioServer 上，⛔ 不归零的话
+	#   「上一个场景留下的响态」（例如牌桌空桌的 +5 dB）会跟着新场景一起响。
+	set_music_gain(0.0, 0.0)
 
 
 ## 建三条总线（幂等 —— 已经存在就不重复建）。
@@ -434,6 +485,14 @@ func _build_players() -> void:
 		p.name = "Amb%d" % i
 		add_child(p)
 		_amb_players.append(p)
+
+	# ★ 2026-10-17：牌桌/UI 具名音效池（挂 BUS_SFX，理由见 CUE_POOL 顶注）
+	for i in CUE_POOL:
+		var p := AudioStreamPlayer.new()
+		p.bus = BUS_SFX
+		p.name = "Cue%d" % i
+		add_child(p)
+		_cue_players.append(p)
 
 	_music_a = AudioStreamPlayer.new()
 	_music_a.bus = BUS_MUSIC
@@ -673,6 +732,31 @@ func play_node_advance() -> void:
 		_note_missing("node")
 
 
+## ══════════════════════════════════════════════════════════════════
+##  具名音效（牌桌 / UI）—— 2026-10-17 用户拍板入库
+## ══════════════════════════════════════════════════════════════════
+
+## 调用方只给**逻辑名**（`ddz_play` / `ddz_card_14` / `ddz_pair_13` / `boom` / `resolve` …），
+## 由这里去 fx / amb 两个库里找。
+##
+## ⚠️ 为什么要找两个库：牌型音在 `assets/audio/sfx/`，而用户给「失败」拍的是
+##    **复用现成的 `resolve`**（它在 ambience）⇒ 同一张事件表里会同时出现两个库的键。
+##    调用方（牌桌）不该关心音源躺在哪个目录，这个转换只在这里做一次。
+##
+## ⛔ 不做节流：牌桌上的动作全部由**人手**触发（上限就是手速），
+##    节流在这里只会把玩家刚按下的那一下吞掉 —— 听起来像按键失灵。
+func play_cue(key: String) -> void:
+	if sfx_off():
+		return
+	# ⛔ 不用音高抖动：叫地主/顺子 这类是**人声**，±几 % 的抖动毫无价值却有听感风险；
+	#    需要变化的地方（boom）靠「一个键多份变体」在 _play_from 里随机挑，本来就够。
+	if not _play_from(_sfx_bank, key, _cue_players, 1.0, 1.0, false) \
+			and not _play_from(_amb_bank, key, _cue_players, 1.0, 1.0, false):
+		_note_missing(key)
+		return
+	_count["cue"] = int(_count.get("cue", 0)) + 1
+
+
 ## 记一次「音源缺失」。只记一次避免刷屏，但**计数**要准 ——
 ## 验收靠 `stats()["missing"]` 判断「到底有没有真的播出来」。
 func _note_missing(key: String) -> void:
@@ -694,6 +778,10 @@ func _note_missing(key: String) -> void:
 func play_music(which: String) -> void:
 	if which == _music_current:
 		return
+	# ★ 换曲 ⇒ 额外增益归零：鸭音是**上一首 / 上一场景**的状态，
+	#   ⛔ 不归零会把牌桌的状态带进别的场景（不报错，只是音乐忽大忽小）。
+	#   ⚠️ 归零放在 `which == _music_current` 那个早退之后 —— 同一首重新点播不该重置它。
+	set_music_gain(0.0, 0.0)
 	if which == "":
 		_music_current = ""
 		_music_fading = false
@@ -727,7 +815,71 @@ var _music_fading := false
 var _music_fade_t := 0.0
 
 
+## ══════════════════════════════════════════════════════════════════
+##  BGM 额外增益（鸭音）—— 公开接口
+## ══════════════════════════════════════════════════════════════════
+
+## 把正在播的 BGM 加/减 `db`（叠在设置窗的音乐音量滑杆**之上**），
+## 用 `fade_sec` 秒平滑过渡（`0` = 立即生效）。
+##
+## ★ 典型用法（牌桌）：进场景 `set_music_gain(+5.0, 0.0)` → 空桌时比基准响 5 dB；
+##   玩家第一次点按钮 `set_music_gain(0.0, 0.8)` → 平滑回到基准。
+##
+## ⚠️ 调用方**自己**负责只在需要时调一次（本函数不做"只降不升"之类的状态机）：
+##    每次调用都是一次"再降一点"，连点按钮会把音量一路拖到听不见。
+func set_music_gain(db: float, fade_sec: float = MUSIC_GAIN_FADE) -> void:
+	_music_gain_from_db = _music_gain_db
+	_music_gain_to_db = db
+	_music_gain_t = 0.0
+	_music_gain_fade = maxf(0.0001, fade_sec)
+	if fade_sec <= 0.0001:
+		_music_gain_db = db
+	_apply_music_gain()
+
+
+## 当前额外增益（dB）。验收用 + 排障用。
+func music_gain_db() -> float:
+	return _music_gain_db
+
+
+## ⚠️ 落到 `AudioEffectAmplify` 上，⛔ 不动任何 bus volume（理由见字段顶注）。
+func _apply_music_gain() -> void:
+	if _music_gain_fx != null:
+		_music_gain_fx.volume_db = _music_gain_db
+
+
+## 每帧把增益往目标推一点。
+func _tick_music_gain(delta: float) -> void:
+	if is_equal_approx(_music_gain_db, _music_gain_to_db):
+		return
+	_music_gain_t += delta
+	var k := clampf(_music_gain_t / _music_gain_fade, 0.0, 1.0)
+	_music_gain_db = lerpf(_music_gain_from_db, _music_gain_to_db, k)
+	if k >= 1.0:
+		_music_gain_db = _music_gain_to_db
+	_apply_music_gain()
+
+
+## 在 Music 总线上找/建那个增益效果器（幂等）。
+##
+## ⚠️ 必须幂等：AudioServer 是**全局**的，同一个进程里第二、第三个 EveAudio 实例
+##    （验收脚本一测一个实例）会看到前一个留下的效果器 ⇒ 直接复用，⛔ 别再叠一个
+##    （叠两个 +5 dB 就变成 +10 dB，而且**不报错**）。
+func _add_music_gain_effect() -> void:
+	var idx := AudioServer.get_bus_index(BUS_MUSIC)
+	if idx < 0:
+		return
+	for i in AudioServer.get_bus_effect_count(idx):
+		var e := AudioServer.get_bus_effect(idx, i)
+		if e is AudioEffectAmplify:
+			_music_gain_fx = e as AudioEffectAmplify
+			return
+	_music_gain_fx = AudioEffectAmplify.new()
+	AudioServer.add_bus_effect(idx, _music_gain_fx)
+
+
 func _process(delta: float) -> void:
+	_tick_music_gain(delta)
 	if not _music_fading or _music_active == null:
 		return
 	_music_fade_t += delta
@@ -795,10 +947,34 @@ func _play_from(bank: Dictionary, key: String, pool: Array[AudioStreamPlayer],
 		return false
 	# ⚠️ 独立 RNG：挑变体与音高抖动都走 _rng，不碰全局 randi()/randf_range，
 	#    否则会让战斗 sim 的随机序列被音效打乱（验收用随机隔离测试守这条）。
-	p.stream = list[_rng.randi() % list.size()]
+	p.stream = list[_pick_variant(key, list.size())]
 	p.pitch_scale = _rng.randf_range(pitch_min, pitch_max) if jitter else 1.0
 	p.play()
 	return true
+
+
+## 挑一个变体下标：**随机，但不与上一次相同**。
+##
+## ★ 2026-10-18 用户：「过和不要需要交替出现，用来增加趣味性」、
+##   「避免出现连续两个"抢地主"听着很乏味」⇒ 同一个键连说两遍同一句最乏味。
+##   ⇒ 「不要 / 过」放在同一个键下（`ddz_pass_01/02`）就**自动交替**，牌桌侧零代码。
+##
+## ⚠️ 只有 1 个变体时必然重复（那时无解，得靠调用方补音源）。
+## ⚠️ 用「在剩下的 n-1 个里等概率抽」而不是「抽到重复就重抽」：
+##    后者在 n=2 时会退化成近似死循环，且分布不平（会偏袒某一个）。
+func _pick_variant(key: String, n: int) -> int:
+	if n <= 1:
+		return 0
+	var last := int(_last_variant.get(key, -1))
+	var i := 0
+	if last < 0 or last >= n:
+		i = _rng.randi() % n
+	else:
+		i = _rng.randi() % (n - 1)
+		if i >= last:
+			i += 1
+	_last_variant[key] = i
+	return i
 
 
 func _pick_player(pool: Array[AudioStreamPlayer]) -> AudioStreamPlayer:
@@ -865,6 +1041,9 @@ func stop_all() -> void:
 		if p.playing:
 			p.stop()
 	for p in _amb_players:
+		if p.playing:
+			p.stop()
+	for p in _cue_players:
 		if p.playing:
 			p.stop()
 	if _music_a != null:

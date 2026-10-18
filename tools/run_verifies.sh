@@ -74,6 +74,7 @@ SUITE=(
   verify_menu
   verify_ui_scale
   verify_resolution
+  verify_mobile_layout
   verify_window
   verify_ddz
   verify_ddz_net

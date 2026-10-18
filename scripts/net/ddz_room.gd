@@ -20,6 +20,9 @@ signal state_changed()
 signal join_requested(peer_id: int, player_name: String)
 signal failed(reason: String)
 signal log_line(text: String)
+## 某座位的头像更新（远程或本地）。`tex` 为 `null` 表示「该座位暂无头像」。
+## ★ 牌桌接它去调 `set_avatar()`；这是头像数据唯一的对外出口，⛔ 别绕过它直接读字节。
+signal avatar_updated(seat: int, tex: Texture2D)
 
 const N := preload("res://scripts/net/ddz_net.gd")
 const RC := preload("res://scripts/net/eve_room_code.gd")
@@ -28,7 +31,7 @@ const TUN := preload("res://scripts/net/eve_tunnel.gd")
 const TP := preload("res://scripts/net/eve_ddz_transport.gd")
 
 enum State { IDLE, TUNNEL, LISTENING, CONNECTING, PLAYING, FAILED }
-enum Msg { HELLO, ACCEPT, REJECT, SNAP, CMD, PING }
+enum Msg { HELLO, ACCEPT, REJECT, SNAP, CMD, PING, AVATAR }
 
 ## 房主是否要手动确认每个加入者（2026-10-12 用户定：要）
 var needs_approval := true
@@ -42,6 +45,11 @@ var custom_relays: Array = []
 var code := ""
 var is_host := false
 var display_name := ""
+## 本机玩家上传的头像字节（进房时随 HELLO 发出；= 空表示没传）。
+var my_avatar: PackedByteArray = PackedByteArray()
+## 座位 → 头像字节。★ 头像属于「公开信息」，放在协调器层（与 peer↔seat 同源），
+##   不进 `ddz_net` 的快照，也不碰手牌隔离红线。
+var _avatars: Dictionary = {}
 var state := State.IDLE
 var last_error := ""
 
@@ -52,6 +60,7 @@ var _tun = null
 ## ⚠️ 座位↔连接的唯一真相在会话层（`net.seats[i]["peer"]` / `net.seat_of_peer(peer)`）——
 ##   本类**不再自己维护第二份映射**（两份迟早会漂移，而漂移的后果是「发给错的人」）。
 var _pending := {}          ## peer_id → 名字（等房主确认）
+var _pending_avatar := {}    ## peer_id → 头像字节（等房主确认，与 _pending 同步清空）
 var _last_snap := {}        ## seat → 上次下发的负载（避免无变化时反复发）
 ## ★ 本帧的房主本地时钟（由 `tick()` 写入）。★ 2026-10-12 审查 N05：
 ##   客户端心跳里带的是**它自己进程**的 `Time.get_ticks_msec()`，两个进程的启动时刻不同、
@@ -100,19 +109,26 @@ func tick(now_ms: int) -> void:
 # ══════════════════════════════════════════════════════════ 房主
 
 ## 开房：生成房间码 → 起内核（TUN）→ 起 ENet 服务器 → 等玩家。
-func create_room(name: String, now_ms: int, seed_for_code: int = 0) -> bool:
+## `avatar` 为本机玩家头像字节（可为空）。
+func create_room(name: String, now_ms: int, seed_for_code: int = 0,
+		avatar: PackedByteArray = PackedByteArray()) -> bool:
 	is_host = true
 	display_name = name
+	my_avatar = avatar
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_for_code if seed_for_code != 0 else int(Time.get_unix_time_from_system() * 1000.0)
 	# ★ 房间码是那条虚拟网络的密码 ⇒ 用密码学安全随机数（传 null 走 Crypto）。
 	#   仅在验收需要复现时才传固定种子的 rng。
 	code = RC.generate(rng if seed_for_code != 0 else null)
 	_pending = {}
+	_pending_avatar = {}
+	_avatars = {}
 	_last_snap = {}
 	net = N.new()
 	net.host_setup([name, "座位1", "座位2"])
 	net.my_seat = 0
+	if not my_avatar.is_empty():
+		_avatars[0] = my_avatar
 	_start_transport()
 	if skip_tunnel:
 		_start_net_host()
@@ -200,6 +216,10 @@ func _assign(peer_id: int, nm: String) -> void:
 		_tp.send_to(peer_id, {"t": Msg.REJECT, "reason": "座位已被占用"})
 		return
 	net.reclaim(seat, Time.get_ticks_msec())
+	# 该玩家的头像（来自 HELLO）：存进协调器层，并把「这张脸」推给已经坐着的别人。
+	var av: PackedByteArray = _pending_avatar.get(peer_id, PackedByteArray())
+	_pending_avatar.erase(peer_id)
+	_store_avatar(seat, av, peer_id)
 	_tp.send_to(peer_id, {"t": Msg.ACCEPT, "seat": seat,
 			"needs_approval": needs_approval})
 	# ★ 2026-10-12 联网专项审查 N06：**新连接必须收到完整首份快照**，不能被去重缓存吃掉。
@@ -211,6 +231,30 @@ func _assign(peer_id: int, nm: String) -> void:
 	_push_seat(seat)
 	log_line.emit("%s 加入了（座位 %d）" % [nm, seat])
 	state_changed.emit()
+
+
+## 存某个座位的头像，并做两件事：
+##   ① 给本机牌桌发 `avatar_updated`（房主自己能看到新人的脸）；
+##   ② 把这张脸发给「其他已在场的玩家」；
+##   ③ 把**全场已有的脸**发给刚入座的这位（中途加入也能看到前面人的头像）。
+## `new_peer` 是新人的连接 id；传 -1 表示「仅本地存储、不向网络发」（例如房主自己的头像）。
+func _store_avatar(seat: int, bytes: PackedByteArray, new_peer: int = -1) -> void:
+	if bytes.is_empty():
+		return
+	_avatars[seat] = bytes
+	avatar_updated.emit(seat, bytes_to_texture(bytes))
+	if _tp == null:
+		return
+	# 新人的脸 → 其他已在场（且不是新人自己）的玩家
+	for s in range(1, N.SEATS):
+		var p := int(net.seats[s]["peer"])
+		if p != N.NO_PEER and p != new_peer:
+			_tp.send_to(p, {"t": Msg.AVATAR, "seat": seat, "data": bytes})
+	# 全场已有的脸 → 新人（含房主自己的，含新人自己的）
+	if new_peer != N.NO_PEER:
+		for s in _avatars.keys():
+			_tp.send_to(new_peer, {"t": Msg.AVATAR, "seat": int(s),
+					"data": _avatars[int(s)]})
 
 
 ## 空座位：1..2（0 是房主自己）
@@ -282,10 +326,12 @@ func _push_seat(seat: int) -> void:
 
 # ══════════════════════════════════════════════════════════ 加入者
 
-## 加入房间。
-func join_room(room_code: String, name: String, now_ms: int) -> bool:
+## 加入房间。`avatar` 为本机玩家头像字节（可为空）。
+func join_room(room_code: String, name: String, now_ms: int,
+		avatar: PackedByteArray = PackedByteArray()) -> bool:
 	is_host = false
 	display_name = name
+	my_avatar = avatar
 	code = RC.normalize(room_code)
 	if not RC.is_valid(code):
 		_fail("房间码不对（应是 8 位）")
@@ -321,7 +367,7 @@ func _start_net_client(now_ms: int) -> void:
 
 func _send_hello() -> void:
 	_tp.send_to(TP.SERVER_ID, {"t": Msg.HELLO, "name": display_name,
-			"ver": TUN.VERSION})
+			"ver": TUN.VERSION, "avatar": my_avatar})
 
 
 func _send_ping(now_ms: int) -> void:
@@ -386,6 +432,7 @@ func _host_handle(from_peer: int, t: int, d: Dictionary) -> void:
 	match t:
 		Msg.HELLO:
 			var nm := String(d.get("name", "玩家"))
+			var av: PackedByteArray = d.get("avatar", PackedByteArray())
 			if String(d.get("ver", TUN.VERSION)) != TUN.VERSION:
 				_tp.send_to(from_peer, {"t": Msg.REJECT, "reason": "游戏版本不一致"})
 				return
@@ -394,6 +441,7 @@ func _host_handle(from_peer: int, t: int, d: Dictionary) -> void:
 				return
 			if needs_approval:
 				_pending[from_peer] = nm
+				_pending_avatar[from_peer] = av
 				join_requested.emit(from_peer, nm)
 				log_line.emit("%s 请求加入，等待房主确认" % nm)
 			else:
@@ -418,6 +466,9 @@ func _client_handle(t: int, d: Dictionary) -> void:
 			if seat < 0:
 				return
 			net.client_setup(seat, display_name)
+			if not my_avatar.is_empty():
+				_avatars[seat] = my_avatar
+				avatar_updated.emit(seat, bytes_to_texture(my_avatar))
 			state = State.PLAYING
 			log_line.emit("已加入房间（座位 %d）" % seat)
 			state_changed.emit()
@@ -429,6 +480,13 @@ func _client_handle(t: int, d: Dictionary) -> void:
 		Msg.SNAP:
 			net.client_apply_snapshot(d.get("d", {}))
 			state_changed.emit()
+		Msg.AVATAR:
+			var seat := int(d.get("seat", -1))
+			var data: PackedByteArray = d.get("data", PackedByteArray())
+			if seat < 0 or data.is_empty():
+				return
+			_avatars[seat] = data
+			avatar_updated.emit(seat, bytes_to_texture(data))
 
 
 # ══════════════════════════════════════════════════════════ 收尾
@@ -482,3 +540,32 @@ func my_seat() -> int:
 	if net == null:
 		return -1
 	return int(net.my_seat)
+
+
+## 某座位的头像字节（公开信息）。空 = 该座位暂无头像。
+func avatar_bytes(seat: int) -> PackedByteArray:
+	return _avatars.get(seat, PackedByteArray())
+
+
+## 当前已知的所有头像（座位 → 字节）。牌桌开局接管时用来一次性补齐。
+func known_avatars() -> Dictionary:
+	return _avatars.duplicate()
+
+
+## 把 PNG/WebP 字节解成贴图。解码失败返回 `null`（上游照常画几何占位剪影）。
+func decode_avatar(b: PackedByteArray) -> Texture2D:
+	return bytes_to_texture(b)
+
+
+## 字节 → 贴图（房主/客户端/UI 共用同一份解码逻辑）。
+## ⚠️ 只认 PNG 与 WebP：进房前 UI 已统一压成 PNG，这里不兜底其它格式。
+static func bytes_to_texture(b: PackedByteArray) -> Texture2D:
+	if b.is_empty():
+		return null
+	var img := Image.new()
+	var err := img.load_png_from_buffer(b)
+	if err != OK:
+		err = img.load_webp_from_buffer(b)
+	if err != OK:
+		return null
+	return ImageTexture.create_from_image(img)

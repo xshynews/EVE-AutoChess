@@ -32,20 +32,31 @@ const DEFAULT_VOL := 0.6
 ## [事件名, [[EVE音库, EVE键]...], [候选分组名...]]
 ## ★ EVE 候选语义出处见 assets/audio/README.md（interface 音库 bank 级可靠）；
 ## ★ UNO 分组见 _uno_group()；Kenney（CC0 可商用）分组见 _kenney_group()；
+##   自备语音（F:\evezzq\音频 → ddz_* 前缀）分组见 _zj_group()；
 ##   拍板后本表即「音效映射常量区」雏形，原样搬走。
 const EVENTS: Array = [
-	["发牌", [["sfx", "fire_light_01"], ["sfx", "fire_light_02"], ["sfx", "fire_light_03"]], ["发牌", "发牌K"]],
+	["发牌", [["sfx", "fire_light_01"], ["sfx", "fire_light_02"], ["sfx", "fire_light_03"]], ["发牌", "发牌K", "发牌Z"]],
 	["选牌", [["amb", "tick_01"], ["amb", "tick_02"]], ["选牌", "选牌K"]],
 	["取消选牌", [["amb", "tick_03"], ["amb", "tick_02"]], ["选牌", "取消K"]],
 	["叫分 1", [["amb", "count_1_01"]], ["叫分", "叫分K"]],
 	["叫分 2", [["amb", "count_2_01"]], ["叫分", "叫分K"]],
 	["叫分 3", [["amb", "count_3_01"]], ["叫分", "叫分K"]],
-	["抢地主", [["amb", "count_2_02"], ["amb", "phase_prep_01"]], ["抢", "叫分", "抢K"]],
-	["不抢", [["amb", "tick_urgent_01"], ["amb", "count_2_02"]], ["过牌", "叫分", "取消K"]],
+	["叫地主", [["amb", "phase_prep_01"]], ["叫地主Z"]],
+	["不叫", [["amb", "tick_03"]], ["不叫Z"]],
+	["抢地主", [["amb", "count_2_02"], ["amb", "phase_prep_01"]], ["抢", "叫分", "抢K", "抢地主Z"]],
+	["不抢", [["amb", "tick_urgent_01"], ["amb", "count_2_02"]], ["过牌", "叫分", "取消K", "不抢Z"]],
+	["不要", [["amb", "tick_02"], ["amb", "tick_03"]], ["过牌", "过牌K", "不要Z"]],
 	["出牌", [["sfx", "hit_light_01"], ["sfx", "hit_light_02"], ["sfx", "hit_light_03"], ["sfx", "fire_light_04"]], ["出牌", "出牌K"]],
-	["炸弹 / 火箭", [["sfx", "boom_05"], ["sfx", "boom_06"], ["sfx", "boom_07"]], ["炸弹", "炸弹K"]],
-	["过牌", [["amb", "tick_02"], ["amb", "tick_03"]], ["过牌", "过牌K"]],
-	["非法操作 / 拒绝", [["amb", "tick_urgent_01"], ["amb", "tick_urgent_02"]], ["拒绝", "拒绝K"]],
+	["对", [["sfx", "hit_light_01"]], ["对Z"]],
+	["顺子", [["sfx", "hit_light_02"]], ["顺子Z"]],
+	["连对", [["sfx", "hit_light_03"]], ["连对Z"]],
+	["三带一", [["sfx", "fire_light_01"]], ["三带一Z"]],
+	["三带二", [["sfx", "fire_light_02"]], ["三带二Z"]],
+	["四带一", [["sfx", "fire_light_03"]], ["四带一Z"]],
+	["四带二", [["sfx", "fire_light_04"]], ["四带二Z"]],
+	["炸弹", [["sfx", "boom_05"], ["sfx", "boom_06"]], ["炸弹", "炸弹K", "炸弹Z"]],
+	["王炸", [["sfx", "boom_07"]], ["王炸Z"]],
+	["非法操作 / 拒绝", [["amb", "tick_urgent_01"], ["amb", "tick_urgent_02"]], ["拒绝", "拒绝K", "拒绝Z"]],
 	["胜利", [["amb", "phase_end_01"], ["amb", "phase_resolve_01"], ["amb", "resolve_01"]], ["胜负", "胜负K"]],
 	["失败", [["amb", "resolve_02"], ["amb", "resolve_01"], ["amb", "phase_end_01"]], ["胜负", "胜负K"]],
 ]
@@ -111,7 +122,7 @@ func _build_ui() -> void:
 	_header_cell(head, "事件", 150.0)
 	_header_cell(head, "确定（拖入拍板）", 230.0)
 	_header_cell(head, "EVE 池（interface 音库 + sfx 短音）", -1.0)
-	_header_cell(head, "UNO / Kenney 候选池（assets/audio_candidates/）", -1.0)
+	_header_cell(head, "UNO / Kenney / 自备(ddz) 候选池（assets/audio_candidates/）", -1.0)
 
 	# ── 矩阵主体（滚动）──
 	var scroll := ScrollContainer.new()
@@ -246,6 +257,10 @@ func _uno_group(fn: String) -> String:
 	var k := _kenney_group(fn)
 	if k != "":
 		return k
+	# 自备语音（ddz_ 前缀，F:\evezzq\音频）走 _zj_group()
+	var z := _zj_group(fn)
+	if z != "":
+		return z
 	if fn.begins_with("uno_FL_Card_Play_"):
 		return "出牌"
 	if fn.begins_with("uno_Jingle_Classic_"):
@@ -318,8 +333,20 @@ func _kenney_group(fn: String) -> String:
 	return ""
 
 
+## 自备语音候选分组（F:\evezzq\音频 → 前缀 ddz_）：按文件名关键字归到对应事件行。
+## 分组名 = 事件名 +「Z」；⚠ 顺序敏感：「连对」必须先于「对」判（「对」是其子串）。
+func _zj_group(fn: String) -> String:
+	if not fn.begins_with("ddz_"):
+		return ""
+	for kw: String in ["叫地主", "抢地主", "不叫", "不抢", "不要", "顺子", "连对", "对",
+			"三带一", "三带二", "四带一", "四带二", "王炸", "炸弹", "错误提示", "发牌"]:
+		if fn.contains(kw):
+			return kw + "Z"
+	return ""
+
+
 func _short_name(fn: String) -> String:
-	return fn.trim_prefix("kenney_casino_").trim_prefix("kenney_scifi_") \
+	return fn.trim_prefix("ddz_").trim_prefix("kenney_casino_").trim_prefix("kenney_scifi_") \
 			.trim_prefix("kenney_ui_").trim_prefix("uno_") \
 			.trim_suffix(".wav").trim_suffix(".ogg")
 
@@ -353,6 +380,12 @@ func _load_picks() -> void:
 	var data: Variant = JSON.parse_string(f.get_as_text())
 	if data is Dictionary:
 		_picks = data
+	# 旧表键名迁移：过牌→不要、炸弹 / 火箭→炸弹（保留之前的拍板不丢）
+	for old_key: String in ["过牌", "炸弹 / 火箭"]:
+		var new_key := "不要" if old_key == "过牌" else "炸弹"
+		if _picks.has(old_key) and not _picks.has(new_key):
+			_picks[new_key] = _picks[old_key]
+		_picks.erase(old_key)
 
 
 func _on_export() -> void:
@@ -405,8 +438,8 @@ func _load_stream(path: String) -> AudioStream:
 func _scan_candidates() -> Array[String]:
 	var out: Array[String] = []
 	for fn: String in DirAccess.get_files_at(CAND_DIR):
-		if fn.ends_with(".import") or fn.ends_with(".uid") or fn.ends_with(".md") \
-				or fn.ends_with(".txt"):
+		# 只收音频（防误放工程文件/文档混进候选池）
+		if not (fn.ends_with(".wav") or fn.ends_with(".ogg") or fn.ends_with(".mp3")):
 			continue
 		out.append(fn)
 	out.sort()

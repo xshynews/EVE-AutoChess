@@ -175,6 +175,18 @@ func _run() -> void:
 	_ok(table._online.phase == table._online.Phase.CHOOSE,
 			"★ 收起后回到 CHOOSE（可重新建房/加入）")
 
+	# ⑪ 头像接线：`_on_match_started` 必须①拉房间已有头像 ②接上 `avatar_updated`
+	var av_img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+	av_img.fill(Color(0.9, 0.2, 0.2))
+	var av_bytes := av_img.save_png_to_buffer()
+	room._avatars[1] = av_bytes
+	table._online.room = room
+	table._on_match_started()
+	_ok(table._avatars[1] != null, "★ 开局接管时从房间拉到了已有头像（座位1）")
+	var av_tex := ROOM.bytes_to_texture(av_bytes)
+	room.avatar_updated.emit(2, av_tex)
+	_ok(table._avatars[2] == av_tex, "★ 远程 avatar_updated 到达 ⇒ 牌桌 set_avatar 生效（座位2）")
+
 	# ⑧ 回到单机：一切复原（离线路径不受影响）
 	table._leave_online()
 	_ok(table._my_seat() == table.HUMAN_SEAT, "退出联机 ⇒ 座位回落到单机（HUMAN_SEAT）")

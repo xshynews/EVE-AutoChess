@@ -27,11 +27,29 @@ const N := preload("res://scripts/net/ddz_net.gd")
 const STORE := preload("res://scripts/core/eve_settings_store.gd")
 const T := preload("res://scripts/core/eve_text.gd")
 const BTN := preload("res://scripts/ui/eve_button_theme.gd")
+## ⚠️ 平台判据（`is_mobile()`）走它 —— 工程唯一真源
+const UI_SCALE := preload("res://scripts/ui/eve_ui_scale.gd")
 
 enum Phase { CHOOSE, PERMISSION, HOSTING, JOINING, CONNECTING, PLAYING, FAILED }
 
 const PANEL_W := 400.0
 const PANEL_H := 360.0
+## 面板放大倍数 —— **按平台**（⛔ 两个数只差倍数，**两端都居中**）。
+##
+## ★ 2026-10-18 用户：「安卓端…联机页面太小了…放大两倍看看」→ 认可 2 倍之后又补：
+##   「这个只适用于安卓端，PC 端改成居中微微放大 1.2 倍就行」。
+## ⚠️ 平台判据走 `EveUiScale.is_mobile()`（工程**唯一真源**，
+##    定义见 `scripts/ui/eve_ui_scale.gd`），⛔ 别在这里另写 `OS.has_feature("mobile")` ——
+##    那样日后判据一改（例如加"平板算桌面"）这里会悄悄不一致。
+## ⚠️ 用节点 `scale` 而不是把 `PANEL_W/H` 乘倍数：后者只放大**外壳**，里面的字号 /
+##    行高 / 按钮都还是原尺寸（800×720 的窗里塞 13px 字 = 一片空荡）。
+const SCALE_MOBILE := 2.0
+const SCALE_DESKTOP := 1.2
+
+
+## 本机该用哪个倍数。
+func panel_scale() -> float:
+	return SCALE_MOBILE if UI_SCALE.is_mobile() else SCALE_DESKTOP
 ## 昵称默认值（存档里没有时用）
 const DEFAULT_NAME := "舰长"
 
@@ -42,6 +60,9 @@ var phase := Phase.CHOOSE
 var _want_host := false
 
 var _name_edit: LineEdit = null
+var _avatar_rect: TextureRect = null
+var _avatar_bytes: PackedByteArray = PackedByteArray()
+var _avatar_dialog: FileDialog = null
 var _choose_row: HBoxContainer = null
 var _perm_lbl: Label = null
 var _perm_row: HBoxContainer = null
@@ -73,6 +94,7 @@ func _ready() -> void:
 	# ⚠️⚠️ `EveWindow` **不会**自动调 `_build_contents()`（设置窗是自己调的）——
 	#   漏了这一步的表现是「窗框和标题都在、内容一片空」，而且**不报错**（实测踩过）。
 	_build_contents()
+	_load_saved_avatar()
 	_refresh()
 	visible = false
 	# ⚠️ `_build()` 跑完宽度还没定，量高度会拿到垃圾值 ⇒ 等两帧（与设置窗同一套路）
@@ -96,6 +118,28 @@ func _build_contents() -> void:
 	_name_edit.text_submitted.connect(func(_s: String): _save_name())
 	name_row.add_child(_name_edit)
 	content.add_child(name_row)
+
+	# ── 头像（进房时同步给好友；空 = 用牌桌几何占位）──
+	var av_row := HBoxContainer.new()
+	av_row.add_theme_constant_override("separation", 6)
+	av_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	av_row.add_child(_lab(T.t("DDZ_ON_AVATAR", "头像"), C_TEXT_DIM, 13, 64))
+	_avatar_rect = TextureRect.new()
+	_avatar_rect.custom_minimum_size = Vector2(56.0, 56.0)
+	_avatar_rect.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+	_avatar_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	av_row.add_child(_avatar_rect)
+	av_row.add_child(_btn(T.t("DDZ_ON_PICK", "选择图片…"), func(): _on_pick_avatar(), true))
+	av_row.add_child(_btn(T.t("DDZ_ON_CLEAR", "清除"), func(): _clear_avatar()))
+	content.add_child(av_row)
+
+	# 文件选择器（桌面/安卓统一走它；安卓走系统选择器，需真机验证）
+	_avatar_dialog = FileDialog.new()
+	_avatar_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	_avatar_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_avatar_dialog.add_filter("*.png,*.jpg,*.jpeg,*.webp", T.t("DDZ_ON_IMG_FILTER", "图片(*.png,*.jpg,*.webp)"))
+	_avatar_dialog.file_selected.connect(_on_avatar_file_selected)
+	add_child(_avatar_dialog)
 
 	# ── ① 选择 ──
 	_choose_row = _mk_row()
@@ -203,7 +247,7 @@ func _begin_host(skip_tunnel: bool) -> void:
 	_ensure_room()
 	room.skip_tunnel = skip_tunnel
 	_set_status(T.t("DDZ_ON_STARTING", "正在启动联机内核…"))
-	if not room.create_room(_player_name(), Time.get_ticks_msec(), 0):
+	if not room.create_room(_player_name(), Time.get_ticks_msec(), 0, _avatar_bytes):
 		return                       # 失败时 room 会发 failed ⇒ 已切到 FAILED
 	_set_phase(Phase.HOSTING)
 
@@ -217,7 +261,7 @@ func _begin_join(skip_tunnel: bool) -> void:
 	_ensure_room()
 	room.skip_tunnel = skip_tunnel
 	_set_status(T.t("DDZ_ON_STARTING", "正在启动联机内核…"))
-	if not room.join_room(code, _player_name(), Time.get_ticks_msec()):
+	if not room.join_room(code, _player_name(), Time.get_ticks_msec(), _avatar_bytes):
 		return
 	_set_phase(Phase.CONNECTING)
 
@@ -427,10 +471,65 @@ func _fit_height() -> void:
 	set_window_height(HEADER_H + need.y + 6.0 + 8.0 + 2.0)
 
 
-## 摆到桌面中上方（牌桌会调它，与设置窗同一套路：子节点不受 `draw_set_transform` 影响 ⇒ 自己补偏移）。
-func place(origin: Vector2) -> void:
-	set_window_rect(origin.x + (BASE_W - PANEL_W) * 0.5, origin.y + 120.0,
-			PANEL_W, PANEL_H)
+## 摆到**屏幕正中**（牌桌会调它，与设置窗同一套路：子节点不受 `draw_set_transform`
+## 影响 ⇒ 自己补偏移与缩放）。
+##
+## ★ 2026-10-18 用户：「安卓端…斗地主那个联机的页面太小了在手机上，挪到中间来，放大，
+##   先放大两倍看看」⇒ 两处一起改：
+##     ① 从「水平居中 + 贴顶 120px」改成**正居中**；
+##     ② `PANEL_SCALE` 放大 —— ⚠️ 用节点 `scale` 而不是把 `PANEL_W/H` 直接乘 2：
+##        后者只放大**外壳**，里面的字号 / 行高 / 按钮还是原尺寸
+##        （800×720 的窗里塞 13px 字 = 一片空荡）；Control 的 `scale` 连
+##        **内容一起**放大，输入命中判定也跟着缩放。
+## ⚠️ 居中要按**可视区**算（`view_zoom`）：手机上牌桌整体有 `zoom`，可视区是
+##    `1920×1080 × zoom`，只按 1920 算会让窗偏左上（`zoom > 1` 时偏差
+##    `1920×(zoom-1)/2` —— 屏幕越宽偏得越多）。⛔ 但**缩放系数不乘 zoom**：
+##    牌桌自己那套 zoom 是为了放大"桌面/顶栏"，窗另有 `panel_scale()`（按平台，
+##    见 `SCALE_MOBILE / SCALE_DESKTOP`），两者不叠。
+func place(origin: Vector2, view_zoom: float = 1.0) -> void:
+	_place_origin = origin
+	_place_zoom = view_zoom
+	var sc := panel_scale()
+	scale = Vector2(sc, sc)
+	# ★★ 清掉"玩家拖过 / 存档记住"的旧矩形 —— 2026-10-18 实测踩到的坑：
+	#   `EveWindow._effective_rect()` **优先**返回 `_user_rect`（玩家矩形/存档矩形），
+	#   于是算好的居中位置被它**无声顶掉**（老存档里存着上一版「水平居中 + 贴顶 120px」）。
+	#   ⇒ 本面板现在**始终**要居中，旧矩形一律作废（`reset_layout()` 还会清空存档）。
+	#   ⚠️ 代价：这次进牌桌之前的拖动不再恢复 —— 定位改成"固定居中"之后，
+	#      恢复一个旧位置本来就是反的。
+	reset_layout()
+	# 触发一次 `_apply_rect()`，由它完成居中（见下面的重写）
+	set_window_rect(origin.x, origin.y, PANEL_W, maxf(1.0, size.y))
+
+
+## ══════════════════════════════════════════════════════════════
+##  **居中：挂在唯一的尺寸漏斗上**
+## ══════════════════════════════════════════════════════════════
+## ★★ 为什么重写 `_apply_rect()` 而不是在 `place()` / `set_window_height()` 各调一次：
+##   基类里**任何**尺寸/位置变化（阶段换内容 `_fit_height()`、折叠、HUD 重铺）最后都
+##    汇到 `_apply_rect()`（见它自己的注释）。挂在两个点上必漏 —— 2026-10-18 三次出图
+##    实测就是这个结果：三张图**顶边一样高、只有高度在往下长**，越换阶段越偏下。
+##
+## ⚠️ 收起态**不居中**：那时窗变成贴边的一条标签，位置归 `dock_rect` 管。
+## ⚠️ 直接写 `position`（⛔ 不再调 `set_window_rect()`）：那会再触发一次 `_apply_rect()`，
+##    自我递归。`position` 就是节点的左上角，而 `scale` 的轴心默认在左上 ⇒ 直接把左上
+##    角摆到「中心 − 可视尺寸的一半」即可。
+func _apply_rect(r: Rect2) -> void:
+	super(r)
+	if _collapsed:
+		return
+	var view := Vector2(BASE_W, BASE_H) * _place_zoom
+	var vis := Vector2(size.x, size.y) * panel_scale()
+	position = Vector2(_place_origin.x + (view.x - vis.x) * 0.5,
+			_place_origin.y + (view.y - vis.y) * 0.5)
+
+
+## 面板落点（`place()` 记下来，供每次尺寸变化后重新居中用）。
+var _place_origin := Vector2.ZERO
+var _place_zoom := 1.0
+
+## ⚠️ 2026-10-18 补：原来只有 `BASE_W`（当初只做水平居中），现在要正居中 ⇒ 高度也得有。
+const BASE_H := 1080.0
 
 
 # ══════════════════════════════════════════════════════════ 小工具
@@ -447,6 +546,70 @@ func _player_name() -> String:
 
 func _save_name() -> void:
 	STORE.save_one("ddz_name", _player_name())
+
+
+## 头像字节落盘位置（独立二进制文件，不污染 settings.cfg）。
+const AVATAR_PATH := "user://ddz_avatar.png"
+
+
+## 进面板时把上次选的头像缩略图读出来。
+func _load_saved_avatar() -> void:
+	if not FileAccess.file_exists(AVATAR_PATH):
+		return
+	var f := FileAccess.open(AVATAR_PATH, FileAccess.READ)
+	if f == null:
+		return
+	_avatar_bytes = f.get_buffer(f.get_length())
+	f.close()
+	if not _avatar_bytes.is_empty() and _avatar_rect != null:
+		_avatar_rect.texture = ROOM.bytes_to_texture(_avatar_bytes)
+
+
+## 弹出系统文件选择器。
+func _on_pick_avatar() -> void:
+	if _avatar_dialog != null:
+		_avatar_dialog.popup_centered_ratio(0.7)
+
+
+## 选中图片 ⇒ 压到最大边 96px、转 PNG 存盘，并把缩略图刷出来。
+func _on_avatar_file_selected(path: String) -> void:
+	var img := Image.new()
+	if img.load(path) != OK:
+		_set_status(T.t("DDZ_ON_AVATAR_FAIL", "读不到这张图片（可能格式不支持）"))
+		return
+	_avatar_bytes = _encode_avatar(img)
+	if _avatar_bytes.is_empty():
+		return
+	var f := FileAccess.open(AVATAR_PATH, FileAccess.WRITE)
+	if f != null:
+		f.store_buffer(_avatar_bytes)
+		f.close()
+	_avatar_rect.texture = ROOM.bytes_to_texture(_avatar_bytes)
+	_set_status(T.t("DDZ_ON_AVATAR_OK", "头像已更新：进房时同步给好友"))
+
+
+## 清掉本地头像（进房时就不带了）。
+func _clear_avatar() -> void:
+	_avatar_bytes = PackedByteArray()
+	if FileAccess.file_exists(AVATAR_PATH):
+		DirAccess.remove_absolute(AVATAR_PATH)
+	_avatar_rect.texture = null
+	_set_status(T.t("DDZ_ON_AVATAR_CLEARED", "已清除本地头像"))
+
+
+## 把任意图片压成「最大边 ≤ 96px」的 PNG 字节（单张远小于 64KB 的线网上限）。
+func _encode_avatar(img: Image) -> PackedByteArray:
+	var maxd := 96
+	var w := img.get_width()
+	var h := img.get_height()
+	if w <= 0 or h <= 0:
+		return PackedByteArray()
+	var sc := mini(float(maxd) / float(w), float(maxd) / float(h))
+	sc = mini(sc, 1.0)
+	var nw := maxi(1, int(round(w * sc)))
+	var nh := maxi(1, int(round(h * sc)))
+	img.resize(nw, nh, Image.INTERPOLATE_LANCZOS)
+	return img.save_png_to_buffer()
 
 
 func _lab(text: String, col: Color, size: int, min_w: float) -> Label:

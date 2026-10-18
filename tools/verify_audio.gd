@@ -42,11 +42,14 @@ func run_all() -> void:
 	_pool_test()
 	_ambience_bus_test()
 	_music_stop_test()
+	_music_gain_test()
+	_variant_no_repeat_test()
 	_random_isolation_test()
 	_missing_source_count_test()
 	_hit_layer_test()
 	_salvo_burst_test()
 	_sfx_switch_test()
+	_cue_test()
 	_volume_test()
 	_default_level_test()
 	print("")
@@ -99,6 +102,64 @@ func _sfx_switch_test() -> void:
 	_ok("总开关打开时没有静默缺源（missing=%d）" % on_miss, on_miss == 0)
 	_ok("总开关关闭 ⇒ 开火/爆炸/阶段音一声不响（%d 声）" % off_n, off_n == 0)
 	_ok("★ 总开关关闭时**不误报**音源缺失（missing=%d）" % off_miss, off_miss == 0)
+	a.queue_free()
+
+
+## 具名音效（牌桌 / UI，2026-10-17 入库）—— `play_cue()`
+##
+## ★ 为什么专门测它：`play_cue` 的**唯一失败模式**是「键名写错」——
+##   写错了不报错、不崩溃，只是那个事件**永久哑掉**；牌型音尤其隐蔽
+##   （只有真出那种牌时才听得出来）。所以除了验机制，还要把牌桌真正用到的
+##   键名**逐个对着磁盘上的音库点名**（前 3 条）。
+func _cue_test() -> void:
+	var a := _make_audio()
+	# ① 牌桌实际会调的键名，必须在真音库里真的存在（防拼错 / 防漏改文件名）
+	var wanted := ["ddz_deal", "ddz_pick", "ddz_play", "ddz_pass", "ddz_deny",
+			"ddz_bid_call", "ddz_bid_nocall", "ddz_bid_grab", "ddz_bid_nograb",
+			"ddz_bid_rob", "ddz_click", "ddz_combo_straight", "ddz_combo_pairs",
+			"ddz_combo_trio", "ddz_combo_trio_pair", "ddz_combo_quad",
+			"ddz_combo_quad_pair", "ddz_rocket", "ddz_win"]
+	# ★ 2026-10-17 第二批「报牌音」（源 `F:\evezzq\音频\牌`，28 条）：
+	#   单张 3~17（含 小王 16 / 大王 17）+ 对子 3~15（王各一张 ⇒ **没有对王**）。
+	#   ⚠️ 区间必须与 `ddz_table._combo_cue()` 的 hi 参数一致 —— 两边一改一漏，
+	#      这条断言就会去点一个牌桌根本不会用的键名（假绿）。
+	#   ⛔ 这里也是**唯一**能查出「键名拼错」的地方：拼错时 `play_cue` 只是安静地
+	#      记一次 missing，那个点数就**永久哑音**（要真出到那张牌才听得出）。
+	for r in range(3, 18):
+		wanted.append("ddz_card_%d" % r)
+	for r in range(3, 16):
+		wanted.append("ddz_pair_%d" % r)
+	var miss: Array[String] = []
+	for k: String in wanted:
+		if not a._sfx_bank.has(k) and not a._amb_bank.has(k):
+			miss.append(k)
+	_ok("牌桌 %d 个键名全部有音源（缺：%s）" % [wanted.size(),
+			("无" if miss.is_empty() else str(miss))],
+			miss.is_empty())
+	# ② 「炸弹 / 失败」是**复用现成音源**（不在 ddz_ 前缀里）⇒ 单列两条
+	_ok("炸弹键 boom 在 sfx 库", a._sfx_bank.has("boom"))
+	_ok("失败键 resolve 在 ambience 库", a._amb_bank.has("resolve"))
+	# ③ 真键 ⇒ 真的响（cue 计数涨，且不误报缺源）
+	a.reset_stats()
+	a.play_cue("ddz_play")
+	_ok("play_cue 真的响（cue +1）", int(a.stats().get("cue", 0)) == 1)
+	_ok("真键不误报缺源（missing=0）", int(a.stats().get("missing", 0)) == 0)
+	# ④ **跨库回退**：键只在 ambience 里也要能响（「失败」用的 `resolve` 正是这种）
+	a.reset_stats()
+	a.play_cue("resolve")
+	_ok("sfx 库没有、ambience 有 ⇒ 也能响（cue +1）", int(a.stats().get("cue", 0)) == 1)
+	_ok("跨库回退不误报缺源", int(a.stats().get("missing", 0)) == 0)
+	# ⑤ 拼错的键 ⇒ 记一次 missing（**这是哑音唯一能被发现的线索**）
+	a.reset_stats()
+	a.play_cue("ddz_typo_nonexistent")
+	_ok("拼错的键记一次缺源（missing=1）", int(a.stats().get("missing", 0)) == 1)
+	_ok("拼错的键不涨 cue", int(a.stats().get("cue", 0)) == 0)
+	# ⑥ 总开关关掉 ⇒ 不响，且**不许**刷 missing（与战斗音同一条守卫）
+	a.sfx_enabled = false
+	a.reset_stats()
+	a.play_cue("ddz_play")
+	_ok("总开关关闭 ⇒ cue 不响", int(a.stats().get("cue", 0)) == 0)
+	_ok("总开关关闭 ⇒ 不误报缺源", int(a.stats().get("missing", 0)) == 0)
 	a.queue_free()
 
 
@@ -181,6 +242,115 @@ func _music_stop_test() -> void:
 		a._process(0.1)
 	_ok("no music player playing after stop",
 			not a._music_a.playing and not a._music_b.playing)
+	a.queue_free()
+
+
+## BGM 额外增益（鸭音）—— `set_music_gain()`（★ 2026-10-17 用户：空桌响、动手后变轻）
+##
+## ★ 为什么专门测它：落点是一个挂在**全局 AudioServer** 上的 `AudioEffectAmplify`，
+##   不是本实例的子节点。它有两个"不报错"的失败模式：
+##     ① `AudioServer.get_bus_effect()` 拿到的若是**副本**，写进去的增益只改了副本，
+##        真总线上什么都没变 —— 游戏里表现为「鸭音没生效」，没有任何报错；
+##     ② 效果器会被**上一个场景 / 上一个实例**留下来 —— 不归零就会把牌桌的
+##        「空桌响态」带进主菜单/战场（音乐忽大忽小，也没人知道为什么）。
+##   ⇒ 这里既验"写进去的量服务器真收到了"，也验两道归零 + 幂等。
+func _music_gain_test() -> void:
+	var a := _make_audio()
+	_ok("★ Music 总线上挂到了增益效果器（鸭音的落点）", a._music_gain_fx != null)
+	# ① 瞬时设置 —— 读回刻意走 `AudioServer`（**不是**读实例字段），这样才能发现"副本"坑
+	a.set_music_gain(5.0, 0.0)
+	_ok("★ 瞬时 +5 dB：从服务器读回 %s dB" % str(_read_bus_gain()),
+			is_equal_approx(_read_bus_gain(), 5.0))
+	# ② 渐变：半程应落在中间（既不是 5 也不是 0），走满精确到位
+	a.set_music_gain(0.0, EveAudio.MUSIC_GAIN_FADE)
+	a._process(EveAudio.MUSIC_GAIN_FADE * 0.5)
+	var mid := _read_bus_gain()
+	_ok("★ 淡到一半落在中间（%s dB，不是 5 也不是 0）" % str(mid), mid < 4.5 and mid > 0.5)
+	a._process(EveAudio.MUSIC_GAIN_FADE)
+	_ok("淡完精确落到位（%s dB）" % str(_read_bus_gain()), is_equal_approx(_read_bus_gain(), 0.0))
+	# ③ 新建实例必须归零 —— 防"上一个场景的响态"泄漏
+	a.set_music_gain(5.0, 0.0)
+	var b := _make_audio()
+	_ok("★★ 新建音频层把增益归零（服务器读回 %s dB）—— 防跨场景泄漏" % str(_read_bus_gain()),
+			is_equal_approx(_read_bus_gain(), 0.0))
+	# ④ 换曲必须归零 —— 别让上一首的状态跟着下一首走
+	b._mus_bank = {"x": [_fake_stream()], "y": [_fake_stream()]}
+	b.play_music("x")
+	b.set_music_gain(5.0, 0.0)
+	b.play_music("y")
+	_ok("★★ 换曲把增益归零（服务器读回 %s dB）" % str(_read_bus_gain()),
+			is_equal_approx(_read_bus_gain(), 0.0))
+	# ⑤ 幂等：再 new 实例不许把效果器叠成两层（+5 +5 = +10，且**不报错**）
+	var n_before := _count_gain_effects()
+	var c := _make_audio()
+	_ok("★ 效果器不重复叠加（%d → %d 个）" % [n_before, _count_gain_effects()],
+			_count_gain_effects() == n_before)
+	a.queue_free()
+	b.queue_free()
+	c.queue_free()
+
+
+## 从 **AudioServer** 读回 Music 总线上的增益（⚠️ 刻意不走实例字段）。
+func _read_bus_gain() -> float:
+	var idx := AudioServer.get_bus_index(EveAudio.BUS_MUSIC)
+	if idx < 0:
+		return 999.0
+	for i in AudioServer.get_bus_effect_count(idx):
+		var e := AudioServer.get_bus_effect(idx, i)
+		if e is AudioEffectAmplify:
+			return (e as AudioEffectAmplify).volume_db
+	return 999.0
+
+
+func _count_gain_effects() -> int:
+	var idx := AudioServer.get_bus_index(EveAudio.BUS_MUSIC)
+	if idx < 0:
+		return -1
+	var n := 0
+	for i in AudioServer.get_bus_effect_count(idx):
+		if AudioServer.get_bus_effect(idx, i) is AudioEffectAmplify:
+			n += 1
+	return n
+
+
+## 同一键多变体 ⇒ **不与上一次重复**（用户 2026-10-18：「过和不要需要交替出现，
+## 用来增加趣味性」；「避免出现连续两个"抢地主"听着很乏味」）
+##
+## ★ 为什么值得单测：这条规则的失败形态是"**偶尔**连着响同一个"——
+##   既不会报错、也不会崩，只有长时间玩才隐约觉得单调。⇒ 只能靠断言钉住。
+##   「不要 / 过」正是靠这条自动交替：两个文件放在同一个逻辑名 `ddz_pass` 下，牌桌零代码。
+func _variant_no_repeat_test() -> void:
+	var a := _make_audio()
+	# ⚠️ 固定种子：③ 那条「5 个变体都参与轮换」是**概率性**的（纯随机下偶尔会漏掉一个
+	#    而假红）⇒ 钉住种子让这条断言变成确定性事实（同 `_random_isolation_test` 的做法）。
+	a._rng.seed = 20261018
+	# ① 两变体 ⇒ **必然交替**（n=2 时"排除上一次"只剩一个可挑）
+	a._last_variant.clear()
+	var seq: Array = []
+	for i in 12:
+		seq.append(a._pick_variant("alt", 2))
+	var ok2 := true
+	for i in range(1, seq.size()):
+		if seq[i] == seq[i - 1]:
+			ok2 = false
+	_ok("★★ 两变体必然交替（%s）" % str(seq), ok2)
+	_ok("两变体都真的用上了（%s）" % str(seq), seq.has(0) and seq.has(1))
+	# ② 单变体：只能一直用它（无解，但别崩、别返回-1）
+	_ok("只有一个变体时稳定返回 0", a._pick_variant("solo", 1) == 0)
+	# ③ 多变体（5 个）也不许与上一次重复
+	a._last_variant.clear()
+	var seq5: Array = []
+	for i in 24:
+		seq5.append(a._pick_variant("five", 5))
+	var ok5 := true
+	var used := {}
+	for i in range(1, seq5.size()):
+		if seq5[i] == seq5[i - 1]:
+			ok5 = false
+	for v in seq5:
+		used[v] = true
+	_ok("★★ 5 个变体也不与上一次重复（%s）" % str(seq5), ok5)
+	_ok("5 个变体都参与轮换（用到 %d 个）" % used.size(), used.size() == 5)
 	a.queue_free()
 
 

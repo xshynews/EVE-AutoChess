@@ -9,7 +9,20 @@ extends Node
 ## 只依赖 `EveText`，不要在这里引用其他游戏脚本，以免提前触发它们的静态初始化。
 
 const T := preload("res://scripts/core/eve_text.gd")
+## 安卓线 · 设备指标采集（只读，不改布局）。桌面端不会写。
+const DI := preload("res://scripts/mobile/eve_device_info.gd")
 
 
 func _init() -> void:
 	T.apply_saved()
+
+
+## ★ 2026-10-18：真机指标回传。
+##   等两帧再采集 —— `_init()` 时根窗口还没完成尺寸/缩放初始化，那时读到的
+##   `viewport_logical` 是默认值，不是真机实际值（会误导后续布局）。
+func _ready() -> void:
+	if not OS.has_feature("mobile"):
+		return
+	await get_tree().process_frame
+	await get_tree().process_frame
+	DI.write_report(get_tree())

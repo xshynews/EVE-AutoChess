@@ -64,9 +64,8 @@ ROWS = [
     ("DDZ_HAND_DEAL_HINT", "Dealing — bid after the deal",
      "发牌中 —— 发完才轮到你叫地主"),
     # ── 选牌提示 ────────────────────────────────────────────────
-    ("DDZ_SEL_BID", "Decide after seeing your hand: Pass / 1 / 2 / 3 "
-     "(higher bid = higher base score)",
-     "看完这手牌再决定：不叫 / 1 分 / 2 分 / 3 分（分数越高底分越大）"),
+    ("DDZ_SEL_BID", "Decide after seeing your hand",
+     "看完这手牌再决定"),
     ("DDZ_SEL_WAIT", "Waiting for other bids…", "等别家叫分…"),
     ("DDZ_SEL_NONE", "No cards selected — click to select (right click clears, "
      "Hint helps)", "未选牌 —— 点手牌选择（右键清空，「提示」帮你想）"),
