@@ -14,6 +14,8 @@ project.godot.bak*
 # ⛔ 只忽略 build/ 子目录；README.md / .build_version / .gdignore 要入库（见 android/README.md）
 /android/build/
 _验收/
+# 真机抓图 / 出图产物（tools/android/device_shot.sh 默认写这里；不入库）
+outputs/
 _logs_backup_*/
 QQ图片*
 
@@ -44,3 +46,10 @@ tools/pipeline/paths.local.json
 # 授权文本与拍板流程见 docs/音效落地执行方案-1016.md。
 assets/audio_candidates/
 
+
+# DSH 工具链锁文件（harness 产物，非工程源码）
+.dsh-ops-update-*.lock
+**/.dsh-ops-update-*.lock
+
+# Office 临时文件
+~$*

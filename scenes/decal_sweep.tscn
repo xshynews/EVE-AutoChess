@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bsylysdt73aea"]
+
+[ext_resource type="Script" path="res://scripts/visual/decal_sweep.gd" id="1_sweep"]
+
+[node name="DecalSweep" type="Node3D"]
+script = ExtResource("1_sweep")

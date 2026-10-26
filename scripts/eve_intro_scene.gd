@@ -363,3 +363,60 @@ func overlay_ref() -> EveIntroOverlay:
 
 func beacon_ref() -> Node:
 	return _beacon
+
+
+# ══════════════════════════════════════════════════════════════════
+#  AI 操作面（2026-10-26）—— 开场剧情
+# ══════════════════════════════════════════════════════════════════
+# 首次开局会先播片头。AI 要能「直接跳过」而不是干等 40 秒。
+
+
+func ai_kind() -> String:
+	return "intro"
+
+
+func ai_snapshot() -> Dictionary:
+	return {
+		"scene": "intro",
+		"elapsed": elapsed(),
+		"done": _done,
+		"paused": _paused,
+		"line_index": _line_idx,
+		"line_count": _lines.size(),
+		"next_scene": String(next_scene),
+	}
+
+
+## 下一句 / 结束片头进下一场景。
+func ai_next() -> Dictionary:
+	if _done:
+		return {"ok": false, "reason": "片头已结束"}
+	_on_next()
+	return {"ok": true}
+
+
+## 跳过当前对白（不结束整段）。
+func ai_skip_talk() -> Dictionary:
+	if _done:
+		return {"ok": false, "reason": "片头已结束"}
+	_on_skip_talk()
+	return {"ok": true}
+
+
+## 直接整段结束 ⇒ 切到 next_scene（通常是战斗场景）。
+func ai_finish() -> Dictionary:
+	if _done:
+		return {"ok": false, "reason": "片头已结束"}
+	_finish("ai")
+	return {"ok": true}
+
+
+func ai_pause(on: bool) -> Dictionary:
+	_on_pause(on)
+	return {"ok": true}
+
+
+## 拖到第 t 秒（调试 / 复现某一帧用）。
+func ai_seek(t: float) -> Dictionary:
+	seek(t)
+	return {"ok": true}

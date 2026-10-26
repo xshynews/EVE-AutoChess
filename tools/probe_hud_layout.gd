@@ -50,6 +50,18 @@ func _process(_dt: float) -> void:
 	if _frame == 40:
 		_battle.call("begin_prep")
 		return
+	# 选船面板塞 8 艘（>6 张就必然超出 1000 窗宽）—— 量横向滚动是否接管
+	if _frame == 80:
+		var ev = _battle.get("hud").get("event_window")
+		if ev != null:
+			var opts := []
+			for i in 8:
+				opts.append({"name": "测试舰 %d" % (i + 1), "tag": "测试",
+						"icon": null, "desc": "占位"})
+			ev.call("show_ship_pick", opts)
+			ev.show()          # ⚠️ `show_options()` 只填内容，不负责显形（HUD 才负责）
+			ev.call("_apply_rect", ev.call("_effective_rect"))
+		return
 	if _frame < 90:
 		return
 	_report()
@@ -99,6 +111,43 @@ func _report() -> void:
 		_lines.append("★ 最大死白 = %.1f px（%s）—— 它（以及所有 >4px 的）都应被填满" % [worst, worst_name])
 	else:
 		_lines.append("★ 最大死白 = %.1f px —— 各窗内容都填满了窗口" % worst)
+
+	# ── 商店卡：定位小标 N/C/T（2026-10-25）─────────────────────────
+	_lines.append("")
+	_lines.append("── 商店卡定位小标（应在每张卡立绘的右上角）──")
+	var shop = hud.get("shop_window")
+	if shop == null:
+		_lines.append("  shop_window 不存在")
+	else:
+		var widgets: Array = shop.get("_card_widgets")
+		for i in mini(widgets.size(), 5):
+			var w: Dictionary = widgets[i]
+			var b: Label = w.get("badge")
+			var art_c: Control = w.get("art")
+			if b == null or art_c == null:
+				continue
+			var rel := b.global_position - art_c.global_position
+			_lines.append("  卡%d 标「%s」 立绘 %.0f×%.0f · 标偏移 (%.0f,%.0f) 尺寸 %.0f×%.0f"
+					% [i, b.text, art_c.size.x, art_c.size.y,
+						rel.x, rel.y, b.size.x, b.size.y])
+
+	# ── 事件·选船：8 张卡时横向滚动是否接管（2026-10-25）─────────────
+	_lines.append("")
+	_lines.append("── 事件·选船（8 艘）：卡片行 + 横向滚动条 ──")
+	var ev2 = hud.get("event_window")
+	if ev2 == null:
+		_lines.append("  event_window 不存在")
+	else:
+		var sc = ev2.get("_scroll")
+		var row = ev2.get("_cards_row")
+		if sc == null or row == null:
+			_lines.append("  ⛔ _scroll / _cards_row 为 null（滚动没接上）")
+		else:
+			var bar: HScrollBar = sc.get_h_scroll_bar()
+			_lines.append("  窗 %.0f 宽 · 滚动视口 %.0f 宽 · 卡片行 %.0f 宽（内容最小宽 %.0f）"
+					% [ev2.size.x, sc.size.x, row.size.x, row.get_combined_minimum_size().x])
+			_lines.append("  横向滚动条 visible=%s max=%.0f page=%.0f  ← 期望 visible=true 且 max>0"
+					% [str(bar.visible), bar.max_value, bar.page])
 
 	var f := FileAccess.open(OUT, FileAccess.WRITE)
 	if f == null:

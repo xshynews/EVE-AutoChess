@@ -63,6 +63,7 @@ var _time_label: Label
 var _dots: Array[Control] = []
 var _loss_label: Label
 var _start_btn: Button
+var _settings_btn: Button
 var _expired_emitted := false
 
 
@@ -202,29 +203,34 @@ func _build_contents() -> void:
 	pad1.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar.add_child(pad1)
 
+	# 手机端的操作组必须有明确的触控面积。桌面沿用原尺寸，避免改变既有 HUD 密度。
+	var action_group := HBoxContainer.new()
+	action_group.name = "ActionGroup"
+	action_group.add_theme_constant_override("separation", 8)
+	action_group.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bar.add_child(action_group)
+
 	var start_btn := Button.new()
 	start_btn.text = T.t("BAR_START", "✦ 开战")
-	start_btn.custom_minimum_size = Vector2(0, 26)
+	start_btn.custom_minimum_size = Vector2(0, 48 if EveUiScale.is_mobile() else 26)
 	start_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	EveButtonTheme.apply(start_btn, "hud_main")
 	start_btn.pressed.connect(func(): start_battle_requested.emit())
-	bar.add_child(start_btn)
+	action_group.add_child(start_btn)
 	_start_btn = start_btn
 
-	var pad2 := Control.new()
-	pad2.custom_minimum_size = Vector2(8, 0)
-	pad2.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.add_child(pad2)
-
 	var set_btn := Button.new()
-	set_btn.text = "≡"
+	set_btn.name = "SettingsButton"
+	set_btn.text = T.t("BAR_SETTINGS", "设置") if EveUiScale.is_mobile() else "≡"
 	set_btn.tooltip_text = T.t("BAR_SETTINGS_TIP",
-			"设置（待接入：天空盒切换 / 显示模式）")
-	set_btn.custom_minimum_size = Vector2(26, 26)
+			"打开设置")
+	set_btn.custom_minimum_size = Vector2(88 if EveUiScale.is_mobile() else 26,
+			48 if EveUiScale.is_mobile() else 26)
 	set_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	EveButtonTheme.apply(set_btn, "hud")
 	set_btn.pressed.connect(func(): settings_requested.emit())
-	bar.add_child(set_btn)
+	action_group.add_child(set_btn)
+	_settings_btn = set_btn
 
 
 ## 竖分隔线（自带左右 12px / 上下 11px 留白，免得线顶满 40px 显硬）

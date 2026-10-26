@@ -50,6 +50,33 @@ const STEP := 0.05
 const META := "_eve_font_base"
 
 
+
+## ★ 2026-10-19 安卓线：手机上试「黑体 / 加粗」。
+##
+## 为什么不往仓库塞字体文件：中文字体动辄十几 MB，且微软雅黑/思源黑体的分发授权要另说。
+## SystemFont 走**系统已装字体**（Windows 微软雅黑 / 安卓 Noto Sans CJK），权重 700 = 粗体，
+## 不增加包体、也不用管授权；代价是各机型字形略有差异（可接受，正文没变，只是更实）。
+static var _heavy: SystemFont = null
+
+
+static func heavy() -> Font:
+	if _heavy == null:
+		var f := SystemFont.new()
+		f.font_names = PackedStringArray([
+			"Microsoft YaHei UI", "Microsoft YaHei", "SimHei",
+			"Noto Sans CJK SC", "Noto Sans SC", "sans-serif",
+		])
+		f.font_weight = 700
+		f.antialiasing = TextServer.FONT_ANTIALIASING_GRAY
+		_heavy = f
+	return _heavy
+
+
+## 把节点字体换成「加粗黑体」（只在移动端调用；桌面保持原字体，避免动到既有出图基线）。
+static func heavy_on(node: CanvasItem) -> void:
+	if node != null:
+		node.add_theme_font_override("font", heavy())
+
 ## 设计字号 → 实际字号（自绘文字用；每次调用都按当前倍数算）。
 static func s(base: int) -> int:
 	return maxi(6, int(round(float(base) * scale)))

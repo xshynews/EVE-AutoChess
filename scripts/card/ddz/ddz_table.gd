@@ -1326,24 +1326,39 @@ func _buttons() -> Array:
 	var out: Array = []
 	var w := BASE.x
 	var h := BASE.y
-	out.append({"id": "back", "rect": Rect2(w - 112.0, 8.0, 88.0, 28.0),
+	# ★★ 2026-10-21（UI 比例基线 · 阶段 0-4）：手机档把热区撑到**触控尺寸**。
+	#   ⚠️⚠️ 单位坑：牌桌 `content_scale_factor = 1.0`（见 `_ready` 的
+	#   `apply_scene_default`）⇒ 这里的 1 单位 = **1 物理像素**；
+	#   而 HUD 是 1.35 ⇒ HUD 的「48」实际等于 65 物理像素。
+	#   所以**不能照抄 48**：手机档统一取 56（次）/ 60（主），手感才与 HUD 相当。
+	#   ⛔ 桌面端字面量保持原值（三元里 else 分支就是改动前那个数），逐像素不变。
+	var mob := UI_SCALE_SCRIPT.is_mobile()
+	out.append({"id": "back",
+			"rect": Rect2(w - (144.0 if mob else 112.0), 8.0,
+					120.0 if mob else 88.0, 56.0 if mob else 28.0),
 			"label": T.t("DDZ_BTN_BACK", "← 返回"), "on": true})
 	# ★ 联机**不摆托管按钮**（2026-10-12）：联机的「托管」必须由**房主侧**执行
 	#   （牌局在房主手里），而这个按钮只改本地的 `_auto` —— 点了的后果是
 	#   **本地不再出牌、房主却不知道**⇒ 牌局当场卡住，而且看不出是谁的问题。
 	#   ⇒ 先隐藏；要真做，得加一条「请求托管」的协议让房主把该座位交给 AI。
 	if not _is_online():
-		out.append({"id": "auto", "rect": Rect2(w - 224.0, 8.0, 104.0, 28.0),
+		out.append({"id": "auto",
+				"rect": Rect2(w - (288.0 if mob else 224.0), 8.0,
+						136.0 if mob else 104.0, 56.0 if mob else 28.0),
 				"label": (T.t("DDZ_BTN_AUTO_ON", "托管：开") if _auto
 							else T.t("DDZ_BTN_AUTO_OFF", "托管：关")), "on": true})
 	# ★ 设置（2026-10-07）。放「随时可用但不常用」那一簇的最左（右上角），
 	#   与「返回 / 托管」同一排 —— 不跟桌面的主动作抢注意力。
 	#   设置窗一开，`_process` 就停推 AI（见那里的守卫）。
-	out.append({"id": "settings", "rect": Rect2(w - 328.0, 8.0, 88.0, 28.0),
+	out.append({"id": "settings",
+			"rect": Rect2(w - (416.0 if mob else 328.0), 8.0,
+					120.0 if mob else 88.0, 56.0 if mob else 28.0),
 			"label": T.t("DDZ_BTN_SETTINGS", "设置"), "on": true})
 	# ★ 2026-10-13 「样式微调」（手机上调牌/桌/字大小的工具，见 ddz_style_tune.gd）。
 	#   放在「设置」左边同一簇：都是「随时可用但不常用」。
-	out.append({"id": "style", "rect": Rect2(w - 424.0, 8.0, 88.0, 28.0),
+	out.append({"id": "style",
+			"rect": Rect2(w - (544.0 if mob else 424.0), 8.0,
+					120.0 if mob else 88.0, 56.0 if mob else 28.0),
 			"label": T.t("DDZ_BTN_STYLE", "样式"), "on": true})
 	if game == null:
 		# ★ 联机面板开着 ⇒ 空桌这两个大按钮**不画**：面板是半透明的，画在下面会透出来、
@@ -1355,19 +1370,26 @@ func _buttons() -> Array:
 		# ★ 联机：并排放两个主按钮 —— 「开始游戏」（本地，带 AI）与「联机对战」。
 		#   两个都是**进入一局的入口**，所以同等尺寸、同等位置层级，只是主动作偏左。
 		out.append({"id": "start",
-				"rect": Rect2(w * 0.5 - 222.0, h * TABLE_CY - 27.0, 210.0, 54.0),
+				"rect": Rect2(w * 0.5 - (252.0 if mob else 222.0),
+						h * TABLE_CY - (36.0 if mob else 27.0),
+						240.0 if mob else 210.0, 72.0 if mob else 54.0),
 				"label": T.t("DDZ_BTN_START", "开始游戏"), "on": true, "primary": true})
 		out.append({"id": "online",
-				"rect": Rect2(w * 0.5 + 12.0, h * TABLE_CY - 27.0, 210.0, 54.0),
+				"rect": Rect2(w * 0.5 + 12.0,
+						h * TABLE_CY - (36.0 if mob else 27.0),
+						240.0 if mob else 210.0, 72.0 if mob else 54.0),
 				"label": T.t("DDZ_ON_TITLE", "联机对战  ONLINE"), "on": true})
 		return out
 	if game.is_over():
 		# ⚠️ 挪到**底部操作栏**的位置：原来在 h*0.6+100 会跟正下方的**玩家块**撞上
 		#    （玩家块现在就在正下、手牌正上方）。
-		out.append({"id": "again", "rect": Rect2(w * 0.5 - 90.0, h - 126.0, 180.0, 46.0),
+		out.append({"id": "again",
+				"rect": Rect2(w * 0.5 - (110.0 if mob else 90.0),
+						h - (146.0 if mob else 126.0),
+						220.0 if mob else 180.0, 64.0 if mob else 46.0),
 				"label": T.t("DDZ_BTN_AGAIN", "再来一局"), "on": true, "primary": true})
 		return out
-	var bar_y := h - 122.0
+	var bar_y := h - (142.0 if mob else 122.0)
 	# ★★ 发牌动画期间 **一个叫分按钮都不摆**。
 	#    用户原话：「这个时候才出叫不叫地主的判断。现在那个分数按钮还在那，就很难看」
 	#    —— 牌还没发完就问「叫几分」是没有依据的。
@@ -1388,17 +1410,25 @@ func _buttons() -> Array:
 				labels = [T.t("DDZ_BID_PASS", "不叫"), T.t("DDZ_BID_CALL", "叫地主")]
 			for i in 2:
 				out.append({"id": "bid%d" % i,
-						"rect": Rect2(w * 0.5 - 96.0 + i * 108.0, bar_y, 96.0, 40.0),
+						"rect": Rect2(w * 0.5 - (128.0 if mob else 96.0)
+								+ i * (136.0 if mob else 108.0), bar_y,
+								120.0 if mob else 96.0, 60.0 if mob else 40.0),
 						"label": labels[i], "on": true})
 		return out
 	if _is_human_turn():
-		out.append({"id": "play", "rect": Rect2(w * 0.5 - 196.0, bar_y, 140.0, 40.0),
+		out.append({"id": "play",
+				"rect": Rect2(w * 0.5 - (232.0 if mob else 196.0), bar_y,
+						168.0 if mob else 140.0, 60.0 if mob else 40.0),
 				"label": T.t("DDZ_BTN_PLAY", "出牌"),
 					"on": not _sel.is_empty(), "primary": true})
-		out.append({"id": "pass", "rect": Rect2(w * 0.5 - 40.0, bar_y, 110.0, 40.0),
+		out.append({"id": "pass",
+				"rect": Rect2(w * 0.5 - (48.0 if mob else 40.0), bar_y,
+						132.0 if mob else 110.0, 60.0 if mob else 40.0),
 				"label": T.t("DDZ_PASS", "不要"),
 					"on": not game.last_play.is_empty()})
-		out.append({"id": "hint", "rect": Rect2(w * 0.5 + 86.0, bar_y, 110.0, 40.0),
+		out.append({"id": "hint",
+				"rect": Rect2(w * 0.5 + (100.0 if mob else 86.0), bar_y,
+						132.0 if mob else 110.0, 60.0 if mob else 40.0),
 				"label": T.t("DDZ_BTN_HINT", "提示"), "on": true})
 	return out
 
@@ -2079,6 +2109,13 @@ func _seat_count(seat: int) -> int:
 
 ## 按钮：主（出牌）/ 次（不要、提示）/ 禁用 三态 + hover。
 ## ⚠️ 这里的坐标是**唯一来源** —— `_on_click()` 用的也是 `_buttons()`（红线 9）。
+##
+## ★ 2026-10-21（UI 比例基线 · 阶段 0-4 尾项）：按钮圆角 **8 → 0（直角）**。
+##   依据是本文件下面那段自己写的口径：「圆角只用在**卡牌和桌面**上；
+##   工程 HUD 面板的红线是禁圆角」——按钮属于界面控件，不该跟卡牌同一套圆角。
+const BTN_RADIUS := 0.0
+
+
 func _draw_buttons() -> void:
 	for b in _buttons():
 		var r: Rect2 = b["rect"]
@@ -2086,15 +2123,17 @@ func _draw_buttons() -> void:
 		var primary := bool(b.get("primary", false))
 		var hov := r.has_point(get_local_mouse_position())
 		if not on:
-			_round_rect(r, C_BTN_OFF, 8.0)
-			_round_rect(r, C_DIM, 8.0, false, 1.0)
+			_round_rect(r, C_BTN_OFF, BTN_RADIUS)
+			_round_rect(r, C_DIM, BTN_RADIUS, false, 1.0)
 		elif primary:
-			_round_rect(r, C_PRIMARY if not hov else C_PRIMARY.lightened(0.14), 8.0)
+			_round_rect(r, C_PRIMARY if not hov else C_PRIMARY.lightened(0.14), BTN_RADIUS)
 		else:
-			_round_rect(r, C_BTN_HOT if hov else C_BTN, 8.0)
-			_round_rect(r, C_ACCENT if hov else C_PANEL_EDGE, 8.0, false, 1.0)
+			_round_rect(r, C_BTN_HOT if hov else C_BTN, BTN_RADIUS)
+			_round_rect(r, C_ACCENT if hov else C_PANEL_EDGE, BTN_RADIUS, false, 1.0)
 		var label := String(b["label"])
-		var px := 17 if primary else 15
+		# ★ 2026-10-21：手机档字也要跟着长大（按钮 40→60，字 15→20 才不空）
+		var mob := UI_SCALE_SCRIPT.is_mobile()
+		var px := (22 if primary else 20) if mob else (17 if primary else 15)
 		var col := C_BG if (on and primary) else (C_HI if on else C_DIM)
 		var f := _font()
 		var tw := f.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, px).x

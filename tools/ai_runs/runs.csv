@@ -1,0 +1,5 @@
+timestamp,difficulty,difficulty_id,round,cleared,ending,nodes,wins,losses,beacon,level,field,seconds
+2026-10-26T12:09:21.104Z,简单,simple,1,1,CLEARED,15,11,1,100,5,7,33
+2026-10-26T12:09:21.104Z,普通,normal,1,1,CLEARED,15,9,5,15,5,7,46
+2026-10-26T12:09:21.104Z,困难,hard,1,0,,11,6,3,72,4,6,454
+2026-10-26T12:09:21.104Z,炼狱,inferno,1,1,CLEARED,15,10,2,79,5,7,121

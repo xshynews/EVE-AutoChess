@@ -37,6 +37,12 @@ static var session_active := false
 ## 主菜单点「继续上一局」时置位；battle_scene 启动时读它决定是否恢复。
 static var resume_requested := false
 
+## ★ 2026-10-25：主菜单选中的难度档 id（`simple` / `normal` / `hard` / `inferno`）。
+##
+## 主菜单切场景只能传场景路径，传不了参数 ⇒ 用这个静态槽位把选择带进战场。
+## 空串 = 没选（战场按「简单」开）。读档恢复时**不用它**（难度跟着存档走）。
+static var pending_difficulty := ""
+
 
 static func _write_allowed() -> bool:
 	return persist and session_active

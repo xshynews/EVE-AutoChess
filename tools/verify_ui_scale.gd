@@ -41,6 +41,7 @@ var _pass := 0
 var _fail := 0
 var _cfg_snapshot := PackedByteArray()
 var _cfg_existed := false
+var _old_force_mobile := false
 
 
 func _ok(cond: bool, msg: String) -> void:
@@ -54,6 +55,7 @@ func _ok(cond: bool, msg: String) -> void:
 
 func _ready() -> void:
 	LAYOUT_STORE.persist = false        # ⛔ 别写盘污染玩家的真实窗口布局
+	_old_force_mobile = UI.force_mobile
 	_snapshot_settings()
 	print("═══ 平台 UI 缩放档 自检 ═══")
 	_t_scale_semantics()
@@ -64,6 +66,7 @@ func _ready() -> void:
 	_t_desktop_noop()
 	_t_store_roundtrip()
 	_t_font()
+	await _t_command_touch_targets()
 	_restore_settings()
 	print("═══ RESULT passed=%d failed=%d ═══" % [_pass, _fail])
 	# ★ 2026-10-10（审查 R07）：失败 ⇒ 非零退出码
@@ -101,6 +104,43 @@ func _mk_hud() -> Control:
 	h.set("demo_content", false)
 	host.add_child(h)
 	return h
+
+
+func _t_command_touch_targets() -> void:
+	print("[9] 指挥条触控目标：手机增大、桌面不变、设置仍可点")
+	UI.force_mobile = true
+	var command_script: Script = load("res://scripts/ui/panels/eve_command_bar.gd")
+	var mobile_bar: Control = command_script.new()
+	add_child(mobile_bar)
+	await get_tree().process_frame
+	var settings_btn: Button = mobile_bar.get("_settings_btn")
+	var start_btn: Button = mobile_bar.get("_start_btn")
+	_ok(settings_btn != null and settings_btn.custom_minimum_size.x >= 88.0
+			and settings_btn.custom_minimum_size.y >= 48.0,
+			"★ 手机设置按钮热区至少 88×48（实际 %s）"
+			% str(settings_btn.custom_minimum_size if settings_btn != null else Vector2.ZERO))
+	_ok(settings_btn != null and settings_btn.text == "设置",
+			"★ 手机设置按钮显示文字标签，不只靠小图标")
+	_ok(start_btn != null and start_btn.custom_minimum_size.y >= 48.0,
+			"★ 手机主操作按钮高度至少 48（实际 %.0f）"
+			% (start_btn.custom_minimum_size.y if start_btn != null else 0.0))
+	var settings_fired := [false]
+	mobile_bar.settings_requested.connect(func(): settings_fired[0] = true)
+	if settings_btn != null:
+		settings_btn.pressed.emit()
+	_ok(settings_fired[0], "★★ 点设置热区 ⇒ settings_requested 确实发出")
+	mobile_bar.queue_free()
+
+	UI.force_mobile = false
+	var desktop_bar: Control = command_script.new()
+	add_child(desktop_bar)
+	await get_tree().process_frame
+	var desktop_settings: Button = desktop_bar.get("_settings_btn")
+	_ok(desktop_settings != null and desktop_settings.custom_minimum_size == Vector2(26, 26)
+			and desktop_settings.text == "≡",
+			"★★ 桌面设置按钮保持原 26×26 图标外观")
+	desktop_bar.queue_free()
+	UI.force_mobile = _old_force_mobile
 
 
 # ---------------------------------------------------------------- [7] 字号缩放
@@ -375,9 +415,11 @@ func _t_mobile_layout() -> void:
 		# ② 侧列加宽 + 顶条加高（评审稿：手机上"窗口太小"的第一条反馈）
 		var syn: Rect2 = r["syn"]
 		var info: Rect2 = r["info"]
-		_ok(is_equal_approx(syn.size.x, HUD_SCRIPT.MOBILE_SIDE_W)
-				and is_equal_approx(info.size.x, HUD_SCRIPT.MOBILE_SIDE_W_R),
-				"%s ★ 侧列加宽 172 → %.0f / %.0f" % [tag, syn.size.x, info.size.x])
+		# ★ 2026-10-21：侧列宽按**全站刻度**推导（0.18×W），不再是写死 242/259
+		_ok(is_equal_approx(syn.size.x, HUD_SCRIPT._side_w(Vector2(w, h), true))
+				and is_equal_approx(info.size.x, HUD_SCRIPT._side_w(Vector2(w, h), false)),
+				"%s ★ 侧列按比例加宽 → %.0f / %.0f（设计稿 172）"
+				% [tag, syn.size.x, info.size.x])
 		_ok(is_equal_approx(top.size.y, HUD_SCRIPT.MOBILE_TOP_H),
 				"%s ★ 顶条加高 40 → %.0f（按钮 SIZE_FILL ⇒ 跟着变高）" % [tag, top.size.y])
 		_ok(absf(top.get_center().x - w * 0.5) < 0.5, "%s 顶条水平居中" % tag)
@@ -403,6 +445,21 @@ func _t_mobile_layout() -> void:
 		_ok(aug.end.y <= h + 0.5,
 				"%s ★ 增益窗仍在屏内（装备吃高度**不许**把它顶出去，底边 %.0f ≤ %.0f）"
 				% [tag, aug.end.y, h])
+
+		# ②b-2 ★ 左列槽位外框固定且不重叠；内容最小尺寸不能再反向撑大窗口。
+		_ok(is_equal_approx(syn.size.y, HUD_SCRIPT.MOBILE_SYN_H),
+				"%s ★ 舰队构成外框固定 %.0f（内容在裁剪宿主内，不参与槽位计算）"
+				% [tag, syn.size.y])
+		var compact_height := h < 780.0
+		_ok(eq.size.y >= (HUD_SCRIPT.RECT_EQ.size.y if compact_height else 150.0) - 0.5,
+				"%s ★ 装备外框 %.0f（短屏保设计稿下限，其余空间保实测最小 150）"
+				% [tag, eq.size.y])
+		_ok(aug.size.y >= 0.0 and aug.end.y <= h + 0.5,
+				"%s ★ 增益外框在屏内（%.0f..%.0f；内容超出时仅窗内裁剪）"
+				% [tag, aug.position.y, aug.end.y])
+		_ok(syn.end.y <= eq.position.y + 0.5 and eq.end.y <= aug.position.y + 0.5,
+				"%s ★★ 左列三窗槽位不重叠（构成底 %.0f ≤ 装备顶 %.0f；装备底 %.0f ≤ 增益顶 %.0f）"
+				% [tag, syn.end.y, eq.position.y, eq.end.y, aug.position.y])
 
 		# ②c ★ 2026-10-13 二修之三：设置窗改横向栏目 ⇒ 宽窗 + 定高
 		#     （竖向长条在手机档约 900 高 > 设计高 800 ⇒ 必然出屏）
@@ -452,6 +509,31 @@ func _t_mobile_layout() -> void:
 		_ok("info" not in docks,
 				"%s 舰船档案**不**给停靠位（它 `collapsible == false`，给了是空操作）" % tag)
 
+	# ⑤ ★ 2026-10-19：左安全区（真机 96px 挖孔）必须整体避让
+	#    用户原话「安全区还是要避让一下」—— 左列原来贴 MOBILE_EDGE，直接压在挖孔上。
+	for item in PHONES:
+		var d2: Vector2 = item["d"]
+		var sd := 96.0
+		var r2: Dictionary = HUD_SCRIPT.mobile_rects(d2, sd)
+		var tag2 := String(item["name"])
+		var syn2: Rect2 = r2["syn"]
+		var bench2: Rect2 = r2["bench"]
+		_ok(absf(syn2.position.x - (HUD_SCRIPT.MOBILE_EDGE + sd)) < 0.5,
+				"%s ★ 左列避开安全区（x = 边距 %.0f + 安全区 %.0f = %.0f）"
+				% [tag2, HUD_SCRIPT.MOBILE_EDGE, sd, syn2.position.x])
+		_ok(bench2.position.x >= syn2.end.x - 0.5,
+				"%s ★ 备战席不再压到左列（%.0f ≥ %.0f）"
+				% [tag2, bench2.position.x, syn2.end.x])
+		var over2 := []
+		for key in r2.keys():
+			var rr: Rect2 = r2[key]
+			if rr.end.x > d2.x + 0.5 or rr.position.x < sd - 0.5 \
+					or rr.end.y > d2.y + 0.5 or rr.position.y < -0.5:
+				over2.append(key)
+		_ok(over2.is_empty(),
+				"%s 含安全区时全部矩形仍在可用区内（越界：%s）"
+				% [tag2, "无" if over2.is_empty() else str(over2)])
+
 	# ── 实装侧：桌面端拿不到手机档，除非自检显式开闸 ──
 	var h := _mk_hud()
 	h.call("apply_ui_profile", 1.35)
@@ -473,15 +555,16 @@ func _t_mobile_layout() -> void:
 	var log_w: Control = m.get("log_window")
 	_ok(not bool(syn_w.call("is_collapsed")) and not bool(log_w.call("is_collapsed")),
 			"★★ 手机档默认**不**收起侧列（决策信息要能扫一眼就看到）")
-	_ok(is_equal_approx(syn_w.size.x, HUD_SCRIPT.MOBILE_SIDE_W),
-			"侧列实际宽度 %.0f（设计稿是 172）" % syn_w.size.x)
+	var _ds: Vector2 = m.call("_design_space")
+	_ok(is_equal_approx(syn_w.size.x, HUD_SCRIPT._side_w(_ds, true)),
+			"侧列实际宽度 %.0f（= 0.18×W，设计稿是 172）" % syn_w.size.x)
 
 	# ★★ 2026-10-13 二修之四：舰船档案**默认整窗隐藏**，点中舰船才亮起
 	#    （用户原话「不要一直在那」）。⛔ 桌面档恒可见 —— 这条只属于手机档。
 	var dos: Control = m.get("dossier_window")
 	_ok(dos != null and not bool(dos.visible),
 			"★★ 手机档舰船档案**默认隐藏**（不再常驻占右列 %.0f×%.0f）"
-			% [HUD_SCRIPT.MOBILE_SIDE_W_R, HUD_SCRIPT.RECT_INFO.size.y])
+			% [HUD_SCRIPT._side_w(m.call("_design_space"), false), HUD_SCRIPT.RECT_INFO.size.y])
 	var log_y_hidden := log_w.position.y
 	_ok(absf(log_y_hidden - m_want.get("info").position.y) < 0.5,
 			"★ 档案隐藏时战斗日志**上移到档案位**（右列不留空洞，y %.0f）" % log_y_hidden)
@@ -530,7 +613,7 @@ func _t_mobile_layout() -> void:
 	_ok(not bool(log_w.call("is_collapsed")) and log_w.position.x > 1.0,
 			"★★ 折叠一组**不影响**其他组（战斗日志仍在右侧原位）")
 	syn_w.call("set_collapsed", false)
-	_ok(is_equal_approx(syn_w.size.x, HUD_SCRIPT.MOBILE_SIDE_W)
+	_ok(is_equal_approx(syn_w.size.x, HUD_SCRIPT._side_w(m.call("_design_space"), true))
 			and syn_w.position == m_want.get("syn").position,
 			"★ 再点开 ⇒ 回到侧列原位（%s，⛔ 不是停在边缘展开）" % str(syn_w.position))
 

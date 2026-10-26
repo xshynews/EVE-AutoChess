@@ -303,8 +303,8 @@ func _t_menu_wired() -> void:
 	#    ⇒ 构造只许在 `_campaign_meta()`，渲染只许走 `_mode_meta()`（不取词）。
 	T.set_locale("zh_CN")
 	var meta_zh := MENU._campaign_meta()
-	_ok(meta_zh == "15 回合 · 共 3 个难度",
-			"★ zh_CN：副标题 = 15 回合 · 共 3 个难度（实际「%s」）" % meta_zh)
+	_ok(meta_zh == "15 回合 · 共 4 个难度",
+			"★ zh_CN：副标题 = 15 回合 · 共 4 个难度（实际「%s」）" % meta_zh)
 	_ok(not meta_zh.contains("%"),
 			"⛔⛔ zh_CN：副标题里不许残留占位符 %%（实际「%s」）" % meta_zh)
 	_ok(MENU._mode_meta({"meta": meta_zh}) == meta_zh,
@@ -350,8 +350,14 @@ func _t_menu_wired() -> void:
 			if T.lookup(k, "en") == k:
 				miss_key.append(k)
 	var cards: Array = []
-	for r in TIERS.ROWS:
-		cards.append({"id": String(r["id"])})
+	# ⚠️ 任务关卡的卡片 key 来自 `id`，展示字段有 name / desc / code 三个
+	#   （code 是卡面顶部那行小字，同样会渲染 ⇒ 也必须查得到译文）。
+	for r in TIERS.DIFFICULTIES:
+		for f in ["name", "desc", "code"]:
+			var k3 := "CARD_%s_%s" % [MENU._card_key(r), f.to_upper()]
+			n_key += 1
+			if T.lookup(k3, "en") == k3:
+				miss_key.append(k3)
 	for m in MENU.EXTRA_MODES:
 		for c in m["cards"]:
 			cards.append({"code": String(c["code"])})

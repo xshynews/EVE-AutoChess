@@ -237,6 +237,8 @@ func _process(delta: float) -> void:
 		return
 
 	var center := (min_v + max_v) * 0.5
+	# ★ 焦点朝近排偏一点 ⇒ 整支舰队在画面上抬（见 CAMERA_FOCUS_NEAR_BIAS）
+	center.z += (max_v.z - min_v.z) * CAMERA_FOCUS_NEAR_BIAS
 	# 取景半宽：含边距，并【强制一个最小取景范围】。
 	#
 	# ⚠️ 为什么要强制下限（踩坑记录）：
@@ -254,7 +256,8 @@ func _process(delta: float) -> void:
 	#    玩家刚滚出来的视距会被系统慢慢改掉，手感变「黏」。
 	if _cam_last_span == Vector2.ZERO or _cam_last_span.distance_to(span) > _cam_last_span.length() * 0.06:
 		_cam_last_span = span
-		var want_range := sqrt(half_x * half_x + half_z * half_z) * 2.0
+		# ★ CAMERA_FIT_SCALE：实测「不切船」的最大推近档（见该常量顶注）
+		var want_range := sqrt(half_x * half_x + half_z * half_z) * 2.0 * CAMERA_FIT_SCALE
 		# 视距基准本身也做一点平滑，避免「接敌瞬间视距跳一下」
 		orion_cam.set_max_range(lerpf(
 				float(orion_cam.get_max_range()), maxf(20.0, want_range),
@@ -689,6 +692,7 @@ func frame_battlefield(fit_ships: bool = false) -> void:
 			frame_battlefield(false)
 			return
 		center = (min_v + max_v) * 0.5
+		center.z += (max_v.z - min_v.z) * CAMERA_FOCUS_NEAR_BIAS
 		half_x = maxf((max_v.x - min_v.x) * 0.5, CAMERA_MIN_HALF_X) * CAMERA_FIT_MARGIN
 		half_z = maxf((max_v.z - min_v.z) * 0.5, CAMERA_MIN_HALF_Z) * CAMERA_FIT_MARGIN
 	else:
@@ -697,7 +701,10 @@ func frame_battlefield(fit_ships: bool = false) -> void:
 		half_z = maxf(meters_to_world(
 			maxf(absf(deploy_own_z), absf(deploy_enemy_z)) + 15_000.0), CAMERA_MIN_HALF_Z) * CAMERA_FIT_MARGIN
 
-	orion_cam.set_range_from_half_extent(half_x, half_z)
+	# ⚠️ `_cam_last_span` 一律存**未乘 CAMERA_FIT_SCALE 的原始半跨度** ——
+	#    与 `_process` 跟随、棋盘取景（那两处都不乘）同一口径，否则首帧会多触发一次重新取景。
+	orion_cam.set_range_from_half_extent(
+			half_x * CAMERA_FIT_SCALE, half_z * CAMERA_FIT_SCALE)
 	orion_cam.set_focus_point(center)
 	_cam_focus = center
 	_cam_focus_initialized = true
@@ -723,6 +730,23 @@ func fx_tracer(from_meters: Vector3, to_meters: Vector3, hit: bool,
 		quality: int = 3) -> void:
 	if battle_fx != null:
 		battle_fx.spawn_tracer(from_meters, to_meters, hit, quality)
+
+
+## 统一设置炮击亮痕颜色。
+func set_artillery_colors(core: Color, edge: Color) -> void:
+	if battle_fx != null and battle_fx.has_method("set_artillery_colors"):
+		battle_fx.set_artillery_colors(core, edge)
+
+## 统一设置所有舰船护盾贴花颜色。
+func set_shield_decal_colors(mid: Color, high: Color, core: Color = Color(0.94, 0.99, 1.0, 1.0)) -> void:
+	for node in _ship_nodes.values():
+		if node != null and is_instance_valid(node) and node.has_method("set_shield_decal_colors"):
+			node.set_shield_decal_colors(mid, high, core)
+
+## 炮击攻击特效（长条亮痕，头部停在护盾锚点）
+func fx_artillery(from_meters: Vector3, to_meters: Vector3, quality: int = 3) -> void:
+	if battle_fx != null:
+		battle_fx.spawn_artillery(from_meters, to_meters, quality)
 
 
 ## 命中爆点（`layer` = 真实受击层：shield / armor / hull）
@@ -1231,6 +1255,30 @@ const CAMERA_FIT_MARGIN := 1.18
 const CAMERA_MIN_HALF_X := 18.0
 const CAMERA_MIN_HALF_Z := 14.0
 
+## ★ 2026-10-25 · **默认视距收紧**（用户：「默认摄影机距离舰船太远，舰船显得太小」）
+##
+## ══════════════════════════════════════════════════════════════════
+##  这两个数是「能再推近多少」的实测上限，不是随手取的
+## ══════════════════════════════════════════════════════════════════
+##  量法（`tools/probe_cam_framing.tscn`：船体网格 AABB 经 `global_transform` 逐角点投影，
+##  取整支舰队的外接框）：
+##    收紧前视距 29.46 ⇒ 5 艘船在 1920×1080 上单船仅 171~181px 宽。
+##    以屏幕中心等比放大，**不切船的极限约 1.5 倍**（近排船底在 y≈1076 触界）。
+##  ⇒ `CAMERA_FIT_SCALE = 0.80` ⇒ 实测视距 19.7（= **1.50 倍**），
+##     单船 236~257px，舰队外接框 x 48..1657 / y 289..1050，一艘都不出画。
+##
+##  ⛔ 别再往下调（0.5 = 2 倍）：实测 2 倍时舰船横向占宽 2138px > 1920，
+##     最外侧两艘直接切出左右边框，近排整排掉到屏幕外。
+##     —— 那是「更大的船」换「看不见的船」。真要更大的船只能改阵型间距或俯角。
+const CAMERA_FIT_SCALE := 0.80
+
+## 焦点朝**近排**偏的比例（占舰队包围盒纵深）。
+##
+## ⚠️ 为什么偏：近排船投影在下方，而现在最下面一排正好压在备战席（y≥760）上。
+##    把焦点朝近排挪一点 ⇒ 整支舰队在画面上**上移**，让船浮在备战席上方，
+##    同时腾出底部空间，上面那条 `CAMERA_FIT_SCALE` 才能真的用满。
+const CAMERA_FOCUS_NEAR_BIAS := 0.18
+
 ## 相机最近距离下限（世界单位）—— 防止舰队收拢成一点时镜头怼到脸上
 const CAMERA_MIN_DIST := 14.0
 
@@ -1429,10 +1477,15 @@ func compute_deploy_z(own_fleet: Array, enemy_fleet: Array) -> Array:
 ##
 ## ⚠️ 注意单位：这里是米，不是世界单位。
 ##    世界单位只用于 Node3D 渲染，换算见 meters_to_world()。
-func default_formation(count: int, team: int) -> Array[Vector3]:
-	var out: Array[Vector3] = []
+func default_formation(count: int, team: int, formation: String = "") -> Array[Vector3]:
+	# ★ 2026-10-23：敌方站位模板（FRONT/BACK/SPREAD/ESCORT/WEDGE）从这里开始生效。
+	# ⚠️ 站位算式只有一份真相源 = EveEnemyComps.formation_positions()，
+	#    本函数只负责把「我方 z 中心 / 方向符号」交给它。
 	var z_center := deploy_own_z if team == 0 else deploy_enemy_z
 	var sign_z := -1.0 if team == 0 else 1.0
+	if formation != "":
+		return EveEnemyComps.formation_positions(formation, count, z_center, sign_z)
+	var out: Array[Vector3] = []
 	# 阵型间距按「米」给。
 	# ⚠️ 间距决定开局画面观感：太大会让镜头被迫拉远，舰船缩成小点。
 	#    实测 12km/8km 时包围盒宽约 36km，镜头拉到能装下 40 单位，

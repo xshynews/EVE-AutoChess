@@ -22,12 +22,14 @@ extends Node
 
 const DECK := preload("res://scenes/doudizhu.tscn")
 const MENU := preload("res://scenes/main_menu.tscn")
+const UI := preload("res://scripts/ui/eve_ui_scale.gd")
 
 var _w := 2340
 var _h := 1080
 var _factor := 1.0
 var _scene := "ddz"
 var _out := "device_preview.png"
+var _open_settings := false
 var _safe := {"top": 0, "bottom": 0, "left": 0, "right": 0}
 
 
@@ -50,6 +52,12 @@ func _ready() -> void:
 	vp.add_child(inst)
 	for i in 4:
 		await get_tree().process_frame
+
+	# 可选：自动打开主菜单的设置窗（用于预览移动端设置结构）。
+	if _open_settings and inst.has_method("_toggle_settings"):
+		inst.call("_toggle_settings")
+		for i in 3:
+			await get_tree().process_frame
 
 	# 安全区红线（把物理像素内缩换算到逻辑坐标）。
 	var inset := Rect2(
@@ -94,6 +102,11 @@ func _parse_args() -> void:
 			_scene = a.substr(8)
 		elif a.begins_with("--out="):
 			_out = a.substr(6)
+		elif a.begins_with("--force-mobile="):
+			# 仅探针：让桌面进程走移动端布局（发布包不会读这个参数）。
+			UI.force_mobile = (a.substr(15) == "1")
+		elif a.begins_with("--open-settings="):
+			_open_settings = (a.substr(16) == "1")
 
 
 ## 画安全区红线 + 一行指标（不参与任何布局，纯叠加）。

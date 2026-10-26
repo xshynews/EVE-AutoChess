@@ -102,6 +102,29 @@ const RESULT_CHROME_H := 41.0
 
 ## ★ 2026-10-10 i18n：玩家可见文案一律从这里取（见 eve_text.gd 顶注）。
 const T := preload("res://scripts/core/eve_text.gd")
+## ★ 2026-10-21（UI 比例基线 · 阶段 0-3）：字号走全站刻度（桌面端自动回落原值）。
+const METRICS := preload("res://scripts/ui/eve_ui_metrics.gd")
+const LAYOUT := preload("res://scripts/ui/eve_layout.gd")
+
+
+## 当前设计空间（桌面端与手机端同一口径；不在树里时回落 1920×1080）。
+func _dspace() -> Vector2:
+	if not is_inside_tree():
+		return Vector2(1920.0, 1080.0)
+	return LAYOUT.design_space(get_window())
+
+
+## 标题/副标题放大后，顶部固定高度要**补多少**。
+##
+## ⚠️⚠️ 结算页的窗高是**确定性算式**（`_fit_salvage_height`），⛔ 不读容器实时最小尺寸。
+##   所以字号一变，就必须同步补高度 —— 否则症状是「底部被切」或「多一条白底」。
+## ⚠️ 只算**放大**（缩小时不补，避免负数把窗压塌）。行高按 1.3×字号估算。
+func _title_grow() -> float:
+	var d := _dspace()
+	var dt := METRICS.t1(d, 22) - 22
+	var ds := METRICS.t3(d, 10) - 10
+	return maxf(0.0, 1.3 * float(dt + ds))
+
 
 
 func _ready() -> void:
@@ -120,7 +143,7 @@ func _build_contents() -> void:
 	# ── ① 结论 ──
 	_title = Label.new()
 	_title.text = T.t("RESULT_WIN", "拦截成功")
-	FONT.fs(_title, 22)
+	FONT.fs(_title, METRICS.t1(_dspace(), 22))
 	_title.add_theme_color_override("font_color", C_OK)
 	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -128,7 +151,7 @@ func _build_contents() -> void:
 
 	_subtitle = Label.new()
 	_subtitle.text = T.t("RESULT_SUB", "节点 1 / 15 · 遭遇战")
-	FONT.fs(_subtitle, 10)
+	FONT.fs(_subtitle, METRICS.t3(_dspace(), 10))
 	_subtitle.add_theme_color_override("font_color", C_TEXT_DIM)
 	_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_subtitle.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -387,6 +410,24 @@ func _build_salvage_section() -> void:
 ##
 ## 主控（`eve_battle_scene._maybe_confirm_leftover_wrecks`）只报个数，
 ## 文案与弹框都在这里 —— ⛔ 别再回退成去戳内置 ConfirmationDialog。
+## 「放弃打捞」确认框是否开着（AI 操作面用）。
+func salvage_ask_open() -> bool:
+	return _salvage_ask != null and _salvage_ask.is_open()
+
+
+## 确认 / 取消「放弃打捞」。
+## ⚠️ 必须走 EveConfirmDialog 的 confirm()/cancel()（它们自带 close_dialog），
+##    不要在这里直接 emit 信号。
+func confirm_salvage_ask() -> void:
+	if _salvage_ask != null:
+		_salvage_ask.confirm()
+
+
+func cancel_salvage_ask() -> void:
+	if _salvage_ask != null:
+		_salvage_ask.cancel()
+
+
 func ask_abandon_salvage(count: int) -> void:
 	if _salvage_ask == null:
 		return
@@ -563,7 +604,7 @@ func _fit_salvage_height() -> void:
 	#    后果是**窗高被设成 1054**（几乎顶满 1080 屏幕），
 	#    这正是用户报的「结算页面做得太长了」。
 	#    ⇒ 高度必须由**已知的行数与常量**算，不看容器的实时最小尺寸。
-	var h := RESULT_HEAD_H
+	var h := RESULT_HEAD_H + _title_grow()
 	if _salvage_section.visible:
 		h += SALVAGE_FIXED_H
 		if _salvage_list.visible:
@@ -571,6 +612,15 @@ func _fit_salvage_height() -> void:
 					SALVAGE_LIST_MAX_H)
 		if _salvage_queue.visible:
 			h += 14.0          # 队列行
+	# ★★ 2026-10-25（真机「打捞列表看不见」）：上面这个算式里的常量是按
+	#   **桌面字号 110%** 标定的；移动端字号档是 **120%**，同一段内容实际比它高
+	#   （实测 4 艘：算式 367 vs 实际 367+? ⇒ content 367 > 宿主 339，底部 28px
+	#   连同打捞列表一起被 `_content_host.clip_contents` 裁掉）。
+	#   ⇒ 取「算式」与「内容真实最小高」的**较大值**：算式保证不会因为刚填完行、
+	#     布局还没跑而读到失控值（那是 `get_combined_minimum_size` 曾经的坑，
+	#     根因是 autowrap，已拆除）；真实最小高负责兜住字号档 / 平台差异。
+	#   ⛔ 别只留实时最小高 —— 别的平台/字号下它仍可能在未排版的那一帧偏小。
+	h = maxf(h, content.get_combined_minimum_size().y)
 	set_window_height(h + RESULT_CHROME_H)
 
 

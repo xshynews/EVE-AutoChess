@@ -134,6 +134,7 @@ signal close_requested
 const FIT_MARGIN := 8.0
 
 var content: VBoxContainer          ## 子类往这里塞内容
+var _content_host: Control           ## 固定外框内的裁剪宿主，不向窗口反推最小高度
 var header: HBoxContainer
 var _title_label: Label
 var _status_label: Label
@@ -191,12 +192,23 @@ func _ready() -> void:
 	_load_layout()        # ★ 玩家上次把窗口摆哪儿了（EVE 的窗口布局是记着的）
 
 
+func _notification(what: int) -> void:
+	if what != NOTIFICATION_RESIZED:
+		return
+	_fit_content_to_host()
+
+
 func _build() -> void:
 	set_anchors_preset(Control.PRESET_TOP_LEFT)
 
 	# 面板外观
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = C_PANEL_SOLID if density == Density.BARE else C_PANEL
+	# ★ 安卓线：手机上窗口压在主菜单/牌桌这类明亮界面上，0.84 的 HUD 皮肤会透底
+	#   （实测设置窗里能看到背后的模式卡片）⇒ 移动端用接近实底的版本。
+	#   ⚠️ 桌面保持 .84：战场是暗的，透一点反而更有 HUD 质感，且已有出图基线。
+	if density != Density.BARE and EveUiScale.is_mobile():
+		sb.bg_color = Color(0.043, 0.058, 0.068, 0.97)
 	sb.border_color = C_BORDER
 	sb.set_border_width_all(1)
 	sb.set_corner_radius_all(0)
@@ -235,10 +247,35 @@ func _build() -> void:
 	_content_margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.add_child(_content_margin)
 
+	# 子内容放进裁剪宿主。PanelContainer 会被自身内容最小尺寸撑高；
+	# 改由普通 Control 固定宿主边界，内容超出时只在窗内裁剪，不再改变窗口外框。
+	_content_host = Control.new()
+	_content_host.clip_contents = true
+	_content_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_content_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_content_margin.add_child(_content_host)
+
 	content = VBoxContainer.new()
 	content.add_theme_constant_override("separation", 6)
-	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_content_margin.add_child(content)
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_content_host.add_child(content)
+	# ★★ 2026-10-21（真机修复）：**普通 Control 宿主不会给孩子排版** ——
+	#   `_content_host` 是 Control（不是 Container），所以 `content` 永远停在
+	#   自己的**最小尺寸**、贴在左上角。窗口尺寸≈内容最小尺寸时看不出来；
+	#   一旦窗口被铺成**全屏**（手机设置窗），内容就缩在左上约 950×340，
+	#   右侧与下方大片空白（2026-10-21 真机截图坐实）。
+	#
+	# ★★★ 2026-10-25（PC 回归修复）：原来只在手机档铺满，桌面档不动。
+	#   那条「桌面窗口尺寸≈内容最小尺寸」的假设是错的 —— 商店窗 1142 宽而
+	#   内容最小宽只有 370（5 张窄卡的最小宽接近 0）、战斗日志窗 172 宽内容 42
+	#   （`probe_hud_layout` 实测）⇒ **PC 上全部窗口的内容都挤在左上角一条**。
+	#   `_notification` 那条路救不回来：窗口 RESIZED 早于容器排版，那时宿主还是 0。
+	#   ⇒ 现在两边同口径：由宿主 resized + 内容最小尺寸变化驱动铺满。
+	#   ⛔ 别再加「按平台分叉」—— 铺满宿主才是 MarginContainer 直挂时代的原行为。
+	_content_host.resized.connect(_fit_content_to_host)
+	content.minimum_size_changed.connect(_fit_content_to_host)
+	_fit_content_to_host()
 
 	if resizable:
 		_build_grip()
@@ -254,6 +291,19 @@ func _build() -> void:
 	# 点任意处置顶 —— 多窗重叠时不用先去点标题栏
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	gui_input.connect(_on_window_input)
+
+
+## 把 `content` 铺满裁剪宿主（手机 / 桌面同口径，见 `_content_host` 那段说明）。
+##
+## ⚠️ 取 `maxf(min, host)`：窄窗时宁可让宿主裁掉，也不把内容压到最小尺寸以下
+##    （内容可能比宿主高，由 `clip_contents` 承接）。
+func _fit_content_to_host() -> void:
+	if content == null or _content_host == null:
+		return
+	content.position = Vector2.ZERO
+	var need := content.get_combined_minimum_size()
+	content.size = Vector2(maxf(_content_host.size.x, need.x),
+			maxf(_content_host.size.y, need.y))
 
 
 func _build_header(root: VBoxContainer) -> void:
@@ -552,6 +602,12 @@ func set_status(text: String) -> void:
 func set_window_rect(x: float, y: float, w: float, h: float) -> void:
 	# ★ 高度已被控件自己接管 ⇒ 只更新位置与宽度（见 `_height_owned` 注释）
 	var use_h := _base_rect.size.y if _height_owned and _base_rect.size.y > 1.0 else h
+	# ★ 2026-10-25：玩家缩放过这扇窗 ⇒ **宽度听玩家的**。
+	#   ⚠️ 否则 HUD 每次重铺都会把 `_base_rect` 的宽改回设计稿值，
+	#      玩家把「舰船档案」拉宽后点另一艘船/切阶段就弹回 172。
+	#   ⛔ 只对 `_height_owned` 生效：其余窗的尺寸本来就走 `_user_rect`（见 `_effective_rect`）。
+	if _height_owned and _user_rect.size.x > 1.0:
+		w = _user_rect.size.x
 	# ★ 高度接管 + `fit_in_viewport` ⇒ 把过高的窗上移进屏（见字段注释）
 	if _height_owned and fit_in_viewport:
 		y = _fit_y_in_viewport(y, use_h)
@@ -579,7 +635,15 @@ func set_window_height(h: float) -> void:
 	_height_owned = true          # ★ 从此高度归控件自己管，见字段注释
 	var x := _base_rect.position.x if _base_rect.size.x > 1.0 else position.x
 	var y := _base_rect.position.y if _base_rect.size.y > 1.0 else position.y
+	# ★ 2026-10-25：玩家拖过这扇窗 ⇒ 位置听玩家的（与 `_effective_rect()` 同口径）。
+	#   否则结算页刷新打捞区时会把窗拽回设计稿位置（拖动白做了）。
+	if not _collapsed and _user_rect.size.x > 1.0 and _user_rect.size.y > 1.0:
+		x = _user_rect.position.x
+		y = _user_rect.position.y
 	var w := _base_rect.size.x if _base_rect.size.x > 1.0 else size.x
+	# ★ 2026-10-25：玩家缩放过 ⇒ 宽度用玩家的（理由同 `set_window_rect`）
+	if _height_owned and _user_rect.size.x > 1.0:
+		w = _user_rect.size.x
 	_base_rect = Rect2(x, y, w, h)
 	_apply_rect(_base_rect)
 
@@ -633,6 +697,18 @@ func _refresh_collapsed() -> void:
 func _effective_rect() -> Rect2:
 	if _collapsed and dock_rect.size.x > 1.0 and dock_rect.size.y > 1.0:
 		return dock_rect
+	# ★★ 2026-10-25（「结算页的打捞区不见了」）：
+	#   `_height_owned` 的窗（结算页按内容反推 / 设置窗按栏目反推）**高度必须让位给
+	#   刚算出来的 `_base_rect`**。玩家历史上拖过一次这扇窗（桌面端会把矩形写进
+	#   `user://window_layout.cfg`），`_user_rect` 就永久压过 `_base_rect` ——
+	#   `set_window_height()` 只改 `_base_rect`，于是窗高永远停在旧值上，
+	#   而后来加进去的打捞区被 `_content_host.clip_contents` 整段裁掉（症状 = 界面不见）。
+	#   ⇒ 位置仍尊重玩家拖到哪（`_user_rect.position`），尺寸一律用内容算出来的。
+	if _height_owned and _base_rect.size.x > 1.0 and _base_rect.size.y > 1.0:
+		var at := _base_rect.position
+		if _user_rect.size.x > 1.0 and _user_rect.size.y > 1.0:
+			at = _user_rect.position
+		return Rect2(at, _base_rect.size)
 	if _user_rect.size.x > 1.0 and _user_rect.size.y > 1.0:
 		return _user_rect
 	if _base_rect.size.x > 1.0 and _base_rect.size.y > 1.0:
@@ -686,6 +762,11 @@ func _layout_key() -> String:
 func _save_layout() -> void:
 	if not persist_layout:
 		return
+	# ★ 安卓线：移动端窗口按安全区铺满，位置/尺寸不是「玩家资产」——
+	#   存下来只会在下次启动时和 _place_settings 抢控制权（2026-10-19 实测：
+	#   设置窗只占屏幕 92%，右边露出主菜单，就是被上一次的布局顶掉的）。
+	if EveUiScale.is_mobile():
+		return
 	var r := _effective_rect()
 	# ⚠️ 折叠态要存**展开态**的矩形：手机档折叠后 `_effective_rect()` 返回的是
 	#    边缘标签（118×44），把它存下来 ⇒ 下次开局展开就得到一个 118 宽的窗。
@@ -702,6 +783,9 @@ func _save_layout() -> void:
 
 func _load_layout() -> void:
 	if not persist_layout:
+		return
+	# ★ 安卓线：同上 —— 移动端不读历史布局（可能是桌面时代存的）。
+	if EveUiScale.is_mobile():
 		return
 	var d := LAYOUT_STORE.load_window(_layout_key())
 	if d.is_empty():
@@ -752,7 +836,8 @@ static func make_group_header(text: String) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.add_theme_color_override("font_color", Color(0.43, 0.53, 0.58))
-	FONT.fs(l, 9)
+	# 安卓线：移动端分组标题放大（9px 在 6.7 寸屏上读不出来）。
+	FONT.fs(l, 18 if EveUiScale.is_mobile() else 9)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return l
 

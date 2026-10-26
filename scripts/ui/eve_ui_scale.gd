@@ -51,9 +51,14 @@ const CHOICES: Array = [
 ]
 
 
+## ⚠️ 仅探针/验收用：让桌面进程强制走移动端布局。
+##   ⛔ 发布包永远为 false；不要在任何游戏逻辑里写它。
+static var force_mobile := false
+
+
 ## 这是不是移动平台（安卓 / iOS）。
 static func is_mobile() -> bool:
-	return OS.has_feature("mobile")
+	return force_mobile or OS.has_feature("mobile")
 
 
 ## 缩放档在**当前平台**是否生效。

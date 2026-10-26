@@ -1,0 +1,19 @@
+00:00.640  blend            | Read blend: "F:\evezzq\refs\eve_vfx_hits.blend"
+DSH_STAGE {"name": "boot", "t": 1792513528.899, "run": "run-mvgw9u5wccn6"}
+DSH_STAGE {"name": "engine-prelude", "t": 1792513528.899, "run": "run-mvgw9u5wccn6"}
+DSH_GPU {"mode": "eevee", "manual": false, "backend": "n/a: GPU functions for drawing requires the gpu module to be init", "before": {"engine": "BLENDER_EEVEE", "rt": true, "samples": 64}, "configured": "eevee-rt", "after": {"engine": "BLENDER_EEVEE", "rt": true, "ray_method": "SCREEN", "samples": 64}, "fell_back_to_cpu": false, "ok": true}
+DSH_STAGE {"name": "preload-done", "t": 1792513528.899, "run": "run-mvgw9u5wccn6"}
+00:00.687  blend            | Read blend: "F:\evezzq\refs\eve_vfx_hits.blend"
+INFO Draco is available, use library at D:\SteamLibrary\steamapps\common\Blender\5.2\scripts\addons_core\io_scene_gltf2\bf_intern_draco_bridge.dll
+INFO MeshOptimizer is available, use library at D:\SteamLibrary\steamapps\common\Blender\5.2\scripts\addons_core\io_scene_gltf2\bf_intern_meshopt_bridge.dll
+00:25:29 | INFO: Starting glTF 2.0 export
+00:25:29 | INFO: Extracting primitive: RevelationHullMesh
+00:25:29 | INFO: Primitives created: 1
+00:25:29 | INFO: Finished glTF 2.0 export in 0.21599555015563965 s
+
+EXPORTED 3963 4742 (326.24, 163.67, 39.02) center (-424.11, -159.86, 0.0)
+DSH_STAGE {"name": "script-end", "t": 1792513529.347, "run": "run-mvgw9u5wccn6"}
+DSH_STAGE {"name": "done", "t": 1792513529.347, "run": "run-mvgw9u5wccn6"}
+Blender 5.2.2 LTS (hash d13f752e3b9c built 2026-09-15 01:37:04)
+
+Blender quit

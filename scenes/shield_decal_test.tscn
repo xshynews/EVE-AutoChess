@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bgi8l34tvtdc7"]
+
+[ext_resource type="Script" path="res://scripts/visual/shield_decal_test.gd" id="1_decal"]
+
+[node name="ShieldDecalTest" type="Node3D"]
+script = ExtResource("1_decal")

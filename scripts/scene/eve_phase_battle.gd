@@ -122,6 +122,8 @@ func start() -> EveBattleSimulator:
 	sim.setup(own, enemy)
 	# ⚠️ 时限必须在 setup 之后设 —— setup 会把它重置回默认 180s
 	sim.set_time_limit(limit)
+	# ★ 2026-10-23：敌方思考等级随难度档走（0~3）。只改选目标的打分，不改数值。
+	sim.set_ai_level(int(_run.difficulty_row().get("ai_level", 0)))
 	sim.unit_destroyed.connect(_on_unit_destroyed_cb)
 	sim.battle_finished.connect(finished)
 	# ── 阶段 D②③：命中反馈 + 伤害数字 ──

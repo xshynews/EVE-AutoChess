@@ -100,6 +100,18 @@ MODE_CREDITS_NAME,Copyright,版权声明
 MODE_CREDITS_META,Credits · open-source licenses,致谢 · 开源许可
 CARD_GUARD_BORDER_NAME,Guard the Border,守卫边境
 CARD_GUARD_BORDER_CODE,GUARD THE BORDER · Difficulty 1,GUARD THE BORDER · 第 1 难度
+CARD_SIMPLE_NAME,Simple,简单
+CARD_SIMPLE_CODE,GUARD THE BORDER · Tier 1,GUARD THE BORDER · 第 1 档
+CARD_SIMPLE_DESC,"Just click through it. Even if you spend your credits carelessly, you can still reach the end of the border.",点点点就能过。哪怕星币花得乱七八糟，也能打到边境尽头。
+CARD_NORMAL_NAME,Normal,普通
+CARD_NORMAL_CODE,GUARD THE BORDER · Tier 2,GUARD THE BORDER · 第 2 档
+CARD_NORMAL_DESC,"The enemy starts to fight properly: it kills your logistics first and focuses fire on wounded ships. In the mid-to-late game it also sends a whole Caldari missile wolfpack — a formation built to wipe out small ships, so a pile of cheap frigates will not get through.",敌人开始会打：先杀你的后勤、集火残血。到中后期还会派出一整队加达里导弹狼群 —— 那是专门清理小船的编组，光靠一堆便宜护卫舰冲不过去。
+CARD_HARD_NAME,Hard,困难
+CARD_HARD_CODE,GUARD THE BORDER · Tier 3,GUARD THE BORDER · 第 3 档
+CARD_HARD_DESC,"You must read what the enemy brings. Enemy fleets get their own traits and deploy by formation templates, so every round differs in shape and weapon mix — pick the wrong defence type and you cannot break them. It also fields airborne missile wolfpacks: a pile of cheap small ships gets wiped out here.",必须看对面来的是什么船。敌方吃自己的羁绊、按站位模板列阵，阵型和武器构成每一关都不一样，选错防御类型就打不动。另外它有空中小导弹狼群 —— 只堆便宜小船在这里会被清干净。
+CARD_INFERNO_NAME,Inferno,炼狱
+CARD_INFERNO_CODE,GUARD THE BORDER · Tier 4,GUARD THE BORDER · 第 4 档
+CARD_INFERNO_DESC,"All or nothing. The BOSS is a pure armour wall behind a barrier that only an armour-breaking system can tear open — missiles, projectile artillery, hybrid blasters and the laser trait all count, but you must genuinely commit to one line. The enemy also strikes your weak points; without such a system you will not pass.",搏一把。BOSS 是纯装甲墙，身上一层只有「穿甲体系」能撕开的壁垒 —— 导弹、射弹炮、混合炮、激光羁绊都算数，但必须真的往一条线上堆够；敌方还会挑着你的要害打，凑不出这类体系就过不去。
 CARD_GUARD_BORDER_DESC,"Difficulty 1. Fifteen consecutive rounds of skirmishes along the border line; the enemy escalates from roaming pirates to a regular fleet. Clear round 15 to finish, which unlocks Difficulty 2.",第一难度。边境线上连续 15 个回合的遭遇战，敌人从游荡的海盗逐步升级为正规舰队。打完第 15 回合即通关，通关后解锁第二难度。
 CARD_FLEET_ASSEMBLY_NAME,Fleet Assembly,舰队集结
 CARD_FLEET_ASSEMBLY_CODE,FLEET ASSEMBLY · Difficulty 2,FLEET ASSEMBLY · 第 2 难度

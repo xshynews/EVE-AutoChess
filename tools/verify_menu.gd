@@ -163,9 +163,9 @@ func _step_nested_modes() -> void:
 	_ok(_menu._modes.size() == 4, "收起后可见行 = 4（实际 %d）" % _menu._modes.size())
 	_ok(String((_menu._modes[_menu._mode_idx] as Dictionary)["id"]) == "autochess",
 			"收起后选中回落到父项")
-	_ok(_menu._strip_panels.size() == TIERS.ROWS.size(),
+	_ok(_menu._strip_panels.size() == TIERS.DIFFICULTIES.size(),
 			"★ 父项无卡片 ⇒ 右侧回落显示任务关卡（%d 条，实际 %d）"
-					% [TIERS.ROWS.size(), _menu._strip_panels.size()])
+					% [TIERS.DIFFICULTIES.size(), _menu._strip_panels.size()])
 	# 再点父项 ⇒ 展开并自动选中「任务关卡」
 	_menu._on_mode_pressed(_mode_index("autochess"))
 	_ok(bool(_menu._expanded), "再点父项 ⇒ 重新展开")
@@ -190,18 +190,18 @@ func _step_project() -> void:
 
 func _step_table() -> void:
 	print("[2] 难度表")
-	_ok(TIERS.ROWS.size() >= 3, "难度表至少 3 档（实际 %d）" % TIERS.ROWS.size())
+	_ok(TIERS.DIFFICULTIES.size() >= 3, "难度表至少 3 档（实际 %d）" % TIERS.DIFFICULTIES.size())
 	_ok(TIERS.open_count() >= 1, "至少一档已开放（实际 %d）" % TIERS.open_count())
 	# ⛔ id 不许用 pve/pvp —— 无尽模式也属于 PVE，做唯一 key 会一对多
 	var bad := 0
-	for r in TIERS.ROWS:
+	for r in TIERS.DIFFICULTIES:
 		if String(r["id"]) in ["pve", "pvp"]:
 			bad += 1
 	_ok(bad == 0, "难度 id 没用分类标签 pve/pvp（违规 %d 条）" % bad)
-	_ok(bool(TIERS.ROWS[TIERS.default_index()]["open"]),
+	_ok(bool(TIERS.DIFFICULTIES[TIERS.default_index()]["open"]),
 			"默认选中项是【已开放】的那一档")
 	var brief: PackedStringArray = []
-	for r in TIERS.ROWS:
+	for r in TIERS.DIFFICULTIES:
 		brief.append("%s(%d回合,%s)" % [r["name"], int(r["rounds"]),
 				"开" if bool(r["open"]) else "锁"])
 	print("      档位：" + ", ".join(brief))
@@ -232,8 +232,9 @@ func _step_build() -> void:
 		_ok(open_n == 1 and bool(cc[0]["open"]),
 				"只有斗地主可开始（可开始 %d 张，第 0 张=%s）"
 				% [open_n, str(bool(cc[0]["open"]))])
-	_ok(_menu._strip_panels.size() == TIERS.ROWS.size(),
-			"任务关卡出 %d 条难度长条（实际 %d）" % [TIERS.ROWS.size(), _menu._strip_panels.size()])
+	_ok(_menu._strip_panels.size() == TIERS.DIFFICULTIES.size(),
+			"任务关卡出 %d 条难度长条（实际 %d）"
+					% [TIERS.DIFFICULTIES.size(), _menu._strip_panels.size()])
 	_ok(int(_menu._pick["campaign"]) == TIERS.default_index(),
 			"默认选中第 %d 档" % TIERS.default_index())
 
@@ -269,7 +270,8 @@ func _step_switch() -> void:
 			"无分级的模式只出 1 条（实际 %d）" % _menu._strip_panels.size())
 
 	_menu._on_mode_pressed(_mode_index("campaign"))
-	_ok(_menu._strip_panels.size() == TIERS.ROWS.size(), "切回任务关卡恢复 3 条")
+	_ok(_menu._strip_panels.size() == TIERS.DIFFICULTIES.size(),
+			"切回任务关卡恢复 %d 条" % TIERS.DIFFICULTIES.size())
 
 
 

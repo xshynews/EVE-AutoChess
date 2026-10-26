@@ -480,6 +480,20 @@ func _t_run_save_roundtrip() -> void:
 	var cell_v: Vector2i = b.field[0].get("cell", Vector2i.ZERO)
 	_ok(cell_v == Vector2i(1, 2),
 			"★ 棋盘格号还原（ConfigFile 往返 Vector2i）：%s" % str(cell_v))
+	# ★★ 2026-10-25：商店货架必须一起还原。
+	#   症状：读档后商店一片空白 —— `from_dict()` 不发 `offers_changed`
+	#   （那条信号会重摇），HUD 只在信号里重建卡片 ⇒ 数据在、界面空。
+	#   这里守的是**数据这一半**；界面那一半由 battle_scene 读档后显式推一次
+	#   `hud.set_shop_offers(run.offers)` 接上。
+	_ok(b.offers.size() == a.offers.size() and b.offers.size() > 0,
+			"★ 商店货架还原（%d 格，原 %d 格）" % [b.offers.size(), a.offers.size()])
+	var same_offer := true
+	for i in mini(a.offers.size(), b.offers.size()):
+		var ka := String((a.offers[i] as Dictionary).get("ship_key", ""))
+		var kb := String((b.offers[i] as Dictionary).get("ship_key", ""))
+		if ka != kb:
+			same_offer = false
+	_ok(same_offer, "★ 货架逐格同船（不是读档时重摇的）")
 	var bf: Dictionary = b.field[0].get("buffs", {})
 	_ok(absf(float(bf.get("attack_pct", 0.0)) - 0.08) < 1e-6,
 			"★ 永久强化还原（attack_pct=%.2f）" % float(bf.get("attack_pct", 0.0)))

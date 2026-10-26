@@ -225,6 +225,9 @@ func setup(p_ship: EveShip) -> void:
 	_last_pos = ship.body.position
 	position = ship.body.position / METERS_PER_UNIT
 
+	# 护盾壳：开发期可见，用来确认贴花落在壳面的哪里
+	_ensure_shield_fx()
+
 
 ## 切换「布阵态」—— 棋盘显形/隐藏时由 arena 广播下来。
 ##
@@ -1372,3 +1375,102 @@ func _set_bar(bar: MeshInstance3D, fraction: float) -> void:
 func refresh_stance() -> void:
 	if _stance_label:
 		_stance_label.text = EveDestinyMotion.stance_label(ship.stance)
+
+# ------------------------------------------------------------------ 护盾受击
+
+const SHIELD_IMPACT_SCRIPT := preload("res://scripts/visual/eve_shield_impact.gd")
+
+var _shield_fx: Node3D = null
+
+func _all_meshes(root: Node) -> Array[MeshInstance3D]:
+	var out: Array[MeshInstance3D] = []
+	if root is MeshInstance3D:
+		out.append(root)
+	for c in root.get_children():
+		out.append_array(_all_meshes(c))
+	return out
+
+## 舰艏方向，换算到 hull_root 局部空间（锚点布置要用它定「船艏 5 个点」）。
+func _hull_bow_dir() -> Vector3:
+	if hull_root == null:
+		return Vector3(0, 0, -1)
+	var world_bow: Vector3 = global_transform.basis * _bow_local
+	var local: Vector3 = hull_root.global_transform.basis.inverse() * world_bow
+	if local.length_squared() < 1e-8:
+		return Vector3(0, 0, -1)
+	return local.normalized()
+
+## 船体几何在 hull_root 局部空间里的包围盒（模型已归一化到 HULL_REF_LENGTH）。
+func _hull_local_bounds() -> AABB:
+	var box := AABB()
+	var have := false
+	var inv := hull_root.global_transform.affine_inverse()
+	for mi in _all_meshes(hull_root):
+		var a: AABB = inv * mi.global_transform * mi.get_aabb()
+		if not have:
+			box = a
+			have = true
+		else:
+			box = box.merge(a)
+	if not have:
+		box = AABB(Vector3(-1.3, -0.45, -0.65), Vector3(2.6, 0.9, 1.3))
+	return box
+
+## 建护盾节点（含可见壳）。每艘船在 setup 时就建好，
+## 这样「所有船都有壳」而不是「被打过才有壳」。
+func _ensure_shield_fx() -> void:
+	if _shield_fx != null and is_instance_valid(_shield_fx):
+		return
+	if hull_root == null:
+		return
+	_shield_fx = SHIELD_IMPACT_SCRIPT.new()
+	_shield_fx.name = "ShieldImpacts"
+	hull_root.add_child(_shield_fx)
+	_shield_fx.setup(_hull_local_bounds(), tier_level(ship.ship_class), _hull_bow_dir(), ship.ship_key)
+
+## 火力引导：把攻击者位置换算成护盾壳面上的一点（世界米）。
+## 曳光线与命中点都用它，于是火炮看起来打在壳上，而不是打在船体中心。
+func shield_impact_point(world_meters: Vector3) -> Vector3:
+	_ensure_shield_fx()
+	if _shield_fx == null:
+		return world_meters
+	var local := hull_root.to_local(world_meters / METERS_PER_UNIT)
+	var axes: Vector3 = _shield_fx.axes
+	if axes.x < 1e-6:
+		return world_meters
+	# 吸附到最近的固定锚点：曳光线因此只从这几个点打进来
+	var dir: Vector3 = _shield_fx.anchor_dir_for(local)
+	if dir == Vector3.ZERO:
+		# 没有锚点落在吸附范围内 ⇒ 不做假吸附，曳光线仍指向船体
+		return world_meters
+	var on_shell: Vector3 = _shield_fx.anchor_world_local(dir)
+	return hull_root.to_global(on_shell) * METERS_PER_UNIT
+
+## 护盾壳 / 锚点调试小球的可见性（AI 桥与调试面板用）。
+func set_shield_shell_visible(on: bool) -> void:
+	_ensure_shield_fx()
+	if _shield_fx != null and _shield_fx.has_method("set_shell_visible"):
+		_shield_fx.set_shell_visible(on)
+
+
+func set_shield_markers_visible(on: bool) -> void:
+	_ensure_shield_fx()
+	if _shield_fx != null and _shield_fx.has_method("set_markers_visible"):
+		_shield_fx.set_markers_visible(on)
+
+
+## 运行时修改本船护盾贴花配色。
+func set_shield_decal_colors(mid: Color, high: Color, core: Color = Color(0.94, 0.99, 1.0, 1.0)) -> void:
+	_ensure_shield_fx()
+	if _shield_fx != null and _shield_fx.has_method("set_decal_colors"):
+		_shield_fx.set_decal_colors(mid, high, core)
+
+## 护盾命中入口：world_meters 是攻击者的世界坐标（米）。
+func shield_hit_from(world_meters: Vector3) -> void:
+	if hull_root == null or not is_inside_tree():
+		return
+	_ensure_shield_fx()
+	if _shield_fx == null:
+		return
+	_shield_fx.fire(hull_root.to_local(world_meters / METERS_PER_UNIT))
+

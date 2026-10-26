@@ -92,6 +92,11 @@ func set_time_limit(seconds: float) -> void:
 	max_ticks = maxi(int(10.0 * TICK_RATE), int(seconds * TICK_RATE))
 
 
+## 设置敌方思考等级（0~3）。由难度档决定，开打前调用。
+func set_ai_level(level: int) -> void:
+	ai_level = clampi(level, 0, 3)
+
+
 ## 当前时间点的伤害倍率（供 _fire_once 使用）
 ##
 ## 设计意图：时限的前 60% 是完全正常的 EVE 战斗节奏（接敌 / 锁定 / 试探），
@@ -123,6 +128,11 @@ class LogEntry:
 		time = p_time
 		category = p_cat
 		text = p_text
+
+## ★ 2026-10-23：敌方「思考等级」0~3（只影响 team == 1，我方永远按 0 打）。
+## 口径见 `EveCampaignTiers.DIFFICULTIES` 的 `ai_level` 注释。
+## ⚠️ 它改的是**选目标的打分**，不改任何人的数值 —— 难度来自决策，不来自加成。
+var ai_level: int = 0
 
 var ships: Array[EveShip] = []
 var elapsed: float = 0.0
@@ -455,6 +465,19 @@ func _score_target(ship: EveShip, other: EveShip, dist: float) -> float:
 	# 3. 好打程度：目标信号半径越大越容易被炮塔命中
 	score += W_SQUISHY * float(other._extra.get(CIDS.X_SIGNATURE, 40.0))
 
+	# ★ 2026-10-23：难度 = 敌方「会打」的等级（只对 team == 1 生效）。
+	#
+	#   ai_level 1（普通）：**先杀后勤**。
+	#     后勤船一枪不开，但每 2 秒给友军回一层血；放任不管等于白打。
+	#     这一条逼玩家「买了后勤就得护住它」，乱堆一队杂船会被逐个点掉。
+	if ship.team == 1 and ai_level >= 1 and other.is_logistics:
+		score += W_THREAT * 0.9
+	#   ai_level 3（炼狱）：**优先高输出目标**（每点命中收益最大）。
+	#     和「集火残血」叠加后，会先把能打疼它的船拆掉，而不是啃肉盾。
+	if ship.team == 1 and ai_level >= 3:
+		var dps := other.weapon_damage / maxf(0.1, other.weapon_cycle)
+		score += W_THREAT * 0.35 * clampf(dps / 200.0, 0.0, 1.0)
+
 	# 4. 粘性：轻微偏好当前目标。
 	#    ⚠️ 46 轮结论：**防抖不能靠这里**（实测把它从 5 万提到 2000 万仍然逐帧翻
 	#       目标 —— 因为每 tick 重新比较时，另一个候选仍可能反超）。
@@ -564,8 +587,12 @@ func _fire_once(ship: EveShip, target: EveShip) -> void:
 	# ⚠️ 乘上 damage_multiplier()：90 秒后进入火力渐增，
 	#    保证一局必定收尾（详见该函数的说明）。
 	var raw_damage := ship.weapon_damage * multiplier * damage_multiplier()
+	# ★ 2026-10-24：机制壁垒（炼狱 BOSS）—— 未破解时整艘船吃 10% 伤害。
+	#   与抗性分开乘：抗性按伤害类型逐层算，壁垒是整船的机制护盾。
+	raw_damage *= target.incoming_mult
 	var result := EveCombatCore.apply_damage(
-		target.hp, target.resists, raw_damage, ship.weapon_profile, false
+		target.hp, target.resists, raw_damage, ship.weapon_profile, false,
+		ship.armor_pierce
 	)
 	var applied := float(result["applied"])
 

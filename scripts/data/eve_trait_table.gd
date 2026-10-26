@@ -87,6 +87,7 @@ static func members(group: StringName) -> Array[Dictionary]:
 ##   attack_pct     攻击 ×(1+x)（同时乘 weapon_damage 与展示用 attack）
 ##   cycle_pct      开火间隔 ×(1−x)
 ##   speed_pct      移速 ×(1+x)
+##   armor_pierce   对装甲层的穿甲比例（0~1，1 = 完全无视装甲抗性）
 ##
 ## ⚠️ CSV 的表头是「二档效果(累计)」—— 二档取该列的值**替换**一档，不是叠加。
 ##    （数值上也是自洽的：激光炮 ×1.21 = 1.1²，两种读法同值。）
@@ -120,9 +121,9 @@ const EFFECTS: Dictionary = {
 	&"weapon": {
 		"激光炮": {
 			3: {"text": "攻击 ×1.1 · 无视 10% 装甲",
-				"apply": {"attack_pct": 0.10}, "pending": ["无视 10% 装甲"]},
+				"apply": {"attack_pct": 0.10, "armor_pierce": 0.10}, "pending": []},
 			6: {"text": "攻击 ×1.21 · 无视 25% 装甲",
-				"apply": {"attack_pct": 0.21}, "pending": ["无视 25% 装甲"]},
+				"apply": {"attack_pct": 0.21, "armor_pierce": 0.25}, "pending": []},
 		},
 		"混合炮": {
 			3: {"text": "攻击 ×1.1 · 命中减速 15%",

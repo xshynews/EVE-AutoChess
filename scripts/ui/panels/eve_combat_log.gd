@@ -19,6 +19,15 @@ extends "res://scripts/ui/eve_window.gd"
 
 const MAX_LINES := 120
 
+## ★ 2026-10-25（用户：「左下角战斗日志需要过滤掉命中造成的伤害数值」）
+##
+## 全工程只有 `eve_battle_simulator._log(&"fire", "%s → %s  %s  %.0f 伤害")`
+## 一处写 `&"fire"`，它承载的就是「谁打中谁、掉多少」这一行 ——
+## 每 tick 都可能出一条，把真正要看的「破层 / 摧毁 / 阶段 / 经济」全刷走了。
+##
+## ⛔ 只挡这一类：`damage`（被摧毁）与 `break`（破层）是战局结论，必须留。
+const HIDDEN_CATS: Array[StringName] = [&"fire"]
+
 const CAT_COLORS := {
 	&"fire": Color(0.62, 0.80, 0.86),
 	&"damage": Color(0.88, 0.45, 0.35),
@@ -83,6 +92,9 @@ func _build_contents() -> void:
 
 ## 写入一条日志。entry 需要 .time / .category / .text 三个字段
 func append_entry(entry) -> void:
+	# ★ 见 `HIDDEN_CATS`：命中伤害不进列表（也不进 `_entries`，省内存）
+	if _cat_of(entry) in HIDDEN_CATS:
+		return
 	_entries.append(entry)
 	if _entries.size() > 400:
 		_entries = _entries.slice(_entries.size() - 300)

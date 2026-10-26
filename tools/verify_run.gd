@@ -2253,7 +2253,7 @@ func _step_d_hit() -> void:
 	_expect(fx_off == 0, "★ 关掉特效开关 ⇒ spawn_hit 出 0 条（%d）" % fx_off)
 
 	# ── 2026-10-17：受击分层 ──────────────────────────────────────
-	# ① 三条分层路径都必须能造出特效（layer 是新参数，不能只测默认分支）
+	# ① 分层参数不能只测默认分支：armor / hull 各造一条，shield 必须**不**造（见下）
 	#
 	# ⚠️⚠️ 用**独立探针实例**，绝不往场上那个 `battle_fx` 里塞节点：
 	#    `clear()` 走的是 `queue_free()`（延迟释放），本帧节点仍挂在树上 ——
@@ -2267,8 +2267,13 @@ func _step_d_hit() -> void:
 		probe_bfx.call("spawn_hit", Vector3.ZERO, 3, lay)
 		layer_counts.append(int(probe_bfx.call("active_count")))
 	probe_bfx.free()
-	_expect(layer_counts[0] > 0 and layer_counts[1] > 0 and layer_counts[2] > 0,
-			"★ 三条受击分层都能出特效（shield/armor/hull = %s）" % str(layer_counts))
+	# ⚠️ 2026-10-21 起 **shield 层故意不出面积特效**（用户：「去掉蓝色命中环，
+	#    只保留贴花」；护盾受击改由船体曲面贴花 `eve_shield_impact.gd` 表现）。
+	#    所以这里断言的正确形状是「shield = 0（不叠第二套环）、armor/hull 各 +1」，
+	#    而不是原来的「三条都 > 0」—— 那条旧断言对应的是已被删掉的护盾命中环。
+	_expect(layer_counts[0] == 0 and layer_counts[1] > 0 and layer_counts[2] > layer_counts[1],
+			"★ 受击分层特效：shield 不出面积特效、armor/hull 各 +1（shield/armor/hull = %s）"
+					% str(layer_counts))
 
 	# ② 船体闪光：拿场上任意一艘船直接调，计数必须 +1
 	#    ⚠️ 不用 `is_flashing()` 断言 —— 快进时一帧内可能闪完几十次，状态读数会漏。

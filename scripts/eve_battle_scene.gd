@@ -37,6 +37,7 @@ const HUD_SCRIPT := preload("res://scripts/ui/eve_hud_root.gd")
 const RUN_STATE_SCRIPT := preload("res://scripts/core/eve_run_state.gd")
 ## 对局存档（`user://run.cfg`）—— 见 `EveRunStore` 顶注。
 const RUN_STORE := preload("res://scripts/core/eve_run_store.gd")
+const TIERS := preload("res://scripts/data/eve_campaign_tiers.gd")
 ## 舰队装配（把 run 的名单变成 EveShip 实例）—— 从本文件搬出的纯装配逻辑。
 const FLEET_FACTORY := preload("res://scripts/scene/eve_fleet_factory.gd")
 ## 拖放布阵控制器 —— 从本文件搬出的整个拖放交互（见其顶注）。
@@ -385,14 +386,31 @@ func _ready() -> void:
 	# ★ 2026-10-10（审查 2#2）：「继续上一局」—— 主菜单的入口会置 `resume_requested`。
 	#    ⚠️ 是**显式**恢复，不是"进来就自动顶掉新开局"：拿不到/读不出档就照常开新局。
 	if RUN_STORE.resume_requested:
-		RUN_STORE.resume_requested = false
+		# 2026-10-26：先读档，成功才清 pending_difficulty。
+		# 旧写法一进来就清 —— 读档失败往下走时难度已被吞掉，
+		# 只能沿用 run.difficulty_id 旧值（实测：菜单选炼狱，进游戏是简单）。
 		var saved := RUN_STORE.load_run()
 		if not saved.is_empty() and run.from_dict(saved):
+			RUN_STORE.resume_requested = false
+			RUN_STORE.pending_difficulty = ""
+			# ★★ 2026-10-25：**货架必须显式推一次给 HUD**。
+			#   `from_dict()` 刻意不发 `offers_changed`（那条信号会重摇商店），
+			#   而 HUD 的商店卡只在 `offers_changed` 时重建 ⇒ 读档后商店一片空白，
+			#   玩家看到「继续上局 = 商店没了」（真机实报）。
+			#   ⛔ 别改成「读档后 roll_shop()」—— 那会把玩家存盘时那批货换掉。
+			hud.set_shop_offers(run.offers)
 			hud.append_log({"time": 0.0, "category": &"system",
 					"text": "继续上一局：节点 %d／%d · %s"
 					% [run.node_index, EveNodeTable.TOTAL, run.stage_label()]})
 			begin_prep()
 			return
+	# 读档没成功也把标志清掉（别每局都试一次），但难度选择要保留
+	RUN_STORE.resume_requested = false
+	# ★ 主菜单选的难度档（默认「简单」）；存档恢复走上面的分支，不看这里。
+	if RUN_STORE.pending_difficulty != "":
+		run.difficulty_id = String(TIERS.difficulty(
+				RUN_STORE.pending_difficulty).get("id", "simple"))
+		RUN_STORE.pending_difficulty = ""
 	run.start_run()
 	begin_prep()
 
@@ -751,7 +769,12 @@ func _snap_fleet_facing() -> void:
 ##     0.15 倍是"开战瞬间有个起步感"的观感调参，与朝向无关。
 ##     **别把朝向的职责塞回 velocity**（那就是旧写法的病根）。
 func _place_fleet(fleet: Array[EveShip], team: int) -> void:
-	var positions := arena.default_formation(fleet.size(), team)
+	# ★ 2026-10-23：困难 / 炼狱档的敌方按编组自带站位模板列阵。
+	#   简单 / 普通档保持通用阵列（`formation` 传空 = 老行为）。
+	var formation := ""
+	if team == 1 and bool(run.difficulty_row().get("enemy_formation", false)):
+		formation = String(EveEnemyComps.by_id(run.enemy_comp_id()).get("formation", ""))
+	var positions := arena.default_formation(fleet.size(), team, formation)
 	# ⚠️ 这里必须显式标 Array，不能写 `var entries := ...`：
 	#    `:=` 会按第一个分支把类型推断成 Array[Dictionary]，
 	#    而 team == 1 时表达式给的是裸 []（Array）→ 运行时报
@@ -1454,7 +1477,19 @@ func _on_shot_fired(attacker: EveShip, target: EveShip, hit: bool,
 		quality: int, damage: float) -> void:
 	if attacker == null or target == null:
 		return
-	arena.fx_tracer(attacker.body.position, target.body.position, hit, quality)
+	# ★ 2026-10-21 火力引导：先把受击层算出来，好让曳光线指向「壳面」而不是船体中心。
+	#   护盾还在时，视觉命中点取目标护盾朝向攻击者的那一面；
+	#   否则仍用船体位置。
+	var layer := _hit_layer(target)
+	var vis := arena.get_ship_visual(target.id)
+	var aim: Vector3 = target.body.position
+	if hit and layer == &"shield" and vis != null and vis.has_method("shield_impact_point"):
+		aim = vis.shield_impact_point(attacker.body.position)
+	if hit and layer == &"shield":
+		# 护盾层：画炮击亮痕（攻击本身），头部停在壳面锚点上
+		arena.fx_artillery(attacker.body.position, aim, quality)
+	else:
+		arena.fx_tracer(attacker.body.position, aim, hit, quality)
 	# 阶段 D④：开火 + 命中音。
 	#
 	# ⚠️ 这两行的调用频率极高（一次 sim.step 里可能上百次），
@@ -1476,13 +1511,18 @@ func _on_shot_fired(attacker: EveShip, target: EveShip, hit: bool,
 		#    而且不报错。
 		return
 	audio.play_hit(quality)
-	# ★ 2026-10-17：视觉分层 —— 先判真实受击层，再交给特效层与船体闪光。
-	#   `fx_hit` 的 layer 决定爆点颜色/尺寸，`flash_hit` 决定船体泛什么色。
-	var layer := _hit_layer(target)
-	arena.fx_hit(target.body.position, quality, layer)
-	var vis := arena.get_ship_visual(target.id)
+	# ★ 视觉分层：护盾层不再画面积特效（蓝环已删），只留贴花；
+	#   装甲/结构层仍走原来的爆点。
+	arena.fx_hit(aim, quality, layer)
 	if vis != null and vis.has_method("flash_hit"):
 		vis.flash_hit(layer)
+	# ★ 护盾层受击：在目标船的蛋形护盾上落一块曲面贴花。
+	#   护盾本身不显形，只有贴花出现；来向取攻击者位置，
+	#   所以贴花落在「面向敌人」的那一侧。
+	#   ⚠️ 贴花的槽位上限由单个贴花的覆盖率推导（见 eve_shield_impact.gd），
+	#      落进已有贴花角度范围内会复用那个槽位，不会无限堆节点。
+	if layer == &"shield" and vis != null and vis.has_method("shield_hit_from"):
+		vis.shield_hit_from(attacker.body.position)
 	var sp := arena.world_to_screen(target.body.position + Vector3(0, 4, 0))
 	hud.pop_damage(sp, damage, quality, true)
 
@@ -1697,3 +1737,844 @@ func _end_drag(pos: Vector2) -> void:
 ## 取消：ESC / 右键
 func _cancel_drag(msg: String = "") -> void:
 	_deploy.cancel_drag(msg)
+
+
+# ══════════════════════════════════════════════════════════════════
+#  AI 操作面（2026-10-26）—— 外部 AI 驱动本局的唯一入口
+# ══════════════════════════════════════════════════════════════════
+#
+# 红线（与 `scripts/core/eve_ai_api.gd` 顶注同源）：
+#   · 每个动作都走**玩家点击的同一条代码路径**（HUD 信号 → 同一个 handler），
+#     不另造第二份真相源；规则只在 EveRunState 里判一次。
+#   · 返回值统一 Dictionary（ok / reason），AI 靠 reason 知道「为什么没生效」。
+#   · ⛔ 不许在这里做规则判断，也不许直接改 run 的字段绕过判定。
+#
+# 这一节的方法同时是 `ai_*` 桥的落地点，改名要同步改 eve_ai_api.gd。
+
+
+func ai_kind() -> String:
+	return "battle"
+
+
+## 全量快照（AI 的「眼睛」）。构造在 eve_ai_api.build_battle_snapshot，
+## 这里只做转发 —— 场景树里谁被找到就让谁自己报，API 不认场景。
+func ai_snapshot() -> Dictionary:
+	return EveAiBridge.battle_snapshot(self)
+
+
+func ai_own_ships() -> Array[EveShip]:
+	return _get_own_ships()
+
+
+func ai_enemy_ships() -> Array[EveShip]:
+	return _get_enemy_ships()
+
+
+func ai_is_paused() -> bool:
+	return _paused
+
+
+## ── 经济 / 商店 ──────────────────────────────────────────────
+func ai_buy(index: int) -> Dictionary:
+	if run.phase != EveRunState.Phase.PREP:
+		return {"ok": false, "reason": "只有准备阶段能买船"}
+	var r := run.buy(index)
+	return _ai_result(r)
+
+
+func ai_refresh() -> Dictionary:
+	if run.phase != EveRunState.Phase.PREP:
+		return {"ok": false, "reason": "只有准备阶段能刷新"}
+	return _ai_result(run.refresh())
+
+
+func ai_levelup() -> Dictionary:
+	if run.phase != EveRunState.Phase.PREP:
+		return {"ok": false, "reason": "只有准备阶段能买经验"}
+	return _ai_result(run.levelup())
+
+
+func ai_set_shop_lock(on: bool) -> Dictionary:
+	run.set_shop_locked(on)
+	hud.set_shop_locked(run.shop_locked)
+	return {"ok": true}
+
+
+## ── 布阵（与拖放控制器走同一批 RunState 入口）────────────────
+func ai_deploy(bench_index: int, row: int, col: int) -> Dictionary:
+	if run.phase != EveRunState.Phase.PREP:
+		return {"ok": false, "reason": "只有准备阶段能布阵"}
+	var r := run.deploy_from_bench(bench_index, row, col)
+	var out := _ai_result(r)
+	_refresh_run_ui()
+	return out
+
+
+func ai_move(field_index: int, row: int, col: int) -> Dictionary:
+	if run.phase != EveRunState.Phase.PREP:
+		return {"ok": false, "reason": "只有准备阶段能调位"}
+	var r := run.move_field(field_index, row, col)
+	var out := _ai_result(r)
+	_refresh_run_ui()
+	return out
+
+
+func ai_recall(field_index: int) -> Dictionary:
+	if run.phase != EveRunState.Phase.PREP:
+		return {"ok": false, "reason": "只有准备阶段能撤回"}
+	var r := run.recall_to_bench(field_index)
+	var out := _ai_result(r)
+	_refresh_run_ui()
+	return out
+
+
+func ai_sell_bench(bench_index: int) -> Dictionary:
+	var r := run.sell_from_bench(bench_index)
+	var out := _ai_result(r)
+	_refresh_run_ui()
+	return out
+
+
+func ai_sell_field(field_index: int) -> Dictionary:
+	var r := run.sell_from_field(field_index)
+	var out := _ai_result(r)
+	_refresh_run_ui()
+	return out
+
+
+## 姿态。⚠️ HUD 那条 `stance_changed` 信号**至今没有发射方**（UI 未接），
+## 所以这里直接写 ship.stance 再刷可视 —— 与舰队出厂时改 stance 是同一条数据路径。
+func ai_stance(ship_id: int, stance: int) -> Dictionary:
+	if stance < 0 or stance > 4:
+		return {"ok": false, "reason": "stance 只接受 0~4（接近/保持/环绕/风筝/手动）"}
+	var found: EveShip = null
+	for s in _get_own_ships():
+		if s.id == ship_id:
+			found = s
+			break
+	if found == null:
+		return {"ok": false, "reason": "找不到 id=%d 的我方船" % ship_id}
+	found.stance = stance
+	var visual := arena.get_ship_visual(ship_id)
+	if visual != null and visual.has_method("refresh_stance"):
+		visual.refresh_stance()
+	return {"ok": true, "data": {"id": ship_id, "stance": stance}}
+
+
+## ── 流程 ────────────────────────────────────────────────────
+func ai_start_battle() -> void:
+	_on_start_battle_requested()
+
+
+func ai_pause(on: bool) -> void:
+	set_paused(on)
+
+
+func ai_restart() -> void:
+	restart_run()
+
+
+func ai_back_to_menu() -> void:
+	_do_back_to_menu()
+
+
+func ai_fast_forward(seconds: float) -> void:
+	debug_fast_forward_battle(seconds)
+
+
+## 事件节点状态：四选一开着 / 选船面板开着 / 可选哪些 / 正在等谁选船。
+## AI 靠它决定是发 event_choose 还是发 event_ship。
+func ai_event_state() -> Dictionary:
+	var pick_open := false
+	if hud != null and hud.has_method("ship_pick_is_open"):
+		pick_open = bool(hud.call("ship_pick_is_open"))
+	return {
+		"open": bool(hud.event_is_open()) if hud != null else false,
+		"ship_pick_open": pick_open,
+		"options": run.event_options() if run != null else [],
+		"pending_event": String(_prep_phase.pending_event),
+	}
+
+
+## 事件四选一。⚠️ 同样要返回真实结果（无效 / 已获取过会被拒）。
+func ai_event_choose(id: StringName) -> Dictionary:
+	if run == null:
+		return {"ok": false, "reason": "run 未就绪"}
+	if not run.can_pick_event(id):
+		return {"ok": false, "reason": "这条增益选不了（已获取过或 id 无效）"}
+	_prep_phase.on_event_chosen(id)
+	return {"ok": true, "data": {"id": String(id)}}
+
+
+## 事件节点选船。⚠️ 面板没开 / 下标越界都要说清楚。
+func ai_event_ship(index: int) -> Dictionary:
+	if _prep_phase.pending_event == &"":
+		return {"ok": false, "reason": "当前没有等待选船的事件"}
+	if index < 0 or index >= _prep_phase.ship_pick_cache.size():
+		return {"ok": false, "reason": "选船下标越界（0~%d）" % (_prep_phase.ship_pick_cache.size() - 1)}
+	_prep_phase.on_event_ship_picked(index)
+	return {"ok": true, "data": {"index": index}}
+
+
+func ai_result_next() -> void:
+	_resolve_phase.on_result_next()
+
+
+func ai_result_end() -> void:
+	_resolve_phase.on_result_end()
+
+
+## 打捞第 index 艘。
+## ⚠️ 必须把 `run.salvage_order()` 的**真实结果**返回去：
+##    早版本这里无条件 `return {"ok": true}`，把游戏的拒绝也吞了 ——
+##    外部 AI 以为每发都成功，对着同一个下标无限重试，
+##    而残骸没清空时「继续」又会一直弹确认框 ⇒ 死循环（实测卡死 454 秒）。
+func ai_salvage(index: int) -> Dictionary:
+	if run == null:
+		return {"ok": false, "reason": "run 未就绪"}
+	var r := run.salvage_order([index])
+	var out := _ai_result(r)
+	if not bool(out.get("ok", false)):
+		# 被拒时同步一次打捞区，让下一次读到最新的残骸列表
+		_refresh_salvage_area()
+	return out
+
+
+func ai_salvage_zero() -> void:
+	_on_salvage_pick_zero()
+
+
+## ── 确认框（残骸没捞完就点「继续」会弹的那个）────────────────
+##
+## ⚠️ 2026-10-26 实测：AI 在 RESOLVE 里反复发 result_next 却卡住不动，
+##    真因就是这个弹窗在等一次确认 —— 没有这个口，AI 永远过不去结算。
+func ai_dialog_state() -> Dictionary:
+	var open := false
+	if hud != null and hud.has_method("salvage_ask_open"):
+		open = bool(hud.call("salvage_ask_open"))
+	return {
+		"salvage_ask_open": open,
+		"any_open": open,
+	}
+
+
+func ai_dialog_confirm() -> Dictionary:
+	if hud != null and hud.has_method("salvage_ask_open") and bool(hud.call("salvage_ask_open")):
+		hud.call("confirm_salvage_ask")
+		return {"ok": true}
+	return {"ok": false, "reason": "没有开着的确认框"}
+
+
+func ai_dialog_cancel() -> Dictionary:
+	if hud != null and hud.has_method("salvage_ask_open") and bool(hud.call("salvage_ask_open")):
+		hud.call("cancel_salvage_ask")
+		return {"ok": true}
+	return {"ok": false, "reason": "没有开着的确认框"}
+
+
+## ── 相机 / 取景 ─────────────────────────────────────────────
+func ai_camera(args: Dictionary) -> Dictionary:
+	if arena == null or arena.orion_cam == null:
+		return {"ok": false, "reason": "相机未就绪"}
+	var cam: Node = arena.orion_cam
+	if args.has("yaw"):
+		cam.set_yaw_target(deg_to_rad(float(args["yaw"])))
+	if args.has("pitch"):
+		cam.set_pitch_target(deg_to_rad(float(args["pitch"])))
+	if args.has("zoom"):
+		cam.set_zoom_target(float(args["zoom"]))
+	if args.has("focus"):
+		var f: Array = args["focus"]
+		if f.size() == 3:
+			cam.set_focus_point(Vector3(float(f[0]), float(f[1]), float(f[2])))
+	return {"ok": true, "data": {
+		"yaw": rad_to_deg(cam.get_yaw()),
+		"pitch": rad_to_deg(cam.get_pitch()),
+		"zoom": cam.get_zoom(),
+	}}
+
+
+func ai_frame(mode: String) -> Dictionary:
+	if arena == null:
+		return {"ok": false, "reason": "竞技场未就绪"}
+	match mode:
+		"board":
+			arena.frame_board()
+		"own":
+			arena.frame_own_zone()
+		_:
+			arena.frame_battlefield()
+	return {"ok": true}
+
+
+## ── 特效调色（2026-10-21 那套颜色接口的 AI 入口）─────────────
+func ai_colors(args: Dictionary) -> Dictionary:
+	if arena == null:
+		return {"ok": false, "reason": "竞技场未就绪"}
+	if args.has("artillery_core") and args.has("artillery_edge"):
+		arena.set_artillery_colors(_ai_color(args["artillery_core"]), _ai_color(args["artillery_edge"]))
+	if args.has("decal_mid") and args.has("decal_high"):
+		var core := _ai_color(args.get("decal_core", [0.94, 0.99, 1.0, 1.0]))
+		arena.set_shield_decal_colors(_ai_color(args["decal_mid"]), _ai_color(args["decal_high"]), core)
+	return {"ok": true}
+
+
+## ── 调试可见性 ──────────────────────────────────────────────
+func ai_shell(on: bool) -> Dictionary:
+	for s in _get_own_ships():
+		var v := arena.get_ship_visual(s.id)
+		if v != null and v.has_method("set_shield_shell_visible"):
+			v.set_shield_shell_visible(on)
+	return {"ok": true}
+
+
+func ai_markers(on: bool) -> Dictionary:
+	for s in _get_own_ships():
+		var v := arena.get_ship_visual(s.id)
+		if v != null and v.has_method("set_shield_markers_visible"):
+			v.set_shield_markers_visible(on)
+	return {"ok": true}
+
+
+
+
+# ══════════════════════════════════════════════════════════════════
+#  AI 操作面 · 鼠标层（2026-10-26）
+# ══════════════════════════════════════════════════════════════════
+#
+# 用户定案：**不准后台操作**。AI 必须像人一样挪鼠标、点按钮、拖船。
+# 所以这一层不做任何「直接调 handler」，只做两件事：
+#   ① `ai_ui_map()` —— 把界面上**所有可点东西的屏幕矩形**报出来（传感器）；
+#   ② `ai_mouse_*()` —— 合成真正的 InputEvent，走 Godot 的输入管线，
+#      并且 `Input.warp_mouse()` 让**真实光标也跟着动**（观众才看得见）。
+#
+# ⚠️ 为什么必须走输入管线而不是直接 emit pressed：
+#    Control 的点击要经过 GUI 命中测试（_gui_input），直接 emit 会绕过
+#    悬停态 / 按下态 / 焦点，很多按钮看着点了其实没反应；
+#    而拖拽布阵走的是 `_input` → `_try_begin_drag` → `_end_drag`，
+#    只有真的鼠标事件序列才能驱动。
+
+## 界面上所有可点元素的屏幕矩形。
+##
+## 返回：
+##   {
+##     "buttons": [{"name": "...", "rect": [x,y,w,h], "path": "..."}],
+##     "shop_cards": [{"index": i, "rect": [...]}],
+##     "bench_slots": [{"index": i, "rect": [...]}],
+##     "cells": [{"row": r, "col": c, "rect": [...]}],   # 只有可放置的格
+##     "viewport": [w, h]
+##   }
+func ai_ui_map() -> Dictionary:
+	var out := {
+		"buttons": [],
+		"shop_cards": [],
+		"bench_slots": [],
+		"event_cards": [],
+		"cells": [],
+		"viewport": [get_viewport().get_visible_rect().size.x,
+				get_viewport().get_visible_rect().size.y],
+	}
+	if hud == null:
+		return out
+
+	# ① 所有可见 Button（带可读名字）
+	var btns: Array[Button] = []
+	_collect_buttons(hud, btns)
+	for b in btns:
+		if not b.is_visible_in_tree() or not b.mouse_filter == Control.MOUSE_FILTER_STOP:
+			continue
+		var r: Rect2 = b.get_global_rect()
+		if r.size.x <= 0.0 or r.size.y <= 0.0:
+			continue
+		(out["buttons"] as Array).append({
+				"name": _btn_label(b),
+				"rect": [r.position.x, r.position.y, r.size.x, r.size.y],
+				"path": String(b.get_path()),
+			})
+
+	# ② 商店 5 张卡
+	var shop = hud.get("shop_window")
+	if shop != null and is_instance_valid(shop):
+		var row = shop.get("_cards_row")
+		if row != null:
+			for i in (row as HBoxContainer).get_child_count():
+				var c: Control = (row as HBoxContainer).get_child(i)
+				# ⚠️ 商店卡是 PanelContainer（不是 Button）—— 按 Button 过滤会一张都采不到。
+				if c.is_visible_in_tree():
+					var cr: Rect2 = c.get_global_rect()
+					(out["shop_cards"] as Array).append({
+							"index": i,
+							"rect": [cr.position.x, cr.position.y, cr.size.x, cr.size.y],
+							"path": String(c.get_path()),
+						})
+
+	# ③ 备战席 8 格（ EveBenchRail.slot_center_x + 自身全局矩形 ）
+	var rail = hud.get("bench_rail")
+	if rail != null and is_instance_valid(rail) and rail.has_method("slot_center_x"):
+		var rr: Rect2 = (rail as Control).get_global_rect()
+		for i in 8:
+			var cx: float = rail.call("slot_center_x", i)
+			(out["bench_slots"] as Array).append({
+					"index": i,
+					"rect": [rr.position.x + cx - 40.0, rr.position.y,
+						80.0, rr.size.y],
+				})
+
+	# ③b 事件 / 选船面板的四张卡（PanelContainer，不是 Button ⇒ 单独采）
+	var ew = hud.get("event_window")
+	if ew != null and is_instance_valid(ew) and (ew as Control).is_visible_in_tree():
+		var cs = ew.get("_cards")
+		if cs is Array:
+			for i in (cs as Array).size():
+				var w: Dictionary = (cs as Array)[i]
+				var node: Control = w.get("root")
+				if node == null or not is_instance_valid(node) or not node.is_visible_in_tree():
+					continue
+				var er: Rect2 = node.get_global_rect()
+				(out["event_cards"] as Array).append({
+						"index": i,
+						"rect": [er.position.x, er.position.y, er.size.x, er.size.y],
+						"path": String(node.get_path()),
+					})
+
+	# ④ 棋盘格（只给「放得下」的：我方区 + 非隔离）
+	if arena != null and arena.board != null:
+		for row in 11:
+			if not arena.board.is_mine_zone(row):
+				continue
+			for col in 11:
+				# ⚠️ 走**游戏自己的链**：board_cell_to_meters() → world_to_screen()。
+				#   它与 screen_to_cell() 是同一套单位换算的反向，
+				#   自己拼 to_global + unproject 会踩单位的坑（实测两种错法：
+				#   全挤在 3px 内 / 飞到屏幕外几万像素）。
+				var sp: Vector2 = arena.world_to_screen(arena.board_cell_to_meters(row, col))
+				(out["cells"] as Array).append({
+						"row": row, "col": col,
+						"rect": [sp.x - 26.0, sp.y - 26.0, 52.0, 52.0],
+					})
+	return out
+
+
+
+
+# ══════════════════════════════════════════════════════════════════
+#  鼠标层 · 坐标校准（2026-10-26）
+# ══════════════════════════════════════════════════════════════════
+#
+# 病象：光标明明在按钮上，点到的却是旁边那个；右上角一排按钮系统性偏移，
+#       左侧模式栏又不偏。
+#
+# 根因（读 Godot 源码 + 实测确认）：
+#   `Input.warp_mouse()` 走的是 **DisplayServer**，吃的是【窗口坐标】；
+#   而 `Control.get_global_rect()` 给的是【视口坐标】。
+#   两者之间隔着标题栏 / 边框 / 拉伸letterbox，差值随窗口大小变化
+#   （本机 2064×1191 的窗口实测差 102px）。
+#
+# 解法：**不信任何一方的坐标，用命中测试反查**。
+#   ① `ai_calibrate_mouse()` 用一个已知控件当靶子，量出「视口坐标 → warp 坐标」
+#      的修正量，缓存起来；
+#   ② 之后所有 warp 都先过这个修正；
+#   ③ 点击 / 拖拽前再 `ai_verify_point()` 复核一次，偏了就再修。
+
+## 视口坐标 → warp_mouse 坐标 的修正量（0,0 = 已经对齐）
+var _mouse_fix := Vector2.ZERO
+var _mouse_calibrated := false
+
+
+## 量一次坐标修正。用「第一个可见按钮」当靶子。
+##
+## 做法：把光标挪到靶子的报告中心，读 `gui_get_hovered_control()`。
+## 命中 ⇒ 修正为 0；没命中 ⇒ 在附近网格里搜，找到命中的那一格，
+## 用「实际命中位置 − 报告中心」当修正量。
+func ai_calibrate_mouse() -> Dictionary:
+	var vp := get_viewport()
+	if vp == null:
+		return {"ok": false, "reason": "no viewport"}
+	var target: Control = null
+	var btns: Array[Button] = []
+	_collect_buttons(hud if hud != null else self, btns)
+	for b in btns:
+		if b.is_visible_in_tree() and b.mouse_filter == Control.MOUSE_FILTER_STOP:
+			target = b
+			break
+	if target == null:
+		_mouse_calibrated = true
+		_mouse_fix = Vector2.ZERO
+		return {"ok": true, "data": {"fix": [0, 0], "note": "no target, assume aligned"}}
+
+	var r: Rect2 = target.get_global_rect()
+	var c := r.position + r.size * 0.5
+	_mouse_fix = Vector2.ZERO
+	if await _hit_at(c) == target:
+		_mouse_calibrated = true
+		return {"ok": true, "data": {"fix": [0, 0], "target": String(target.name)}}
+
+	# 搜：以报告中心为原点，±160 范围内按 20px 网格找
+	var best := Vector2.ZERO
+	for ring in range(1, 9):
+		var step := 20.0 * float(ring)
+		for a in range(8):
+			var ang := float(a) * PI * 0.25
+			var p := c + Vector2(cos(ang), sin(ang)) * step
+			if await _hit_at(p) == target:
+				best = p - c
+				break
+		if best != Vector2.ZERO:
+			break
+	if best == Vector2.ZERO:
+		# 找不到就保持 0，调用方会退化为螺旋搜索
+		_mouse_calibrated = true
+		return {"ok": true, "data": {"fix": [0, 0], "note": "target not found nearby"}}
+	_mouse_fix = best
+	_mouse_calibrated = true
+	return {"ok": true, "data": {
+		"fix": [best.x, best.y],
+		"target": String(target.name),
+		"reported_center": [c.x, c.y],
+		"real_center": [c.x + best.x, c.y + best.y],
+	}}
+
+
+## 把光标挪到 (x,y) 并回报那一格到底命中谁。内部用。
+func _hit_at(p: Vector2) -> Control:
+	Input.warp_mouse(p)
+	var m := InputEventMouseMotion.new()
+	m.position = p
+	m.global_position = p
+	Input.parse_input_event(m)
+	# 等两帧，让 DisplayServer 把真实鼠标事件喂回来
+	# （只等一帧会读到上一次的位置 —— 这就是「偏移」的另一个来源）
+	await get_tree().create_timer(0.05).timeout
+	var vp := get_viewport()
+	return vp.gui_get_hovered_control() if vp != null else null
+
+
+## 把光标挪到 (x,y) 并回报**真正命中**的控件（诊断用）。
+func ai_hover(x: float, y: float) -> Dictionary:
+	ai_mouse_move(x, y)
+	await get_tree().create_timer(0.12).timeout
+	var vp := get_viewport()
+	if vp == null:
+		return {"ok": false, "reason": "no viewport"}
+	var c := vp.gui_get_hovered_control()
+	var out := {"ok": true, "data": {
+		"asked": [x, y],
+		"hovered": String(c.name) if c != null else "",
+		"hovered_text": (c.text.strip_edges() if (c is Button) else ""),
+	}}
+	if c != null:
+		var gr: Rect2 = c.get_global_rect()
+		out["data"]["hovered_rect"] = [gr.position.x, gr.position.y, gr.size.x, gr.size.y]
+	return out
+
+
+## 对外：光标挪到视口坐标 (x,y)（自动过修正量）。
+func ai_mouse_move_vp(x: float, y: float) -> Dictionary:
+	if not _mouse_calibrated:
+		await ai_calibrate_mouse()
+	return ai_mouse_move(x + _mouse_fix.x, y + _mouse_fix.y)
+
+
+## 求某个棋盘格的**真实屏幕位置**。
+##
+## ⚠️ 为什么不直接用 ui_map 里的 rect：那张图是「设计空间」的投影，
+##    而 warp_mouse 吃窗口坐标，且棋盘只在拖拽中才入画、取景还要收敛。##    所以这里用**游戏自己的反函数** `arena.screen_to_cell()` 当场验：
+##    从 ui_map 给的估计位置出发螺旋搜，找到「screen_to_cell 真的返回这一格」的点。
+##
+## 前提：棋盘已入画（拖拽进行中）。没入画时返回估计值 + found=false。
+func ai_cell_point(row: int, col: int) -> Dictionary:
+	if arena == null or arena.board == null:
+		return {"ok": false, "reason": "board 未就绪"}
+	var guess := arena.world_to_screen(arena.board_cell_to_meters(row, col))
+	var result := {"ok": true, "data": {
+			"row": row, "col": col,
+			"x": guess.x, "y": guess.y,
+			"found": false,
+		}}
+	if not arena.board.visible:
+		return result          # 棋盘没入画，只能用估计值
+	var target := Vector2i(row, col)
+	# 先试估计点
+	if arena.screen_to_cell(guess) == target:
+		(result["data"] as Dictionary)["found"] = true
+		return result
+	# 螺旋搜：格子约 52px，按 26px 步长扩 12 圈足够覆盖一整格
+	for ring in range(1, 13):
+		var step := 26.0 * float(ring)
+		for a in range(8):
+			var ang := float(a) * PI * 0.25
+			var p := guess + Vector2(cos(ang), sin(ang)) * step
+			if arena.screen_to_cell(p) == target:
+				(result["data"] as Dictionary)["x"] = p.x
+				(result["data"] as Dictionary)["y"] = p.y
+				(result["data"] as Dictionary)["found"] = true
+				return result
+	return result
+
+
+## 复核：这个视口坐标点是否真的命中目标控件。
+func ai_verify_point(x: float, y: float, path: String) -> Dictionary:
+	var n := get_node_or_null(NodePath(path))
+	if n == null or not (n is Control):
+		return {"ok": false, "reason": "no control " + path}
+	var p := Vector2(x, y) + _mouse_fix
+	var hit := await _hit_at(p)
+	return {"ok": hit == n, "data": {"asked": [x, y], "fix": [_mouse_fix.x, _mouse_fix.y],
+		"hit": String(hit.name) if hit != null else ""}}
+
+
+## 按**节点路径**点某个控件（自带坐标校准，见 eve_main_menu.ai_ui_click 的说明）。
+## AI 从 ui_map 拿到 path，这里负责「点什么中什么」。
+func ai_ui_click_path(path: String) -> Dictionary:
+	var n := get_node_or_null(NodePath(path))
+	if n == null or not (n is Control):
+		return {"ok": false, "reason": "找不到控件 %s" % path}
+	var c := n as Control
+	if not c.is_visible_in_tree():
+		return {"ok": false, "reason": "控件不可见 %s" % path}
+	var r: Rect2 = c.get_global_rect()
+	var cx := r.position.x + r.size.x * 0.5
+	var cy := r.position.y + r.size.y * 0.5
+	var hit := Vector2(cx, cy)
+	var calibrated := false
+
+	# ⓿ 已经量过偏移 ⇒ 先试「中心 + 偏移」。
+	#    对真正的 Button 再用命中测试复核一次（Button 的 mouse_filter 是 STOP，
+	#    hover 能报出它）；PanelContainer 这类永远报不出来，就不复核，直接点。
+	if _mouse_calibrated and _mouse_fix != Vector2.ZERO:
+		var guess := Vector2(cx + _mouse_fix.x, cy + _mouse_fix.y)
+		var need_check := c is BaseButton
+		var ok_guess := true
+		if need_check:
+			ok_guess = await _hit_at(guess) == c
+		if ok_guess:
+			var res0: Dictionary = await ai_mouse_click(guess.x, guess.y)
+			res0["data"]["path"] = path
+			res0["data"]["calibrated"] = true
+			return res0
+		# 复核没过 ⇒ 落到下面的螺旋搜索（带上偏移量当起点）
+		cx = guess.x - _mouse_fix.x
+		cy = guess.y - _mouse_fix.y
+
+	for ring in range(0, 10):
+		var pts: Array = []
+		if ring == 0:
+			pts.append(Vector2(cx, cy))
+		else:
+			var step := 14.0 * float(ring)
+			for a in range(8):
+				var ang := float(a) * PI * 0.25
+				pts.append(Vector2(cx + cos(ang) * step, cy + sin(ang) * step))
+		for q in pts:
+			ai_mouse_move(q.x, q.y)
+			await get_tree().create_timer(0.05).timeout
+			if get_viewport().gui_get_hovered_control() == c:
+				hit = q
+				calibrated = true
+				break
+		# 起点也是候选：即使 hover 复核不了（PanelContainer），也允许直接点中心
+		if not calibrated and ring == 0:
+			calibrated = true
+		if calibrated:
+			break
+	var res: Dictionary = await ai_mouse_click(hit.x, hit.y)
+	res["data"]["path"] = path
+	res["data"]["calibrated"] = calibrated
+	return res
+
+
+## 用鼠标关掉设置窗（误点「≡」打开时用）。
+##
+## ⚠️ 为什么需要：开战按钮和设置按钮在顶条上紧邻，偏移算错就会点到设置；
+##    设置窗开着时其它点击全被它吃掉，所以必须**自己关掉**才能继续。
+func ai_close_settings() -> Dictionary:
+	if hud == null or not hud.settings_is_open():
+		return {"ok": true, "data": {"closed": false}}
+	# 找设置窗里的 CloseBtn（EveWindow 头部右上角，20x18）
+	var found: Control = null
+	var stack: Array[Node] = [hud]
+	while not stack.is_empty():
+		var nd: Node = stack.pop_back()
+		if String(nd.name) == "CloseBtn" and nd is Control \
+				and (nd as Control).is_visible_in_tree() \
+				and (nd as Control).mouse_filter == Control.MOUSE_FILTER_STOP:
+			found = nd as Control
+			break
+		for c in nd.get_children():
+			stack.append(c)
+	if found == null:
+		return {"ok": false, "reason": "找不到设置窗的关闭按钮"}
+	var res: Dictionary = await ai_ui_click_path(String(found.get_path()))
+	await get_tree().create_timer(0.3).timeout
+	res["data"]["closed"] = hud.settings_is_open() == false
+	return res
+
+
+## 按名字 / 文字点按钮（战斗界面用）。
+func ai_ui_click(query: String) -> Dictionary:
+	var q := query.strip_edges()
+	var all: Array[Button] = []
+	if hud != null:
+		_collect_buttons(hud, all)
+	# ⚠️ 必须过滤「真实可见」：暂停遮罩里也有一个「继续」，名字一样但不该被点到
+	#    （实测：点结算页的「继续 · 下一节点」结果命中了 PauseVeil 里的隐藏按钮）。
+	var btns: Array[Button] = []
+	for b in all:
+		if b.is_visible_in_tree() and b.mouse_filter == Control.MOUSE_FILTER_STOP:
+			btns.append(b)
+	var pick: Button = null
+	for b in btns:
+		if String(b.name) == q:
+			pick = b
+			break
+	if pick == null:
+		for b in btns:
+			if b.text.strip_edges() == q:
+				pick = b
+				break
+	if pick == null:
+		for b in btns:
+			if q in b.text or q in String(b.name):
+				pick = b
+				break
+	if pick == null:
+		return {"ok": false, "reason": "找不到按钮「%s」" % query}
+	return await ai_ui_click_path(String(pick.get_path()))
+
+
+func _btn_label(b: Button) -> String:
+	var t := b.text.strip_edges()
+	if t != "":
+		return t
+	return String(b.name)
+
+
+func _collect_buttons(n: Node, out: Array[Button]) -> void:
+	if n is Button:
+		out.append(n)
+	for c in n.get_children():
+		_collect_buttons(c, out)
+
+
+## ── 合成鼠标事件 ─────────────────────────────────────────────
+##
+## ⚠️ 三步缺一不可：
+##   ① `Input.warp_mouse()` 挪**真实光标**（观众看得见，且 GUI 命中测试用它）；
+##   ② 先发一条 `InputEventMouseMotion`，让悬停态 / _process 里的跟随逻辑跟上；
+##   ③ 再发 button down/up。直接发 down 会被当成「光标瞬移后猛点」，
+##      某些 Control 的悬停高亮会跳。
+func ai_mouse_move(x: float, y: float) -> Dictionary:
+	var vp := get_viewport()
+	if vp == null:
+		return {"ok": false, "reason": "no viewport"}
+	var p := Vector2(clampf(x, 0.0, vp.get_visible_rect().size.x),
+			clampf(y, 0.0, vp.get_visible_rect().size.y))
+	Input.warp_mouse(p)
+	var m := InputEventMouseMotion.new()
+	m.position = p
+	m.global_position = p
+	m.relative = p - vp.get_mouse_position()
+	vp.push_input(m, true)
+	return {"ok": true, "data": {"x": p.x, "y": p.y}}
+
+
+## 走一条折线（拖拽 / 让人看见光标在移动）。
+func ai_mouse_path(points: Array, hold: bool = false) -> Dictionary:
+	if points.is_empty():
+		return {"ok": false, "reason": "空路径"}
+	for i in points.size():
+		var pt: Vector2 = points[i]
+		if hold and i == 0:
+			_press(true)
+		ai_mouse_move(pt.x, pt.y)
+		# 每段之间空一拍，让光标「走得见」而不是闪现
+		await get_tree().create_timer(0.03).timeout
+	if hold:
+		_press(false)
+	return {"ok": true}
+
+
+## 只按下 / 只松手（分阶段拖拽用）。
+##
+## ⚠️ 为什么需要拆开：棋盘只在**拖拽进行中**才入画
+##    （`_begin_drag_visual()` → `show_board_for_deploy()`），取景还要平滑收敛。
+##    所以布阵必须是四步：按下（棋盘出现）→ 等收敛 → 读格子 → 移动 → 松手。
+##    一口气拖完（mouse_drag）在棋盘还没入画时就拿到了错误的格子坐标。
+func ai_mouse_down(x: float, y: float, button: int = MOUSE_BUTTON_LEFT) -> Dictionary:
+	ai_mouse_move(x, y)
+	await get_tree().create_timer(0.05).timeout
+	_press(true, button, Vector2(x, y))
+	return {"ok": true, "data": {"x": x, "y": y}}
+
+
+func ai_mouse_up(x: float, y: float, button: int = MOUSE_BUTTON_LEFT) -> Dictionary:
+	_press(false, button, Vector2(x, y))
+	return {"ok": true, "data": {"x": x, "y": y}}
+
+
+func ai_mouse_click(x: float, y: float, button: int = MOUSE_BUTTON_LEFT) -> Dictionary:
+	var vp := get_viewport()
+	if vp == null:
+		return {"ok": false, "reason": "no viewport"}
+	var sz := vp.get_visible_rect().size
+	var p := Vector2(clampf(x, 0.0, sz.x), clampf(y, 0.0, sz.y))
+	ai_mouse_move(p.x, p.y)
+	await get_tree().create_timer(0.06).timeout
+	_press(true, button, p)
+	await get_tree().create_timer(0.06).timeout
+	_press(false, button, p)
+	return {"ok": true, "data": {"x": p.x, "y": p.y}}
+
+
+## 拖拽：从 a 按下，沿路径移动到 b，松手。布阵就用它。
+func ai_mouse_drag(ax: float, ay: float, bx: float, by: float, steps: int = 12) -> Dictionary:
+	ai_mouse_move(ax, ay)
+	await get_tree().create_timer(0.08).timeout
+	_press(true)
+	await get_tree().create_timer(0.06).timeout
+	var pts: Array = []
+	for i in range(1, steps + 1):
+		var t := float(i) / float(steps)
+		pts.append(Vector2(lerpf(ax, bx, t), lerpf(ay, by, t)))
+	await ai_mouse_path(pts, false)
+	await get_tree().create_timer(0.06).timeout
+	_press(false)
+	return {"ok": true}
+
+
+## ⚠️ 坐标必须显式传进来，不能回读 vp.get_mouse_position()：
+##    warp_mouse 之后要等几帧才反映到 Viewport._mouse_pos，回读会拿到旧位置。
+func _press(down: bool, button: int = MOUSE_BUTTON_LEFT, p: Variant = null) -> void:
+	var vp := get_viewport()
+	if vp == null:
+		return
+	var pos: Vector2 = p if p is Vector2 else vp.get_mouse_position()
+	var ev := InputEventMouseButton.new()
+	ev.button_index = button
+	ev.pressed = down
+	ev.position = pos
+	ev.global_position = pos
+	# ⚠️ button_mask 必须给：Godot 的 GUI 判定「按住」状态用它，
+	#    缺了会出现「hover 命中了、press 也发了，但按钮不触发」。
+	ev.button_mask = MOUSE_BUTTON_MASK_LEFT if down else 0
+	# ⚠️ 用 Viewport.push_input 而不是 Input.parse_input_event：
+	#    GUI（Control 命中 + Button 按下判定）走视口输入队列，
+	#    实测 parse_input_event 能让 hover 变、但 press 不触发按钮。
+	vp.push_input(ev, true)
+
+
+## ── 内部 ────────────────────────────────────────────────────
+func _ai_result(r: Dictionary) -> Dictionary:
+	var out := r.duplicate()
+	out["ok"] = bool(r.get("ok", false))
+	return out
+
+
+func _ai_color(v: Variant) -> Color:
+	if v is Array and (v as Array).size() >= 3:
+		var a: Array = v
+		return Color(float(a[0]), float(a[1]), float(a[2]), float(a[3]) if a.size() > 3 else 1.0)
+	if v is String:
+		return Color(String(v))
+	return Color.WHITE
+

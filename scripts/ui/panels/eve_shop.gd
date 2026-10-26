@@ -305,6 +305,21 @@ func _build_card() -> Dictionary:
 	art.custom_minimum_size = Vector2(0, 50)
 	col.add_child(art)
 
+	# ★ 2026-10-25（用户：「舰船卡片右上角加一个定位小标：后勤 N / 攻击 C / 防御 T」）
+	#   挂在立绘控件上、锚到右上角 —— 不占名称/属性行的高度，卡面尺寸不变。
+	var badge := Label.new()
+	badge.text = ""
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	FONT.fs(badge, 9)
+	# 立绘有亮区 ⇒ 加 1px 阴影，保证字母在任何船图上都读得出
+	badge.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	badge.add_theme_constant_override("shadow_offset_x", 1)
+	badge.add_theme_constant_override("shadow_offset_y", 1)
+	badge.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT,
+			Control.PRESET_MODE_MINSIZE, 2)
+	art.add_child(badge)
+
 	# 名称 / 费用
 	var info := VBoxContainer.new()
 	info.add_theme_constant_override("separation", 1)
@@ -354,8 +369,23 @@ func _build_card() -> Dictionary:
 	pad.add_child(info)
 	col.add_child(pad)
 
-	return {"root": card, "top": top, "art": art,
+	return {"root": card, "top": top, "art": art, "badge": badge,
 			"name": nm, "cost": cost, "stat": stat}
+
+
+## 定位小标：后勤 N / 攻击 C / 防御 T（用户 2026-10-25 指定）。
+##
+## ⚠️ 返回 [文字, 颜色]；查不到定位 ⇒ ["", 白]（卡面不显示，不报错）。
+## ⛔ 用 `CIDS.role_id_of` 判据而不是拿中文当主键 —— 与全工程其它地方同一口径。
+static func role_badge(role_cn: String) -> Array:
+	match CIDS.role_id_of(role_cn):
+		CIDS.R_LOGI:
+			return ["N", Color(0.52, 0.86, 0.68)]
+		CIDS.R_ATTACK:
+			return ["C", Color(0.90, 0.48, 0.38)]
+		CIDS.R_DEFENSE:
+			return ["T", Color(0.55, 0.78, 0.96)]
+	return ["", Color(1, 1, 1)]
 
 
 ## 设置 5 张卡的报价。offers 的元素是 EveShipDatabase 出来的 Dictionary
@@ -386,6 +416,7 @@ func _fill_card(w: Dictionary, offer, index: int) -> void:
 	var nm: Label = w["name"]
 	var cost: Label = w["cost"]
 	var stat: Label = w["stat"]
+	var badge: Label = w["badge"]
 
 	# ★ 2026-10-01：买走的槽位是**空 Dictionary**（不补货）。
 	#   显示一张压暗的空卡而不是直接隐藏 —— 隐藏会让商店看起来"少了一格"，
@@ -397,6 +428,7 @@ func _fill_card(w: Dictionary, offer, index: int) -> void:
 		nm.text = T.t("SHOP_BOUGHT", "已买走")
 		cost.text = "—"
 		stat.text = ""
+		badge.text = ""
 		art.accent = Color(0.35, 0.42, 0.46)
 		return
 	root.visible = true
@@ -417,6 +449,10 @@ func _fill_card(w: Dictionary, offer, index: int) -> void:
 		nm.text = String(d.get("name", "—"))
 	art.dimmed = false
 	art.set_ship_key(StringName(d.get("ship_key", "")))
+	# 定位小标（N/C/T）—— 见 `_build_card` 那段注释
+	var rb := role_badge(String(d.get("role", "")))
+	badge.text = rb[0]
+	badge.add_theme_color_override("font_color", rb[1])
 	# ★ 2026-10-06（二改）：价格格**留空**（用户：「我不喜欢『已付』的标签，取消掉吧」）。
 	#   ⚠️ 但**不能**恢复成显示 `cost` 数字 —— 取货本来就免费，写「1」会让
 	#     玩家以为还要花钱（不敢点），那是这一栏最初的问题。

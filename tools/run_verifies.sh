@@ -73,6 +73,7 @@ SUITE=(
   verify_review_fixes
   verify_menu
   verify_ui_scale
+  verify_ui_metrics
   verify_resolution
   verify_mobile_layout
   verify_window

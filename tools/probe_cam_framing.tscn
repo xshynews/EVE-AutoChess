@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://ccamframingprobe"]
+
+[ext_resource type="Script" path="res://tools/probe_cam_framing.gd" id="1_pcf"]
+
+[node name="ProbeCamFraming" type="Node"]
+script = ExtResource("1_pcf")

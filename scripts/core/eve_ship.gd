@@ -161,6 +161,18 @@ var damage_dealt: float = 0.0
 var damage_taken: float = 0.0
 var kills: int = 0
 
+## 受到的伤害倍率（1.0 = 正常）。炼狱 BOSS 的「壁垒」把未破解时的伤害压到 0.1。
+##
+## ⚠️ 与 `resists` 是两回事：抗性是**按伤害类型**逐层算的（EVE 规则），
+##    壁垒是**整艘船**的机制护盾 —— 只有特定的羁绊机制能绕开。
+##    所以它不进 resists，而是单独乘在结算前的原始伤害上。
+var incoming_mult: float = 1.0
+
+## 穿甲：对**装甲层**的无视抗性比例（0.25 = 无视 25% 装甲抗性）。
+## 来源：武器羁绊「激光炮 6/6」。由 `EveRunState._apply_synergy` 写入，
+## 模拟器在 `apply_damage()` 时传给战斗核心（只影响 armor 层）。
+var armor_pierce: float = 0.0
+
 # --- 原始数据（保留武器类型名、导弹参数等未结构化字段） ---
 var _extra: Dictionary = {}
 

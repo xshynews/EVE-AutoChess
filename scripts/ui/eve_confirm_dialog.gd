@@ -268,6 +268,24 @@ func setup(p_title: String, p_message: String, p_ok: String, p_cancel: String) -
 	cancel_text = p_cancel
 
 
+## 是否开着（AI 操作面 / 自检用）。
+func is_open() -> bool:
+	return visible
+
+
+## 点「确定」。⛔ 别直接 emit confirmed() —— close_dialog 也得走，
+## 否则 scrim 会留在屏幕上继续吃点击（eve_result 的 _notification 只兜 visible 变化）。
+func confirm() -> void:
+	if visible:
+		_on_ok_pressed()
+
+
+## 点「取消 / ✕」。
+func cancel() -> void:
+	if visible:
+		_on_cancel_pressed()
+
+
 func open_dialog() -> void:
 	visible = true
 	# HUD 根上它加得比暂停遮罩/拖动幽灵早 ⇒ 不提最前会被遮罩压住

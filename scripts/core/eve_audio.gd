@@ -239,7 +239,15 @@ var _missing_reported := {}
 ##
 ##  ⚠️ 为什么是 `var` 而不是 `const`：验收要能**双向测** ——
 ##     打开时断言「播了、计数 +1」，关掉时断言「一声没响、计数不变」。
-const SFX_ENABLED_DEFAULT := false
+##
+## ★ 2026-10-25 改回 `true`（用户：「音量只能调全局，音效和环境两个滑杆没用」）
+##   根因就是这一行：`sfx_off()` 同时挡住 sfx 与 amb 两条总线 ⇒ 两个滑杆
+##   无论拉到哪都听不到任何变化（音乐不受影响，所以只有全局与音乐"看起来有效"）。
+##   接通条件早已具备：`docs/音效落地执行方案-1016.md` 第五节第 5 步写的正是
+##   「全部接线完成后把 `SFX_ENABLED_DEFAULT` 置 true」，而接线（斗地主 47 键 +
+##   战斗/阶段音 + 超长变体剔除）已经完成，只有这一行忘了翻。
+##   ⛔ 不想听时不用改代码：设置窗的「音效」滑杆拉到 0 即静音（`set_volume(&"sfx", 0)`）。
+const SFX_ENABLED_DEFAULT := true
 var sfx_enabled := SFX_ENABLED_DEFAULT
 
 

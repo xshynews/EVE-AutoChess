@@ -121,6 +121,12 @@ const SHOP_ODDS := {
 ##     前期小编组节点（原 4）变 8、后期小编组（原 14）也变 8。
 ##     这是「简单」的代价，用户要的就是简单。**要恢复规模感，
 ##     正解是调这张表或按节点索引分档 —— 不要把 Σ 加回来。**
+##
+##  ★★ 2026-10-24（阶段 A）：本表现在是**回退表**。
+##    真正生效的是难度档的 `EveCampaignTiers.DIFFICULTIES[].loss_curve`
+##    （逐节点 15 个数字，理由是"同一个失误的代价要随进程上涨"，
+##     见 `loss_damage()` 的长注释）。本表只在曲线缺失/越界时兜底。
+##    ⚠️ 简单档的曲线逐节点等于本表的值 ⇒ 简单档行为与改之前完全一致。
 const LOSS_BASE := {
 	&"battle": 8,
 	&"elite": 14,
@@ -226,6 +232,10 @@ var last_won: bool = true
 ## BOSS 重打了多少次（只为日志与验收，不参与数值）
 var boss_attempts: int = 0
 
+## 难度档（唯一真源 = EveCampaignTiers.DIFFICULTIES）。
+## ⚠️ 它影响收入 / 利息 / 战败代价 / 敌方强度，**不影响节点顺序**。
+var difficulty_id: String = "simple"
+
 var coin: int = START_GOLD
 var level: int = 1
 var xp: int = 0
@@ -317,6 +327,108 @@ var _pools: Dictionary = {}                ## cost → Array[Dictionary]（52 �
 #  开局
 # ══════════════════════════════════════════════════════════════════
 
+## 本局的难度参数（唯一真源在 EveCampaignTiers，这里只取用）。
+func difficulty_row() -> Dictionary:
+	return EveCampaignTiers.difficulty(difficulty_id)
+
+
+## 切难度。⛔ 必须在 `start_run()` **之前**调用 —— 开局星币按档位给。
+func set_difficulty(id: String) -> void:
+	difficulty_id = String(EveCampaignTiers.difficulty(id).get("id", "simple"))
+	changed.emit()
+
+
+# ══════════════════════════════════════════════════════════════════
+#  炼狱的「钥匙」机制
+# ══════════════════════════════════════════════════════════════════
+## 难度档声明的机制钥匙（空串 = 本档没有机制壁垒）
+func key_mechanic() -> String:
+	return String(difficulty_row().get("key_mechanic", ""))
+
+
+## ★★ 2026-10-24（用户定案）：炼狱的解必须是**一整类**，不能只有激光。
+##
+## 病象：原来 `armor_pierce` 只认「上场 ≥ 6 艘激光炮」。实测 16 局里只有
+##   2 局凑得出 6 激光 —— 于是炼狱变成「抽到那一套才过」，而那一套还恰好是
+##   **对装甲墙最差**的体系（见下表）。玩家体会到的不是"搏一把"，是"这关无解"。
+##
+## 判据改成**按伤害类型算"破甲强度"**，理由完全来自战斗核的抗性表：
+##   甲抗 【EM 60% / 热能 35% / 动能 25% / 爆炸 10%】-（见 EveShipDatabase）
+##   ⇒ 打装甲墙最有效的是**爆炸**，其次**动能**；电磁（激光的主伤害）几乎打不动。
+##
+## 所以"破甲体系"天然是一类：
+##   导弹（纯爆炸）     1.0  ← 6 艘导弹就是一套解
+##   射弹炮（动能+爆炸）0.9  ← 6~7 艘射弹炮也是一套解
+##   混合炮（热能+动能）0.5  ← 12 艘混合炮（很难，但数学上算）
+##   激光炮（电磁+热能）0.25 → **凑满 6 艘吃到「无视 25% 装甲」羁绊后转 1.0**
+##
+## 阈值仍是「等效 6 艘专职破甲船」：这保证它不是"随便带几艘就行"，
+## 但也不再是"只有一种船能过"。
+## ⚠️ 这里用字面量 `&"missile"` 而不是 `EveCombatIds.W_MISSILE`：
+##    后者的成员访问不满足 GDScript 的「常量表达式」，`const` 会直接报错。
+##    两者必须一致 —— 换了任一 id 都要同步这里。
+const ARMOR_BREAK_WEIGHT := {
+	&"missile": 1.0,
+	&"proj": 0.9,
+	&"hybrid": 0.5,
+	&"laser": 0.25,
+}
+## 破甲羁绊（激光炮 6/6：无视 25% 装甲）的触发门槛，见 EveTraitTable.EFFECTS
+const ARMOR_BREAK_TRAIT_COUNT := 6
+## 破甲门槛（等效"专职破甲船"艘数）
+const ARMOR_BREAK_NEED := 6.0
+
+
+## 当前上阵的**破甲强度**（单位：等效专职破甲船）。0 = 完全没有破甲能力。
+##
+## ⚠️ 分母口径是"上阵"（`field_entries()`），不是备战席 —— 钥匙只认要上场的东西。
+func armor_break_power() -> float:
+	var laser := 0
+	var ids: Array[StringName] = []
+	for e in field_entries():
+		var d := EveShipDatabase.by_id(String(e.get("ship_key", "")))
+		var wid := StringName(d.get("weapon_id", &""))
+		ids.append(wid)
+		if wid == EveCombatIds.W_LASER:
+			laser += 1
+	# 激光炮凑满羁绊 ⇒ 每一艘都从 0.25 升到 1.0（它的"无视 25% 装甲"是整组生效）
+	var laser_w := 1.0 if laser >= ARMOR_BREAK_TRAIT_COUNT \
+			else float(ARMOR_BREAK_WEIGHT[&"laser"])
+	var total := 0.0
+	for wid in ids:
+		total += laser_w if wid == EveCombatIds.W_LASER \
+				else float(ARMOR_BREAK_WEIGHT.get(wid, 0.0))
+	return total
+
+
+## 玩家阵容是否凑出了钥匙。
+##
+## ★★ 2026-10-24（用户定案）：判据从「6 艘激光炮」放宽成「**任一破甲体系**
+##   达到等效 6 艘」。详细口径见 `ARMOR_BREAK_WEIGHT` 上方的注释。
+##
+## ⚠️ 这仍然**只是阵容条件**，不是抽卡条件：玩家可以靠留船 / 换船去凑，
+##    只不过现在能凑的体系有四种（导弹 / 射弹 / 混合 / 激光羁绊），
+##    而不是死盯着一型船。
+func key_mechanic_satisfied() -> bool:
+	match key_mechanic():
+		"armor_pierce":
+			return armor_break_power() >= ARMOR_BREAK_NEED
+		_:
+			return true
+
+
+## 本节点敌方全体受到的伤害倍率。
+##   1.0  = 正常
+##   0.1  = 壁垒未破（见 `key_mechanic_satisfied`）
+## 只在 BOSS 节点生效；其他节点恒 1.0（壁垒是 BOSS 的机制）。
+func boss_barrier_mult() -> float:
+	if key_mechanic() == "":
+		return 1.0
+	if node_type() != &"boss":
+		return 1.0
+	return 1.0 if key_mechanic_satisfied() else 0.1
+
+
 ## 开一局新的。p_seed = 0 时用系统随机；>0 时固定种子（回归用）。
 func start_run(p_seed: int = 0) -> void:
 	if p_seed == 0:
@@ -325,7 +437,7 @@ func start_run(p_seed: int = 0) -> void:
 		rng.seed = p_seed
 	run_seed = p_seed
 
-	coin = START_GOLD
+	coin = int(difficulty_row().get("start_gold", START_GOLD))
 	level = 1
 	xp = 0
 	beacon = START_BEACON
@@ -358,7 +470,8 @@ func start_run(p_seed: int = 0) -> void:
 
 	phase = Phase.PREP
 	roll_shop()
-	log_event.emit("一局开始：信标 %d · 星币 %d · 15 个节点" % [beacon, coin], &"system")
+	log_event.emit("一局开始（%s）：信标 %d · 星币 %d · 15 个节点"
+			% [String(difficulty_row().get("name", "简单")), beacon, coin], &"system")
 	log_event.emit("节点 1／%d · %s" % [EveNodeTable.TOTAL, entry_line()], &"hint")
 	changed.emit()
 	phase_changed.emit(phase)
@@ -402,6 +515,7 @@ func battle_seed() -> int:
 func to_dict() -> Dictionary:
 	return {
 		"run_seed": run_seed,
+		"difficulty": difficulty_id,
 		"phase": phase,
 		"ending": ending,
 		"coin": coin, "level": level, "xp": xp, "beacon": beacon,
@@ -429,6 +543,7 @@ func from_dict(d: Dictionary) -> bool:
 	if d.is_empty():
 		return false
 	run_seed = int(d.get("run_seed", 0))
+	difficulty_id = String(d.get("difficulty", "simple"))
 	phase = int(d.get("phase", Phase.PREP))
 	ending = int(d.get("ending", Ending.NONE))
 	coin = int(d.get("coin", START_GOLD))
@@ -1589,6 +1704,48 @@ func apply_synergies_to(fleet: Array) -> Array[Dictionary]:
 	return act
 
 
+## 把「**这一支舰队自己的**羁绊」乘进这支舰队（敌方编组专用）。
+##
+## ⚠️ 与 `apply_synergies_to()` 的分工，别混：
+##   `apply_synergies_to` 数的是 `run.field`（玩家备战区）⇒ 我方；
+##   本函数数的是**传进来的舰队本身** ⇒ 敌方手写编组也能吃自己的羁绊。
+##   敌方不是买来的，没有 field 名单，所以只能这么统计。
+static func apply_fleet_traits(fleet: Array) -> Array[Dictionary]:
+	var act := _fleet_synergies(fleet)
+	for s in fleet:
+		if not (s is EveShip):
+			continue
+		var ship: EveShip = s
+		for a in act:
+			if not EveTraitTable.ship_has(ship, a["group"], String(a["member"])):
+				continue
+			_apply_synergy(ship, a.get("apply", {}))
+	return act
+
+
+## 统计一支舰队自身能开到的羁绊档（口径与 `active_synergies()` 一致）
+static func _fleet_synergies(fleet: Array) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for g in EveTraitTable.GROUPS:
+		var key: StringName = g["key"]
+		for m in EveTraitTable.members(key):
+			var name := String(m["name"])
+			var n := 0
+			for s in fleet:
+				if s is EveShip and EveTraitTable.ship_has(s, key, name):
+					n += 1
+			var t := EveTraitTable.tier_of(key, name, n)
+			if t.is_empty():
+				continue
+			out.append({
+				"group": key, "member": name, "count": n,
+				"n": int(t["n"]), "text": String(t["text"]),
+				"apply": t.get("apply", {}),
+				"pending": t.get("pending", PackedStringArray()),
+			})
+	return out
+
+
 ## 把一条羁绊的 `apply` 字典落到一艘船上
 static func _apply_synergy(ship: EveShip, apply: Dictionary) -> void:
 	if apply.is_empty():
@@ -1618,6 +1775,9 @@ static func _apply_synergy(ship: EveShip, apply: Dictionary) -> void:
 	var spd := 1.0 + float(apply.get("speed_pct", 0.0))
 	if not is_equal_approx(spd, 1.0):
 		ship.speed_scale(spd)
+	# ★ 2026-10-24：穿甲（武器羁绊「激光炮 6 艘：无视 25% 装甲」）现在**真的生效**。
+	#   落到 `EveShip.armor_pierce`，由模拟器传给 `EveCombatCore.apply_damage()`。
+	ship.armor_pierce = maxf(ship.armor_pierce, float(apply.get("armor_pierce", 0.0)))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1891,7 +2051,17 @@ func battle_seconds() -> float:
 
 func enemy_comp_id() -> String:
 	var n := current_node()
-	return String(n.get("comp", "")) if not n.is_empty() else ""
+	if n.is_empty():
+		return ""
+	# ★ 2026-10-24：难度档的「关卡设计」—— 按节点号换编组。
+	# 简单档的 comp_overrides 是空字典（原样走节点表）；其余三档都有各自的表
+	# （普通 = 反小船狼群；困难/炼狱 = 单轴编组 + 反小船狼群，见 EveCampaignTiers）。
+	var ov: Dictionary = difficulty_row().get("comp_overrides", {})
+	if ov.has(node_index):
+		var alt := String(ov[node_index])
+		if EveEnemyComps.has_comp(alt):
+			return alt
+	return String(n.get("comp", ""))
 
 
 func enemy_comp_name() -> String:
@@ -1902,9 +2072,26 @@ func enemy_comp_size() -> int:
 	return EveEnemyComps.size_of(enemy_comp_id())
 
 
+## 本节点敌方强度 = 节点表 scale × 难度档的**单值**倍率。
+##
+## ★★ 2026-10-24（阶段 A）：**删掉三段爬升**（`SCALE_PLATEAU_FROM/TO`）。
+##
+##   旧口径是「节点 1→6 线性升到 scale_mid，6→10 保持，10→15 升到 scale_late」，
+##   也就是**用敌人面板来造难度**。实测它造不出难度阶梯，只造出两个台阶：
+##      · 乱点（spam）与认真玩（comp）的胜率几乎一样 —— 难度是常数，
+##        不随玩家的任何决策变化，所以"认真玩"学不到东西；
+##      · 死亡集中堆在两个台阶上（节点 5 与 13），玩家体感是"某关突然被秒"。
+##
+##   现在的口径：**节点表自己的 scale 已经写出了 15 关的强度梯度**
+##   （1.00 → 1.30），难度档只再乘一个贴地的系数（1.00~1.25）。
+##   难度改由「同一个失误的代价随进程上涨」承担（见 `loss_damage` /
+##   `EveCampaignTiers` 的 `loss_curve`）—— 那才是玩家能感知、能学习的东西。
+##
+## ⚠️ 节点 1 的节点表 scale 恒为 1.00 ⇒ 第一关永远没有难度倍率（除档位系数）。
 func enemy_scale() -> float:
 	var n := current_node()
-	return float(n.get("scale", 1.0)) if not n.is_empty() else 1.0
+	var base := float(n.get("scale", 1.0)) if not n.is_empty() else 1.0
+	return base * float(difficulty_row().get("scale", 1.0))
 
 
 ## 本节点的进场词（唯一真源 = EveNodeTable.ROWS[].line）。
@@ -1931,24 +2118,46 @@ func enemy_roster() -> Array[Dictionary]:
 
 ## 下回合收入 = 基础 5 + 利息 min(⌊coin/10⌋, 5)
 func interest() -> int:
-	return mini(int(floor(float(coin) / float(INTEREST_STEP))), INTEREST_MAX)
+	var cap := int(difficulty_row().get("interest_max", INTEREST_MAX))
+	return mini(int(floor(float(coin) / float(INTEREST_STEP))), cap)
 
 
 func income() -> int:
-	return BASE_INCOME + interest() + event_coin_per_node()
+	var base := int(difficulty_row().get("base_income", BASE_INCOME))
+	return base + interest() + event_coin_per_node()
 
 
 # ══════════════════════════════════════════════════════════════════
 #  战斗结算
 # ══════════════════════════════════════════════════════════════════
 
-## 战败的信标代价 —— **只跟「这是什么类型的节点」有关**（见 `LOSS_BASE`）。
+## 战败的信标代价。
 ##
 ## ⛔ 2026-10-01：这里原来还 +Σ「漏网舰船费用」，那个概念已删除。
 ##    它让「我 3 艘全活却因为敌人没死光而掉血」这件事变得无法解释，
 ##    而它对玩家的**唯一**作用就是制造这种困惑。
+##
+## ★★ 2026-10-24（阶段 A）：**改成读难度档的 `loss_curve`**（逐节点）。
+##
+##   为什么必须逐节点、而不是「阶段定值 × 难度倍率」：
+##     旧口径下，节点 3 输和节点 13 输**一样疼**（都是 battle 8 × 倍率）。
+##     于是「后期的每个失误都不比前期贵」⇒ 玩家没有理由认真规划，
+##     乱点与认真玩的胜率自然一样（实测普通档 spam 94% / normal 69%）。
+##
+##     云顶之弈那条设计线（玩家伤害 0/2/5/7/9/11/17/150，血 100）说的是：
+##     **同一个失误的代价随进程上涨**。所以现在代价表是 15 个数字，
+##     曲线形状 = 前四关几乎免费 → 中盘稳步加码 → 末段精英/BOSS 一输掉一大块。
+##
+##   ⚠️ `LOSS_BASE`（阶段定值）保留为本函数的**回退**：曲线缺失或越界时
+##     仍旧按「阶段 × loss_mult」算，老存档与老验收点不会因为缺字段而炸。
 func loss_damage() -> int:
-	return int(LOSS_BASE.get(node_type(), 8))
+	var curve: Array = difficulty_row().get("loss_curve", [])
+	if node_index >= 1 and node_index <= curve.size():
+		return maxi(0, int(curve[node_index - 1]))
+	# ── 回退：没有曲线时走旧公式（阶段定值 × 难度倍率）──────────────
+	var base := int(LOSS_BASE.get(node_type(), 8))
+	var mult := float(difficulty_row().get("loss_mult", 1.0))
+	return int(roundf(float(base) * mult))
 
 
 ## 连败追加伤害。`lose_streak` 已在 `resolve_battle` 里加过本场，

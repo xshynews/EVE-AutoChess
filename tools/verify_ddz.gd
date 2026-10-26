@@ -14,6 +14,7 @@ const AI := preload("res://scripts/card/ddz/ddz_ai.gd")
 const T := preload("res://scripts/card/ddz/ddz_table.gd")
 const E := preload("res://scripts/card/ddz/ddz_eval.gd")
 const COIN := preload("res://scripts/card/ddz/ddz_coin.gd")
+const UI := preload("res://scripts/ui/eve_ui_scale.gd")
 
 var _pass := 0
 var _fail := 0
@@ -40,6 +41,7 @@ func _ready() -> void:
 	_run_timed("_t_ab", _t_ab)
 	_run_timed("_t_layout", _t_layout)
 	_run_timed("_t_deal_anim", _t_deal_anim)
+	_run_timed("_t_table_touch", _t_table_touch)
 	print("═══ RESULT passed=%d failed=%d ═══" % [_pass, _fail])
 	if _fail > 0:
 		print("⚠️ 有失败项")
@@ -1310,3 +1312,61 @@ func _t_grab_flow() -> void:
 	var other5: int = (st5 + 1) % 3
 	_ok(not bool(f.bid(other5, true)["ok"]), "★ 没轮到的座位叫地主 ⇒ 被拒（联机防伪造的根基）")
 	_ok(int(f.phase) == int(G.Phase.BID) and int(f.claimant) == -1, "被拒的表态不改变局面")
+
+
+## [15] ★ 手机档触控热区（2026-10-21 · UI 比例基线阶段 0-4）
+##
+## ⚠️ 单位坑：牌桌 `content_scale_factor = 1.0` ⇒ 牌桌坐标 1 单位 = **1 物理像素**，
+##    而 HUD 是 1.35。所以这里**不能**拿 HUD 的 48 来断言，手机档目标定为：
+##    次按钮 ≥ 56、主按钮 ≥ 56（实际 72）。
+## ⚠️ 同时钉住「桌面端逐像素不变」—— 改 `_buttons()` 时最容易顺手把桌面也改了。
+func _t_table_touch() -> void:
+	print("[15] 手机档触控热区（牌桌单位 = 物理像素）")
+	var old := UI.force_mobile
+	# ── ① 手机档 ──
+	UI.force_mobile = true
+	var t: Control = T.new()
+	add_child(t)
+	t.size = Vector2(2408, 1080)
+	var btns: Array = t.call("_buttons")
+	var by_id := {}
+	for b in btns:
+		by_id[String(b["id"])] = b["rect"] as Rect2
+	_ok(by_id.has("back") and by_id.has("settings") and by_id.has("style"),
+			"★ 手机档右上角簇齐全（返回 / 设置 / 样式）")
+	for id in ["back", "auto", "settings", "style"]:
+		if not by_id.has(id):
+			continue
+		var r: Rect2 = by_id[id]
+		_ok(r.size.y >= 56.0,
+				"★ 手机档「%s」高 ≥ 56（实际 %.0f，桌面是 28）" % [id, r.size.y])
+		_ok(r.end.x <= 2408.0 - 8.0 and r.position.x >= 0.0,
+				"手机档「%s」在屏内（x %.0f..%.0f）" % [id, r.position.x, r.end.x])
+	if by_id.has("settings"):
+		_ok((by_id["settings"] as Rect2).size.x >= 120.0,
+				"★ 手机档设置按钮宽 ≥ 120（实际 %.0f，桌面 88）"
+				% (by_id["settings"] as Rect2).size.x)
+	_ok(by_id.has("start") and (by_id["start"] as Rect2).size.y >= 56.0,
+			"★ 手机档「开始游戏」高 ≥ 56（实际 %.0f）"
+			% ((by_id["start"] as Rect2).size.y if by_id.has("start") else 0.0))
+	t.queue_free()
+
+	# ── ② 桌面档：必须与改动前**逐像素一致** ──
+	UI.force_mobile = false
+	var d: Control = T.new()
+	add_child(d)
+	d.size = Vector2(1920, 1080)
+	var dbtns: Array = d.call("_buttons")
+	var db := {}
+	for b in dbtns:
+		db[String(b["id"])] = b["rect"] as Rect2
+	_ok(db.has("back") and (db["back"] as Rect2) == Rect2(1808, 8, 88, 28),
+			"★★ 桌面「返回」仍是原矩形 (1808, 8, 88, 28)")
+	_ok(db.has("settings") and (db["settings"] as Rect2) == Rect2(1592, 8, 88, 28),
+			"★★ 桌面「设置」仍是原矩形 (1592, 8, 88, 28)")
+	_ok(db.has("style") and (db["style"] as Rect2) == Rect2(1496, 8, 88, 28),
+			"★★ 桌面「样式」仍是原矩形 (1496, 8, 88, 28)")
+	_ok(db.has("start") and (db["start"] as Rect2) == Rect2(738, 442.8, 210, 54),
+			"★★ 桌面「开始游戏」仍是原矩形（⛔ 没被手机档带偏）")
+	d.queue_free()
+	UI.force_mobile = old

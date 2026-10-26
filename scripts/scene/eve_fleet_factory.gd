@@ -80,6 +80,18 @@ func build_enemy(run: EveRunState) -> Array[EveShip]:
 		EveRunState.apply_enemy_scaling(ship, 1, run.enemy_scale())
 		apply_doctrine(ship)
 		out.append(ship)
+	# ★ 2026-10-23：困难 / 炼狱档，敌方也吃自己的羁绊。
+	# ⚠️ 统计口径是「这一支敌方编组本身」，不是玩家的 run.field ——
+	#    所以海盗王的 6 艘同派系船会吃到满档，而不是白板。
+	if bool(run.difficulty_row().get("enemy_traits", false)):
+		EveRunState.apply_fleet_traits(out)
+	# ★ 2026-10-24：炼狱 BOSS 的「壁垒」—— 玩家没凑出钥匙时，敌方全体只吃 10% 伤害。
+	# ⚠️ 乘在**受击侧**（`ship.incoming_mult`），不改敌方的输出 ——
+	#    壁垒是「打不动」，不是「它打你更疼」。
+	var barrier := run.boss_barrier_mult()
+	if barrier < 1.0:
+		for s in out:
+			s.incoming_mult = barrier
 	return out
 
 

@@ -36,6 +36,8 @@ func _ready() -> void:
 	RUN_STORE.persist = true
 	RUN_STORE.session_active = true
 	RUN_STORE.resume_requested = false
+	# ★ 2026-10-25：主菜单选难度靠这个静态槽位带进战场 ⇒ 这里也走真实链路。
+	RUN_STORE.pending_difficulty = "hard"
 	RUN_STORE.clear()
 	print("═══ verify_run_save（对局存档 E2E）═══")
 	_instantiate()
@@ -78,6 +80,11 @@ func _step_after_fresh_start() -> void:
 	_coin0 = int(d.get("coin", -1))
 	_ok(_node0 == 1, "★ 存档里节点 = 1（实际 %d）" % _node0)
 	_ok(_coin0 >= 0, "★ 存档里星币可读（%d）" % _coin0)
+	# ★ 2026-10-25：主菜单选「困难」⇒ 战场必须按困难开（不是永远简单）。
+	var r0 = _scene.get("run") if _scene != null else null
+	_ok(String(r0.difficulty_id) == "hard" if r0 != null else false,
+			"★ 主菜单选困难 ⇒ 本局难度 = hard（实际 %s）"
+			% (String(r0.difficulty_id) if r0 != null else "拿不到 run"))
 	# ② 换成"继续上一局"
 	_free_scene()
 	RUN_STORE.resume_requested = true
@@ -92,6 +99,22 @@ func _step_resume() -> void:
 	_ok(int(r.node_index) == _node0 and int(r.coin) == _coin0,
 			"★ 继续上局恢复到存档那一局（节点 %d、星币 %d）—— 未被 start_run 顶掉"
 			% [int(r.node_index), int(r.coin)])
+	_ok(String(r.difficulty_id) == "hard",
+			"★ 难度跟着存档走（%s），不被主菜单本次选中覆盖" % String(r.difficulty_id))
+	# ★★ 2026-10-25：读档后**商店不能是空的**。
+	#   根因：`from_dict()` 不发 `offers_changed`（那条信号会重摇商店），
+	#   而 HUD 的卡片只在信号里重建 ⇒ 数据还原了、界面一片空白。
+	#   现在 battle_scene 读档后显式推一次 `hud.set_shop_offers(run.offers)`。
+	var hud = _scene.get("hud") if _scene != null else null
+	var shop = hud.get("shop_window") if hud != null else null
+	var shown: Array = shop.get("_offers") if shop != null else []
+	_ok(shown.size() == int(r.offers.size()) and shown.size() > 0,
+			"★★ 继续上局后商店有货（HUD %d 格 / run %d 格）"
+			% [shown.size(), int(r.offers.size())])
+	var first_key := ""
+	if shown.size() > 0:
+		first_key = String((shown[0] as Dictionary).get("ship_key", ""))
+	_ok(first_key != "", "★★ 第一格是真的船（%s）" % first_key)
 	# ③ 删档
 	RUN_STORE.clear()
 	_ok(not RUN_STORE.has_run(), "★ clear() 后「没有可继续的对局」")

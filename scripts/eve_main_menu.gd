@@ -39,7 +39,7 @@ const FONT := preload("res://scripts/ui/eve_font.gd")
 ##  ③ 左列模式按钮（3 个）+ 右侧难度长条（数量由难度表决定）
 ##
 ## ⚠️ 配色一律取自 EveWindow 的常量口径，禁止另起一套。
-## ⚠️ 难度数据全部来自 EveCampaignTiers.ROWS —— 本文件不许写死难度。
+## ⚠️ 难度数据全部来自 EveCampaignTiers.difficulties() —— 本文件不许写死难度。
 ##    加一档难度 = 在表里加一条记录，本文件的条数与位置会自动跟上。
 
 const TIERS := preload("res://scripts/data/eve_campaign_tiers.gd")
@@ -135,9 +135,13 @@ const MODE_W := 300.0
 const MODE_H := 62.0
 const MODE_GAP := 14.0
 const STRIP_POS := Vector2(660, 296)
-const STRIP_W := 300.0
+## ⚠️ 2026-10-26：难度长条改成 **4 列**。原来是 3 列，4 个难度里的第 4 个
+##    （炼狱）被挤到第二行、整块掉到屏幕外（按钮 y≈1194 > 视口 1080）
+##    ⇒ **人也点不到**，AI 更点不到。宽度按「4 列 + 3 间隙」反推：
+##    660 + 4×268 + 3×24 = 1804 < 1920，右侧还剩 116。
+const STRIP_W := 268.0
 const STRIP_H := 470.0
-const STRIP_GAP := 32.0
+const STRIP_GAP := 24.0
 ## 棋牌室用**方框**（2 行 2 列），比难度竖条矮得多。
 ## ⚠️ 两套尺寸都由模式表里的 `layout` 决定，⛔ 不在卡片代码里写死 ——
 ##    见 `_layout_of()`。将来再加网格型模式（比如更多棋牌）直接复用。
@@ -460,9 +464,9 @@ func _toggle_settings() -> void:
 ##    `MODE_CAMPAIGN_META`，命中后返回 CSV 的**模板** ⇒ 界面显示裸 `%d`
 ##    （2026-10-11 实际踩到；渲染走 `_mode_meta()`，`verify_i18n` 有断言）。
 static func _campaign_meta() -> String:
-	var first: Dictionary = TIERS.ROWS[0]
+	var first: Dictionary = TIERS.difficulties()[0]
 	return T.t("MODE_CAMPAIGN_META", "%d 回合 · 共 %d 个难度") \
-			% [int(first["rounds"]), TIERS.ROWS.size()]
+			% [int(first["rounds"]), TIERS.difficulties().size()]
 
 ## 第一层表 = EXTRA_MODES（疆域 / 自走棋 / 娱乐总汇）+ 末尾追加的版权声明伪模式。
 ##
@@ -472,7 +476,7 @@ static func _campaign_meta() -> String:
 func _build_top_table() -> Array:
 	var campaign := {
 		"id": "campaign", "name": "任务关卡", "meta": _campaign_meta(),
-		"locked": false, "cards": TIERS.ROWS,
+		"locked": false, "cards": TIERS.difficulties(),
 	}
 	var out: Array = []
 	for m in EXTRA_MODES:
@@ -567,7 +571,7 @@ func _cards_of(idx: int) -> Array:
 
 # ------------------------------------------------------------ 文案取词（i18n）
 #
-# ★★ 设计口径：**数据表里仍是中文源文** —— `EveCampaignTiers.ROWS` 与
+# ★★ 设计口径：**数据表里仍是中文源文** —— `EveCampaignTiers.difficulties()` 与
 #    `EXTRA_MODES` 都保持 `const`（⛔ 别为了塞 `T.t()` 把它们改成函数：
 #    const 初始化器里调不了函数，改成函数又会牵动 `verify_menu` 的读法）。
 #    中文在这里既是**兜底**也是**活文档**；**渲染时**才过一遍 `T.t()`。
@@ -938,7 +942,7 @@ func _rebuild_rail() -> void:
 func _layout_of(mode_id: String) -> Dictionary:
 	if mode_id == CARD_ROOM_MODE_ID:
 		return {"cols": 2, "w": GRID_W, "h": GRID_H}
-	return {"cols": 3, "w": STRIP_W, "h": STRIP_H}
+	return {"cols": 4, "w": STRIP_W, "h": STRIP_H}
 
 
 ## 模式项 = 按钮（皮肤抄 EveButtonTheme；两行文字用子 Label，别指望 Button 自带）
@@ -1090,7 +1094,11 @@ func _make_strip(card: Dictionary, idx: int) -> void:
 	b.mouse_filter = Control.MOUSE_FILTER_STOP if open else Control.MOUSE_FILTER_IGNORE
 	if open:
 		b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		b.pressed.connect(_on_start_pressed)
+		# ⚠️⚠️ 2026-10-26：按钮文案是「▶ 开始%s」，所以点它必须**真的用这一档开局**。
+		#    旧写法直接连 _on_start_pressed()，而那个函数读的是「当前选中的卡片」
+		#    ⇒ 按钮文案是「开始炼狱」，实际用「简单」开局（人和 AI 都会被骗）。
+		#    现在带上自己的 idx：先选中自己，再走原来那条开始路径。
+		b.pressed.connect(_on_start_pressed_for.bind(idx))
 	act.add_child(b)
 	col.add_child(act)
 
@@ -1334,6 +1342,19 @@ func _show_toast(text: String) -> void:
 	_toast.text = text
 
 
+## 「▶ 开始X」按钮：先选中自己这一档，再走统一的开始路径。
+##
+## ⚠️ 只在「有难度概念」的模式（任务关卡）里切选中；其它模式的卡片不是难度，
+##    强行写 _pick 会破坏它们自己的选中语义。
+func _on_start_pressed_for(idx: int) -> void:
+	if _content_id() == FIRST_MODE_ID:
+		var cards := _cards_of(_mode_idx)
+		if idx >= 0 and idx < cards.size():
+			_pick[_content_id()] = idx
+			_refresh_strips()
+	_on_start_pressed()
+
+
 func _on_start_pressed() -> void:
 	var cards := _cards_of(_mode_idx)
 	var sel := int(_pick[_content_id()])
@@ -1353,6 +1374,13 @@ func _on_start_pressed() -> void:
 			   "（首次 ⇒ 先播开场）" if target == INTRO_SCENE else "（已看过开场）"])
 	# ★ 2026-10-10（审查 2#2）：只有**真实会话**才允许写对局存档
 	#   （40 多个 probe/自检会直接加载 battle_scene，不设闸就会覆盖玩家的一局）。
+	# ★★ 2026-10-26 真 bug 修复：切场景带不了参数，必须把选中的难度 id 存进
+	#    EveRunStore.pending_difficulty，战场启动时取用。
+	#    这段以前从来没写过 —— pending_difficulty 只有声明/清空/读取三处，
+	#    没有赋值，所以战场永远走默认 "simple"，菜单选什么都打成简单。
+	#    ⚠️ 只对任务关卡生效（棋牌室 / 斗地主没有难度概念）。
+	if _content_id() == FIRST_MODE_ID:
+		RUN_STORE.pending_difficulty = String(cards[sel].get("id", "simple"))
 	RUN_STORE.session_active = true
 	get_tree().change_scene_to_file(target)
 
@@ -1415,3 +1443,329 @@ func _unhandled_input(event: InputEvent) -> void:
 		_:
 			return
 	get_viewport().set_input_as_handled()
+
+
+# ══════════════════════════════════════════════════════════════════
+#  AI 操作面（2026-10-26）—— 主菜单
+# ══════════════════════════════════════════════════════════════════
+# 与战斗场景那一节同源：AI 从这里开机进一局，不用人去点。
+
+
+func ai_kind() -> String:
+	return "menu"
+
+
+## 界面上所有可点按钮的矩形（AI 用鼠标点，不后台调）。
+func ai_ui_map() -> Dictionary:
+	var out := {"buttons": [], "strips": [],
+			"viewport": [get_viewport().get_visible_rect().size.x,
+					get_viewport().get_visible_rect().size.y]}
+	# 难度长条本体：点它才「选中」该难度（点里面的开始按钮不会切换！）
+	var srow = _strip_row
+	if srow != null:
+		for i in srow.get_child_count():
+			var sp: Control = srow.get_child(i)
+			if not (sp is Control) or not sp.is_visible_in_tree():
+				continue
+			var sr: Rect2 = sp.get_global_rect()
+			(out["strips"] as Array).append({
+					"index": i,
+					"name": String(sp.name),
+					"rect": [sr.position.x, sr.position.y, sr.size.x, sr.size.y],
+					"path": String(sp.get_path()),
+				})
+	var btns: Array[Button] = []
+	var stack: Array[Node] = [self]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is Button and (n as Button).is_visible_in_tree():
+			btns.append(n)
+		for c in n.get_children():
+			stack.append(c)
+	for b in btns:
+		var r: Rect2 = b.get_global_rect()
+		if r.size.x <= 0.0 or r.size.y <= 0.0:
+			continue
+		(out["buttons"] as Array).append({
+				"name": b.text.strip_edges() if b.text.strip_edges() != "" else String(b.name),
+				"rect": [r.position.x, r.position.y, r.size.x, r.size.y],
+			})
+	return out
+
+
+## 按名字 / 文字找按钮，用鼠标点它。
+##
+## ⚠️ 自带坐标校准：`get_global_rect()` 与 `Input.warp_mouse()` 的坐标空间
+##    在「设计空间 ≠ 视口」时会对不上（实测右上角一排系统性偏 +102px，
+##    而左侧模式栏又不偏）。所以这里**不信矩形**，先在报告位置附近螺旋搜一圈，
+##    用 `gui_get_hovered_control()` 找「命中测试确实命中它」的那个点，
+##    再真的挪鼠标过去点。
+##    ⇒ AI 只说「点设置」，光标自己会找到该去的地方。仍然是纯鼠标操作。
+func ai_ui_click(query: String) -> Dictionary:
+	var btn := _ai_find_button(query)
+	if btn == null:
+		return {"ok": false, "reason": "找不到按钮「%s」" % query}
+	var r: Rect2 = btn.get_global_rect()
+	var cx := r.position.x + r.size.x * 0.5
+	var cy := r.position.y + r.size.y * 0.5
+	var hit := Vector2(cx, cy)
+	var calibrated := false
+	for ring in range(0, 10):
+		var pts: Array = []
+		if ring == 0:
+			pts.append(Vector2(cx, cy))
+		else:
+			var step := 14.0 * float(ring)
+			for a in range(8):
+				var ang := float(a) * PI * 0.25
+				pts.append(Vector2(cx + cos(ang) * step, cy + sin(ang) * step))
+		for p in pts:
+			ai_mouse_move(p.x, p.y)
+			await get_tree().create_timer(0.02).timeout
+			if get_viewport().gui_get_hovered_control() == btn:
+				hit = p
+				calibrated = true
+				break
+		if calibrated:
+			break
+	var res: Dictionary = await ai_mouse_click(hit.x, hit.y)
+	res["data"]["target"] = String(btn.name)
+	res["data"]["calibrated"] = calibrated
+	return res
+
+
+func _ai_find_button(query: String) -> Button:
+	var q := query.strip_edges()
+	if q == "":
+		return null
+	var all: Array[Button] = []
+	var stack: Array[Node] = [self]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is Button and (n as Button).is_visible_in_tree():
+			all.append(n)
+		for c in n.get_children():
+			stack.append(c)
+	# 先按名字精确匹配，再按文字
+	for b in all:
+		if String(b.name) == q:
+			return b
+	for b in all:
+		if b.text.strip_edges() == q:
+			return b
+	for b in all:
+		if q in b.text or q in String(b.name):
+			return b
+	return null
+
+
+## 把光标挪到 (x,y) 并回报**真正命中**的那个控件。
+##
+## 为什么需要它：`get_global_rect()` 与 `Input.warp_mouse()` 的坐标空间
+## 在「设计空间 ≠ 视口」时会对不上（实测差 102px，用户看到的就是
+## 「光标在按钮上但点到别处」）。用命中测试反查可以当场校准。
+func ai_hover(x: float, y: float) -> Dictionary:
+	ai_mouse_move(x, y)
+	await get_tree().create_timer(0.1).timeout
+	var vp := get_viewport()
+	if vp == null:
+		return {"ok": false, "reason": "no viewport"}
+	var c := vp.gui_get_hovered_control()
+	var out := {"ok": true, "data": {
+		"asked": [x, y],
+		"hovered": String(c.name) if c != null else "",
+		"hovered_text": c.text.strip_edges() if (c is Button) else "",
+		"hovered_rect": [c.get_global_rect().position.x, c.get_global_rect().position.y,
+				c.get_global_rect().size.x, c.get_global_rect().size.y] if c != null else [],
+	}}
+	return out
+
+
+## 主菜单快照：模式 / 难度 / 有没有存档可续。
+func ai_snapshot() -> Dictionary:
+	var id := _content_id()
+	var cards := _cards_of(_mode_idx)
+	var card_list: Array = []
+	for i in cards.size():
+		var c: Dictionary = cards[i]
+		card_list.append({
+			"index": i,
+			"id": String(c.get("id", "")),
+			"name": String(c.get("name", "")),
+			"meta": String(c.get("meta", "")),
+		})
+	var mode_list: Array = []
+	for i in _modes.size():
+		var m: Dictionary = _modes[i]
+		mode_list.append({
+			"index": i,
+			"id": String(m.get("id", "")),
+			"name": String(m.get("name", "")),
+			"parent": bool(m.get("parent", false)),
+		})
+	return {
+		"scene": "menu",
+		"modes": mode_list,
+		"mode_index": _mode_idx,
+		"content_id": id,
+		"difficulties": card_list,
+		"difficulty_index": int(_pick.get(id, 0)),
+		"has_run": bool(RUN_STORE.has_run()),
+		"settings_open": bool(_settings != null and _settings.visible),
+		"toast": String(_toast.text) if _toast != null else "",
+	}
+
+
+## 选左侧模式（父项 = 展开/收起）。
+func ai_select_mode(index: int) -> Dictionary:
+	if index < 0 or index >= _modes.size():
+		return {"ok": false, "reason": "模式下标越界（0~%d）" % (_modes.size() - 1)}
+	_on_mode_pressed(index)
+	return {"ok": true}
+
+
+## 选右侧难度卡（只改选中项，不开局）。
+func ai_select_difficulty(index: int) -> Dictionary:
+	var cards := _cards_of(_mode_idx)
+	if index < 0 or index >= cards.size():
+		return {"ok": false, "reason": "难度下标越界（0~%d）" % (cards.size() - 1)}
+	_pick[_content_id()] = index
+	_refresh_strips()
+	return {"ok": true}
+
+
+## 开始一局。可选先指定难度下标 / 难度 id。
+## ⚠️ 走的是 `_on_start_pressed()` —— 与点「开始」按钮同一条路
+##    （含首次进开场剧情的分派），不另造第二份启动逻辑。
+func ai_start(difficulty_index: int = -1, difficulty_id: String = "") -> Dictionary:
+	if difficulty_index >= 0:
+		var r := ai_select_difficulty(difficulty_index)
+		if not bool(r.get("ok", false)):
+			return r
+	elif difficulty_id != "":
+		var cards := _cards_of(_mode_idx)
+		var hit := -1
+		for i in cards.size():
+			if String((cards[i] as Dictionary).get("id", "")) == difficulty_id:
+				hit = i
+				break
+		if hit < 0:
+			return {"ok": false, "reason": "当前模式没有难度 id=%s" % difficulty_id}
+		_pick[_content_id()] = hit
+		_refresh_strips()
+	_on_start_pressed()
+	return {"ok": true}
+
+
+## 继续上一局（直接恢复存档，不进片头）。
+func ai_continue() -> Dictionary:
+	if not RUN_STORE.has_run():
+		return {"ok": false, "reason": "没有可继续的对局"}
+	_on_continue_run()
+	return {"ok": true}
+
+
+## 设置窗开 / 关。
+func ai_settings(on: bool) -> Dictionary:
+	if _settings == null:
+		return {"ok": false, "reason": "设置窗未建"}
+	var open_now: bool = _settings.visible
+	if open_now != on:
+		_toggle_settings()
+	return {"ok": true}
+
+
+## 回看片头。
+func ai_replay_intro() -> Dictionary:
+	_on_replay_intro()
+	return {"ok": true}
+
+
+## 退出游戏。
+func ai_quit_game() -> Dictionary:
+	_on_quit()
+	return {"ok": true}
+
+
+# ── 鼠标合成（与战斗场景同一套口径）────────────────────────────
+# 用户定案：不准后台操作。AI 必须像人一样挪光标、点按钮。
+func ai_mouse_move(x: float, y: float) -> Dictionary:
+	var vp := get_viewport()
+	if vp == null:
+		return {"ok": false, "reason": "no viewport"}
+	var sz := vp.get_visible_rect().size
+	var p := Vector2(clampf(x, 0.0, sz.x), clampf(y, 0.0, sz.y))
+	Input.warp_mouse(p)
+	var m := InputEventMouseMotion.new()
+	m.position = p
+	m.global_position = p
+	Input.parse_input_event(m)
+	return {"ok": true, "data": {"x": p.x, "y": p.y}}
+
+
+func ai_mouse_down(x: float, y: float, button: int = MOUSE_BUTTON_LEFT) -> Dictionary:
+	ai_mouse_move(x, y)
+	await get_tree().create_timer(0.05).timeout
+	_press(true, button, Vector2(x, y))
+	return {"ok": true, "data": {"x": x, "y": y}}
+
+
+func ai_mouse_up(x: float, y: float, button: int = MOUSE_BUTTON_LEFT) -> Dictionary:
+	_press(false, button, Vector2(x, y))
+	return {"ok": true, "data": {"x": x, "y": y}}
+
+
+func ai_mouse_click(x: float, y: float, button: int = MOUSE_BUTTON_LEFT) -> Dictionary:
+	var vp := get_viewport()
+	if vp == null:
+		return {"ok": false, "reason": "no viewport"}
+	var sz := vp.get_visible_rect().size
+	var p := Vector2(clampf(x, 0.0, sz.x), clampf(y, 0.0, sz.y))
+	ai_mouse_move(p.x, p.y)
+	await get_tree().create_timer(0.06).timeout
+	_press(true, button, p)
+	await get_tree().create_timer(0.06).timeout
+	_press(false, button, p)
+	return {"ok": true, "data": {"x": p.x, "y": p.y}}
+
+
+func ai_mouse_drag(ax: float, ay: float, bx: float, by: float, steps: int = 12) -> Dictionary:
+	ai_mouse_move(ax, ay)
+	await get_tree().create_timer(0.08).timeout
+	_press(true, MOUSE_BUTTON_LEFT, Vector2(ax, ay))
+	for i in range(1, steps + 1):
+		var t := float(i) / float(steps)
+		ai_mouse_move(lerpf(ax, bx, t), lerpf(ay, by, t))
+		await get_tree().create_timer(0.03).timeout
+	await get_tree().create_timer(0.06).timeout
+	_press(false, MOUSE_BUTTON_LEFT, Vector2(bx, by))
+	return {"ok": true}
+
+
+func ai_mouse_path(points: Array, hold: bool = false) -> Dictionary:
+	for i in points.size():
+		var pt: Vector2 = points[i]
+		if hold and i == 0:
+			_press(true)
+		ai_mouse_move(pt.x, pt.y)
+		await get_tree().create_timer(0.03).timeout
+	if hold:
+		_press(false)
+	return {"ok": true}
+
+
+## ⚠️ 坐标必须**显式传进来**，不能回读 `vp.get_mouse_position()`：
+##    `Input.warp_mouse()` 之后要等几帧才反映到 Viewport._mouse_pos，
+##    回读会拿到上一个位置 —— 症状是「光标明明在按钮上，点的却是别处」
+##    （实测：难度卡能点中、右上角按钮点不中，就是这个原因）。
+func _press(down: bool, button: int = MOUSE_BUTTON_LEFT, p: Variant = null) -> void:
+	var vp := get_viewport()
+	if vp == null:
+		return
+	var pos: Vector2 = p if p is Vector2 else vp.get_mouse_position()
+	var ev := InputEventMouseButton.new()
+	ev.button_index = button
+	ev.pressed = down
+	ev.position = pos
+	ev.global_position = pos
+	Input.parse_input_event(ev)

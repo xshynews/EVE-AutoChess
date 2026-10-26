@@ -7,6 +7,7 @@ extends Node
 
 const W := preload("res://scripts/ui/eve_window.gd")
 const LAYOUT_STORE := preload("res://scripts/ui/eve_window_store.gd")
+const UI := preload("res://scripts/ui/eve_ui_scale.gd")
 
 const HEADER_H := 26.0
 
@@ -32,6 +33,7 @@ func _ready() -> void:
 	_t_height_sync()
 	_t_persist()
 	_t_closable()
+	await _t_mobile_content_fill()
 	print("═══ RESULT passed=%d failed=%d ═══" % [_pass, _fail])
 	# ★ 2026-10-10（审查 R07）：失败 ⇒ 非零退出码
 	get_tree().quit(1 if _fail > 0 else 0)
@@ -194,6 +196,26 @@ func _t_height_sync() -> void:
 	w.call("set_window_height", 128.0)
 	_ok(absf(w.size.y - 128.0) < 0.5, "再收回 128（实际 %.0f）" % w.size.y)
 
+	# ★★ 2026-10-25（「结算页的打捞区不见了」的真根因）：
+	#   玩家拖过一次这扇窗 ⇒ 盘里存了 `_user_rect`（比如 420×356）。
+	#   后来内容变高（打捞区接进来），`set_window_height()` 只改 `_base_rect`，
+	#   而 `_effective_rect()` 原本无条件优先 `_user_rect` ⇒ 窗高永远停在旧值，
+	#   多出来的打捞区被 `clip_contents` 裁掉（症状就是"界面不见了"）。
+	#   ⇒ `_height_owned` 的窗：位置仍听玩家的，**高度**一律用内容算出来的；
+	#     ⚠️ **宽度反过来 —— 玩家缩放过就听玩家的**（2026-10-25 第二修：
+	#      「舰船档案拖动放大后再点另一艘船就弹回去」，见下面两条断言）。
+	w.set("_user_rect", Rect2(500.0, 400.0, 420.0, 356.0))
+	w.call("set_window_rect", 80.0, 80.0, 172.0, 128.0)
+	w.call("set_window_height", 520.0)
+	_ok(absf(w.size.y - 520.0) < 0.5,
+			"★★ 有玩家旧矩形时，高度仍由内容说了算（实际 %.0f）" % w.size.y)
+	_ok(w.position == Vector2(500, 400),
+			"★★ 但玩家拖到的位置仍然保留（实际 %s）" % str(w.position))
+	_ok(absf(w.size.x - 420.0) < 0.5,
+			"★★ 玩家缩放过的宽度保留（实际 %.0f，修前会被改回 172）" % w.size.x)
+	w.set("_user_rect", Rect2())
+	w.call("set_window_height", 128.0)
+
 
 # ---------------------------------------------------------------- 布局记忆
 func _t_persist() -> void:
@@ -299,3 +321,51 @@ func _dbl_click(c: Control) -> void:
 	ev.double_click = true
 	ev.position = c.size * 0.5
 	c.gui_input.emit(ev)
+
+
+## [7] ★★ `content` 必须铺满窗口（手机 / 桌面同口径）
+##
+## 历史症状：手机设置窗被铺成全屏后，内容仍缩在左上约 950×340，右下大片空白；
+## 2026-10-25 PC 实机又见「商店 5 张卡挤成一条、战斗日志只剩 42px 宽」。
+## 根因：`_content_host` 是普通 `Control`（不是 Container）⇒ 不会给孩子排版，
+## 而 `_notification` 里的那次赋值发生在宿主排版之前（宿主还是 0）⇒ 内容停在最小尺寸。
+## 现在两端都由 `_fit_content_to_host()` 铺满（⛔ 别再按平台分叉）。
+func _t_mobile_content_fill() -> void:
+	print("[7] ★ content 铺满窗口（手机 / 桌面同口径）")
+	var old := UI.force_mobile
+	# ── 手机：铺满 ──
+	UI.force_mobile = true
+	var host := Control.new()
+	host.size = Vector2(1400, 800)
+	add_child(host)
+	var w: Control = W.new()
+	host.add_child(w)
+	w.call("set_window_rect", 0.0, 0.0, 1200.0, 700.0)
+	await get_tree().process_frame
+	var c: Control = w.get("content")
+	_ok(c != null and c.size.x >= 1200.0 - 40.0,
+			"★ 手机档 content 宽度铺满（%.0f ≥ %.0f）" % [c.size.x if c else 0.0, 1160.0])
+	_ok(c != null and c.size.y >= 700.0 - 60.0,
+			"★ 手机档 content 高度铺满（%.0f ≥ %.0f）" % [c.size.y if c else 0.0, 640.0])
+	w.queue_free()
+	host.queue_free()
+
+	# ── 桌面：同口径铺满（2026-10-25 商店/日志挤成一条的回归修复）──
+	UI.force_mobile = false
+	var host2 := Control.new()
+	host2.size = Vector2(1920, 1080)
+	add_child(host2)
+	var w2: Control = W.new()
+	host2.add_child(w2)
+	w2.call("set_window_rect", 0.0, 0.0, 1200.0, 700.0)
+	await get_tree().process_frame
+	var c2: Control = w2.get("content")
+	var need2: Vector2 = c2.get_combined_minimum_size()
+	_ok(c2.size.x >= 1200.0 - 40.0,
+			"★★ 桌面档 content 也铺满宽度（%.0f ≥ %.0f，最小宽 %.0f）"
+			% [c2.size.x, 1160.0, need2.x])
+	_ok(c2.size.y >= 700.0 - 60.0,
+			"★★ 桌面档 content 也铺满高度（%.0f ≥ %.0f）" % [c2.size.y, 640.0])
+	w2.queue_free()
+	host2.queue_free()
+	UI.force_mobile = old

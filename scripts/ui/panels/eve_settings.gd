@@ -345,6 +345,11 @@ func _build_vertical() -> void:
 ##   · 暂停按钮留在栏目**之上** —— 它是唯一会被急用的东西，埋进栏目等于没有；
 ##   · 底栏常驻「恢复默认 + 完成」。
 func _build_tabbed() -> void:
+	# ★ 安卓线：移动端用**左侧竖排标签 + 右侧滚动 + 底部固定栏**，
+	#   而不是把桌面那排小 tab 拉横。桌面路径继续走下面原逻辑（像素不变）。
+	if UI_SCALE_SCRIPT.is_mobile():
+		_build_tabbed_mobile()
+		return
 	if _is_battle():
 		_sec_pause(content)
 	# ── 栏目行（先占位；盒子灌完内容再建按钮，空组不建钮）──
@@ -442,6 +447,112 @@ func _build_tabbed() -> void:
 	_show_tab(String(_tab_btns[0]["key"]) if not _tab_btns.is_empty() else "video")
 
 
+## 移动端栏目结构：左侧大标签栏 + 右侧滚动内容 + 底部固定操作栏。
+##
+## ★ 为什么不是「把桌面 tab 行拉宽」：手机上顶部横排 tab 离拇指远、字号小；
+##   竖排标签在左手拇指弧内，且能做得很大。内容区独立滚动，底部「完成」常驻。
+func _build_tabbed_mobile() -> void:
+	content.add_theme_constant_override("separation", 16)
+	if _is_battle():
+		_sec_pause(content)
+
+	var body := HBoxContainer.new()
+	body.name = "MobileBody"
+	body.add_theme_constant_override("separation", 24)
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(body)
+
+	var rail := VBoxContainer.new()
+	rail.name = "TabRail"
+	rail.custom_minimum_size = Vector2(300, 0)
+	rail.add_theme_constant_override("separation", 12)
+	rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	body.add_child(rail)
+
+	var scroll := ScrollContainer.new()
+	scroll.name = "TabScroll"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(scroll)
+
+	for key in TAB_ORDER:
+		var box := VBoxContainer.new()
+		box.name = "Tab_%s" % key
+		box.add_theme_constant_override("separation", 18)
+		box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		box.visible = false
+		scroll.add_child(box)
+		_tab_boxes[key] = box
+
+	# 与桌面栏目版同一批 `_sec_*`，只是排布不同。
+	if _is_battle():
+		_sec_render(_tab_boxes["video"])
+		_sec_battle_ui(_tab_boxes["video"])
+	_sec_audio(_tab_boxes["audio"])
+	_sec_display(_tab_boxes["ui"])
+	if not _is_menu():
+		_sec_interface(_tab_boxes["ui"])
+	if _is_battle():
+		_sec_action(_tab_boxes["game"], false)
+		if not OS.has_feature("release"):
+			_sec_debug(_tab_boxes["game"])
+		_sec_hint(_tab_boxes["game"])
+	else:
+		_sec_hint(_tab_boxes["ui"])
+
+	# 左侧标签：大按钮，选中态 hud_main。
+	_tab_btns.clear()
+	for key in TAB_ORDER:
+		var bx: VBoxContainer = _tab_boxes[key]
+		if bx.get_child_count() == 0:
+			continue
+		var b := _mk_btn(_tab_label(key))
+		b.custom_minimum_size = Vector2(300, 98)
+		b.size_flags_horizontal = Control.SIZE_FILL
+		FONT.fs(b, 27)
+		b.set_meta(&"tab", key)
+		b.pressed.connect(_on_tab_pressed.bind(key))
+		rail.add_child(b)
+		_tab_btns.append({"key": key, "btn": b})
+
+	# 底部固定操作栏：返回（非主菜单）/ 恢复默认 / 完成。
+	var foot := HBoxContainer.new()
+	foot.name = "Foot"
+	foot.add_theme_constant_override("separation", 16)
+	foot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(foot)
+	if not _is_menu():
+		var back_btn := _mk_btn(T.t("SET_ACT_BACK_BATTLE", "放弃本局 · 回主界面")
+				if _is_battle() else T.t("SET_ACT_BACK_LOUNGE", "返回主界面"))
+		EveButtonTheme.apply(back_btn, "hud_warn")
+		back_btn.custom_minimum_size = Vector2(300, 88)
+		back_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		back_btn.pressed.connect(func(): back_to_menu_requested.emit())
+		foot.add_child(back_btn)
+	var reset_btn := _mk_btn(T.t(&"SETTINGS_RESET", "恢复默认设置"))
+	reset_btn.custom_minimum_size = Vector2(300, 88)
+	FONT.fs(reset_btn, 24)
+	reset_btn.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	reset_btn.pressed.connect(reset_to_defaults)
+	foot.add_child(reset_btn)
+	# ⚠️ `reset_to_defaults()` 会回写 `_reset_note`；移动端不显示 Ctrl+F11 提示，
+	#   但字段必须存在（否则空指针）。建一个隐藏 Label 兜住。
+	_reset_note = Label.new()
+	_reset_note.visible = false
+	var done_btn := _mk_btn(T.t("SET_DONE", "完成"))
+	done_btn.custom_minimum_size = Vector2(0, 88)
+	FONT.fs(done_btn, 24)
+	done_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	EveButtonTheme.apply(done_btn, "hud_main")
+	done_btn.pressed.connect(func(): closed.emit())
+	foot.add_child(done_btn)
+
+	_show_tab(String(_tab_btns[0]["key"]) if not _tab_btns.is_empty() else "video")
+
+
 ## 栏目文案。⛔ i18n 冻结期**不进 CSV**：`T.t` 对未登记 key 返回调用点给的
 ##    中文源文（全工程同款写法，`verify_i18n` 有兜底用例）。解冻时补 4 条
 ##    `SET_TAB_*` 即可 —— 现在不加行（冻结令）。
@@ -482,8 +593,11 @@ func _sec_pause(t: VBoxContainer) -> void:
 	if not _is_battle():
 		return
 	_pause_btn = Button.new()
-	_pause_btn.custom_minimum_size = Vector2(0, 40)
+	var mobile := UI_SCALE_SCRIPT.is_mobile()
+	_pause_btn.custom_minimum_size = Vector2(0, 72 if mobile else 40)
 	_pause_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if mobile:
+		FONT.fs(_pause_btn, 20)
 	_pause_btn.pressed.connect(func(): pause_toggled.emit(not _paused))
 	t.add_child(_pause_btn)
 	t.add_child(make_divider())
@@ -605,8 +719,10 @@ func _sec_debug(t: VBoxContainer) -> void:
 	t.add_child(make_divider())
 	t.add_child(make_group_header(T.t("SET_GROUP_SYSTEM", "系统  SYSTEM")))
 	_dbg_btn = Button.new()
-	_dbg_btn.custom_minimum_size = Vector2(0, 20)
+	_dbg_btn.custom_minimum_size = Vector2(0, 64 if UI_SCALE_SCRIPT.is_mobile() else 20)
 	_dbg_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if UI_SCALE_SCRIPT.is_mobile():
+		FONT.fs(_dbg_btn, 18)
 	_dbg_btn.pressed.connect(func():
 		_set_debug_open(_dbg_box == null or not _dbg_box.visible))
 	t.add_child(_dbg_btn)
@@ -662,8 +778,9 @@ func _sec_hint(t: VBoxContainer) -> void:
 		hint_text = T.t("SET_HINT_LOUNGE", "分辨率与字号即时生效；牌桌不参与「界面缩放」")
 	hint.text = hint_text
 	hint.add_theme_color_override("font_color", C_TEXT_FAINT)
-	FONT.fs(hint, 9)
-	hint.autowrap_mode = TextServer.AUTOWRAP_OFF
+	FONT.fs(hint, 16 if UI_SCALE_SCRIPT.is_mobile() else 9)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if UI_SCALE_SCRIPT.is_mobile() \
+			else TextServer.AUTOWRAP_OFF
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	t.add_child(hint)
 
@@ -792,16 +909,17 @@ func _build_choice_block(items: Array, label_key: String, cols: int,
 ## 返回 {"row": HBoxContainer, "slider": HSlider, "num": Label}
 func _build_slider_row(label: String, value: float, on_change: Callable,
 		min_v: float = 0.0, max_v: float = 1.0, step_v: float = 0.01) -> Dictionary:
+	var mobile := UI_SCALE_SCRIPT.is_mobile()
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
+	row.add_theme_constant_override("separation", 14 if mobile else 6)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.custom_minimum_size = Vector2(0, 16)
+	row.custom_minimum_size = Vector2(0, 98 if mobile else 16)
 
 	var k := Label.new()
 	k.text = label
 	k.add_theme_color_override("font_color", C_TEXT_DIM)
-	FONT.fs(k, 11)
-	k.custom_minimum_size = Vector2(42, 0)
+	FONT.fs(k, 27 if mobile else 11)
+	k.custom_minimum_size = Vector2(230 if mobile else 42, 0)
 	k.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(k)
 
@@ -810,17 +928,17 @@ func _build_slider_row(label: String, value: float, on_change: Callable,
 	s.max_value = max_v
 	s.step = step_v
 	s.value = clampf(value, min_v, max_v)
-	s.custom_minimum_size = Vector2(90, 14)
+	s.custom_minimum_size = Vector2(200 if mobile else 90, 62 if mobile else 14)
 	s.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	s.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_style_slider(s)
 	row.add_child(s)
 
 	var num := Label.new()
-	num.custom_minimum_size = Vector2(36, 0)
+	num.custom_minimum_size = Vector2(140 if mobile else 36, 0)
 	num.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	num.add_theme_color_override("font_color", C_TEXT)
-	FONT.fs(num, 11)
+	FONT.fs(num, 27 if mobile else 11)
 	num.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(num)
 
@@ -845,8 +963,9 @@ static func _style_slider(s: HSlider) -> void:
 	track.border_color = Color(0.42, 0.55, 0.60, 0.40)
 	track.set_border_width_all(1)
 	track.set_corner_radius_all(0)
-	track.content_margin_top = 4
-	track.content_margin_bottom = 4
+	var th := 11 if UI_SCALE_SCRIPT.is_mobile() else 4
+	track.content_margin_top = th
+	track.content_margin_bottom = th
 	s.add_theme_stylebox_override("slider", track)
 
 	var fill := StyleBoxFlat.new()
@@ -858,7 +977,9 @@ static func _style_slider(s: HSlider) -> void:
 	s.add_theme_stylebox_override("grabber_area_highlight", fill)
 
 	if _grabber_tex == null:
-		var img := Image.create(5, 14, false, Image.FORMAT_RGBA8)
+		var gw := 20 if UI_SCALE_SCRIPT.is_mobile() else 5
+		var gh := 48 if UI_SCALE_SCRIPT.is_mobile() else 14
+		var img := Image.create(gw, gh, false, Image.FORMAT_RGBA8)
 		img.fill(Color(0.55, 0.78, 0.82, 0.95))
 		_grabber_tex = ImageTexture.create_from_image(img)
 	s.add_theme_icon_override("grabber", _grabber_tex)
@@ -876,10 +997,12 @@ func _new_row(sep: int) -> HBoxContainer:
 func _mk_btn(text: String) -> Button:
 	var b := Button.new()
 	b.text = text
-	b.custom_minimum_size = Vector2(0, 22)
+	b.custom_minimum_size = Vector2(0, 64 if UI_SCALE_SCRIPT.is_mobile() else 22)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	EveButtonTheme.apply(b, "hud")
+	if UI_SCALE_SCRIPT.is_mobile():
+		FONT.fs(b, 18)
 	return b
 
 

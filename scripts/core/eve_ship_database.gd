@@ -50,6 +50,27 @@ const CELL_METERS := 6000.0
 const ARMOR_SHARE := 0.65
 const ATTACK_CYCLE_SECONDS := 1.0
 
+## ── ★ 2026-10-25 全局移速倍率（用户：「舰船速度目视过慢」）──────────
+##
+## 根因是单位换算：`speed_cells` 单位是「格/秒」，而一格 = `CELL_METERS` = 6000 m，
+## 世界单位 1.0 = 1000 m ⇒ 护卫 0.10 格/s 折算成 **0.60 世界单位/秒**。
+## 屏幕上（跟随视距 19.7、约 62 px/世界单位）只有 **37 px/s**，
+## 而一艘船本身约 250 px 宽 —— 穿过自己的舰体长度要 7 秒，接敌 20 km 要 33 秒。
+##
+## 所以统一放大 2.5 倍：护卫 1.5 世界单位/s（约 93 px/s），接敌 13 秒。
+##
+## ⚠️ **只乘 `max_speed`，⛔ 不要连带乘 `agility`**（2026-10-25 推导，别再"顺手对称改"）：
+##    `drag_rate = friction / (mass × agility)`
+##    `maximum_acceleration = drag_rate × speed_fraction × max_speed`   ∝ max_speed / agility
+##    `stop_distance = max(radius×4, max_speed / drag_rate)`             ∝ max_speed × agility
+##    只放大 `max_speed` ⇒ 加速度同倍涨、`stop_distance` 同倍涨，
+##    接敌/到位的速度曲线形状**完全不变**，只是整段快 k 倍。
+##    若同时放大 `agility`：加速度会被抵消回原值，而 `stop_distance` 变 k² 倍
+##    ⇒ 船到点前会先"爬"很久，环绕半径也跟着虚胖 —— 手感反而更差。
+##
+## ⚠️ 只改这里，**不动 `eve_ship_table.gd` 的权威值**（`speed_cells` 仍是设计真值）。
+const SPEED_SCALE := 2.5
+
 ## ── ★ 后勤舰（2026-10-01 用户定案：「攻击要低，后勤要真」）──────────────
 ##
 ## 起因：用户实机发现「后勤舰似乎也有攻击能力」，要求 ——
@@ -230,7 +251,7 @@ static func derive(row: Dictionary) -> Dictionary:
 	var range_cells := int(row["range_cells"])
 	var speed_cells := float(row["speed_cells"])
 	var optimal := float(range_cells) * CELL_METERS
-	var max_speed := speed_cells * CELL_METERS
+	var max_speed := speed_cells * CELL_METERS * SPEED_SCALE
 
 	# --- ④ 体型档位 ---
 	var cp: Dictionary = CLASS_PROFILE.get(cost, CLASS_PROFILE[1])

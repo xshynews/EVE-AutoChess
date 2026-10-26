@@ -49,6 +49,7 @@ func run_all() -> void:
 	_hit_layer_test()
 	_salvo_burst_test()
 	_sfx_switch_test()
+	_sfx_default_test()
 	_cue_test()
 	_volume_test()
 	_default_level_test()
@@ -102,6 +103,32 @@ func _sfx_switch_test() -> void:
 	_ok("总开关打开时没有静默缺源（missing=%d）" % on_miss, on_miss == 0)
 	_ok("总开关关闭 ⇒ 开火/爆炸/阶段音一声不响（%d 声）" % off_n, off_n == 0)
 	_ok("★ 总开关关闭时**不误报**音源缺失（missing=%d）" % off_miss, off_miss == 0)
+	a.queue_free()
+
+
+## 出厂总开关必须是「开」的（★ 2026-10-25 用户报「音效 / 环境两个滑杆没用」）。
+##
+## ══════════════════════════════════════════════════════════════════
+##  这条断言守的是什么
+## ══════════════════════════════════════════════════════════════════
+##  `sfx_off()` 同时挡住 sfx 与 amb 两条总线。只要出厂是 off，
+##  设置窗里的「音效」「环境」两个滑杆**无论拉到哪都听不到任何差别**，
+##  而「总音量」（Master）与「音乐」照常有效 —— 症状正好是用户描述的那样。
+##
+##  ⚠️ 这是「静默失效」类缺陷：不报错、不告警、验收里如果没有这一条，
+##    65 条断言全绿也发现不了（都要先手动 `sfx_enabled = true` 才测得到声音）。
+##  ⇒ 判据必须**从默认值出发**，且要真的放出一声来。
+func _sfx_default_test() -> void:
+	var a := EveAudio.new()          # ⛔ 不走 _make_audio()：它会强制打开开关
+	add_child(a)
+	var fs := _fake_stream()
+	a._sfx_bank = {"fire": [fs]}
+	a.reset_stats()
+	a.play_fire(1, true)
+	var n := int(a.stats().get("fire", 0))
+	_ok("出厂音效总开关是开的（SFX_ENABLED_DEFAULT=%s）"
+			% str(EveAudio.SFX_ENABLED_DEFAULT), a.sfx_enabled)
+	_ok("出厂状态开火真的响（%d 声）" % n, n >= 1)
 	a.queue_free()
 
 

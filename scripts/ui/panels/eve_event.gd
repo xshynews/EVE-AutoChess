@@ -28,6 +28,8 @@ const CARD_MIN_W := 150.0
 
 var _cards: Array[Dictionary] = []
 var _cards_row: HBoxContainer
+## 卡片行的横向滚动容器（见 `_build_contents` 里的说明）
+var _scroll: ScrollContainer
 var _intro: Label
 var _footer: Label
 var _options: Array = []
@@ -54,10 +56,26 @@ func _build_contents() -> void:
 	_intro.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_child(_intro)
 
+	# ★★ 2026-10-25（用户：「选船时多艘船会把宽度撑超」）：
+	#   卡片行从前**直接挂 content** ⇒ 卡片最小宽 150 × 张数 一旦超过窗宽 1000
+	#   （7 张 = 1100px）就把卡画到窗外，场上+备战席十几艘时完全没法选。
+	#   现在套一层**横向滚动**：4 张时 HBox 仍撑满窗宽（外观逐像素不变），
+	#   ≥7 张时出现底部横向滚动条。
+	_scroll = ScrollContainer.new()
+	_scroll.name = "CardsScroll"
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# ⚠️ PASS 而不是 STOP：卡片自己要吃鼠标，容器不该拦。
+	_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
+	content.add_child(_scroll)
+
 	_cards_row = HBoxContainer.new()
 	_cards_row.add_theme_constant_override("separation", 10)
 	_cards_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	content.add_child(_cards_row)
+	# ⚠️ 必须 EXPAND_FILL：卡少时让 HBox 吃满视口（否则 4 张卡会挤在左边留一条空）
+	_cards_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll.add_child(_cards_row)
 
 	_footer = Label.new()
 	_footer.add_theme_color_override("font_color", C_TEXT_FAINT)
@@ -98,6 +116,11 @@ func show_ship_pick(options: Array, line: String = "", meta: String = "") -> voi
 	_pick_mode = true
 	show_options(options, line, meta)
 	_footer.text = "选中的那艘船本局永久生效 —— 只能选一次"
+
+
+## 当前是不是「选 1 艘船」子状态（AI 操作面与自检用）。
+func ship_pick_is_open() -> bool:
+	return visible and _pick_mode
 
 
 func options_count() -> int:

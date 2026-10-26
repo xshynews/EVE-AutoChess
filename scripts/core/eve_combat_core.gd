@@ -184,9 +184,15 @@ static func lock_duration(scan_resolution: float, signature_radius: float) -> fl
 # ---------------------------------------------------------------- 伤害应用
 
 ## 按 shield -> armor -> hull 逐层穿透
+##
+## `armor_pierce`（0~1）= 对**装甲层**的穿甲比例（0.25 = 无视 25% 装甲抗性）。
+## 来源：武器羁绊「激光炮 6 艘：攻击 ×1.21 · 无视 25% 装甲」。
+## ⚠️ 只作用于 armor 层 —— 护盾/结构不受影响，这是 EVE 的常识口径
+##    （装甲板被穿甲弹直接打穿，护盾是能量场、结构是骨架）。
 ## 返回 applied（实际生效量）/ applied_by_type / remaining / breaks（破层事件）
 static func apply_damage(hp: Dictionary, resists: Dictionary, amount: float,
-		profile: PackedFloat32Array, bypass_resists: bool = false) -> Dictionary:
+		profile: PackedFloat32Array, bypass_resists: bool = false,
+		armor_pierce: float = 0.0) -> Dictionary:
 	var remaining: float = maxf(0.0, amount)
 	var applied := 0.0
 	var applied_by_type := PackedFloat32Array()
@@ -194,6 +200,7 @@ static func apply_damage(hp: Dictionary, resists: Dictionary, amount: float,
 	applied_by_type.fill(0.0)
 	var mix := normalize_damage_profile(profile)
 	var breaks: Array[StringName] = []
+	var pierce := clampf(armor_pierce, 0.0, 0.95)
 
 	for layer in LAYERS:
 		if remaining <= 0.0:
@@ -209,6 +216,8 @@ static func apply_damage(hp: Dictionary, resists: Dictionary, amount: float,
 			var r: float = 0.0
 			if not bypass_resists:
 				r = clampf(layer_resists[i] if i < layer_resists.size() else 0.0, 0.0, 0.999999)
+			if pierce > 0.0 and layer == &"armor":
+				r *= (1.0 - pierce)
 			factors[i] = mix[i] * (1.0 - r)
 			factor_sum += factors[i]
 		if factor_sum <= 0.0:

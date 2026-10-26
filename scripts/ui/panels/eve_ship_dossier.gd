@@ -72,7 +72,19 @@ func _set_expanded(on: bool) -> void:
 		_empty_box.visible = not on
 	if _full_box:
 		_full_box.visible = on
-	set_window_height(H_EXPANDED if on else H_COLLAPSED)
+	# ★ 2026-10-25（用户：「拖动放大之后再点另一艘船，会变回去」）：
+	#   `set_ship()` 每换一艘都会走到这里 ⇒ 从前无条件 `set_window_height(320)`，
+	#   把玩家自己拉大的尺寸**每次都抹掉**（宽也不保：`set_window_height` 曾只从
+	#   `_base_rect` 取宽，而 `_base_rect` 是设计稿值）。
+	#   现在：展开态一旦玩家缩放过，就用**玩家自己的高度**；宽度由 EveWindow 侧
+	#   （`set_window_height` / `set_window_rect`）统一尊重 `_user_rect.size.x`。
+	#   ⛔ 折叠态仍强制 128 —— 那是「收起」的语义，不是玩家尺寸。
+	var h := H_EXPANDED if on else H_COLLAPSED
+	# ⚠️ 判定门槛用 H_COLLAPSED：`EveWindow._note_user_rect()` 在收起态会
+	#    存下**展开态**的高度（> 128），所以这个值直接可用；128 本身被排除。
+	if on and _user_rect.size.y > H_COLLAPSED + 1.0:
+		h = _user_rect.size.y
+	set_window_height(h)
 
 
 func collapse() -> void:
@@ -220,7 +232,8 @@ var _role_label: Label
 func _build_trait_row(group: StringName) -> Dictionary:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 5)
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# ★ 2026-10-25（A 方案）：行要能出 tooltip 说明「谁在贡献」⇒ 不能 IGNORE
+	row.mouse_filter = Control.MOUSE_FILTER_PASS
 
 	var chip := ColorRect.new()
 	chip.custom_minimum_size = Vector2(10, 10)
@@ -255,7 +268,8 @@ func _build_trait_row(group: StringName) -> Dictionary:
 	row.add_child(state)
 
 	_trait_box.add_child(row)
-	return {"group": group, "chip": chip, "name": nm, "ratio": ratio, "state": state}
+	return {"group": group, "chip": chip, "name": nm, "ratio": ratio,
+			"state": state, "row": row}
 
 
 func _build_attr(key: String, id: String) -> Dictionary:
@@ -361,6 +375,7 @@ func _refresh_traits() -> void:
 			nm.text = "—"
 			ratio.text = "0/%d" % EveTraitTable.max_tier(group)
 			state.text = ""
+			row["row"].tooltip_text = ""
 			continue
 
 		var counts := EveTraitTable.count(_fleet, group)
@@ -372,6 +387,20 @@ func _refresh_traits() -> void:
 		# ★ i18n：显示名走取词；`mine` 仍是**逻辑键**（`count()` / `_trait_color()` 都按它查）。
 		nm.text = TERMS.trait_member(group, mine)
 		ratio.text = "%d/%d" % [n, full]
+		# ★ 2026-10-25（A 方案）：计数只算【场上】，玩家会问「我明明有这艘船为什么是 0」
+		#   ⇒ tooltip 列出真正在贡献的舰船；本舰不在场上时再补一句，明说它没被算进去。
+		# ⚠️ 文案**不走 `T.t`** —— i18n 处于冻结期（`EveText` 顶注：
+		#    「⛔ 不要再往 strings.csv 加 key」），这里直接用中文源文。
+		var names: Array[String] = []
+		for s in _fleet:
+			if EveTraitTable.group_of_ship(s, group) == mine:
+				names.append(String(s.ship_name))
+		var tip := "场上暂无同系舰船" if names.is_empty() \
+				else "场上计入：%s" % "、".join(names)
+		if not _fleet.has(ship):
+			tip += "\n（本舰未上场，不计入）"
+		var row_box: Control = row["row"]
+		row_box.tooltip_text = tip
 		if active:
 			state.text = T.t("DOSSIER_TRAIT_ACTIVE", "已生效")
 			state.add_theme_color_override("font_color", C_OK)

@@ -119,6 +119,18 @@ const TRACER_FLASH := 0.10
 ## ⚠️ 必须有：场上追逃时两船可能相距好几十单位，一条横跨全屏的线
 ##    会把整个战场盖住。截断后是「一段弹道」而不是「一条分割线」。
 const TRACER_MAX_LEN := 4.2
+const ARTILLERY_SHADER := preload("res://scripts/visual/fx_artillery_streak.gdshader")
+const ARTILLERY_FRACTION := 0.55
+const ARTILLERY_MIN_LEN := 2.0
+## 不截断：炮击亮痕必须从攻击船完整连接到护盾锚点。
+const ARTILLERY_MAX_LEN := 1000.0
+const ARTILLERY_WIDTH := 0.20
+const ARTILLERY_LIFE := 0.11
+
+## 运行时可改的炮击颜色。改这两项即可换整套亮痕色调。
+static var artillery_core_color := Color(0.88, 0.96, 1.0, 1.0)
+static var artillery_edge_color := Color(0.10, 0.38, 1.0, 1.0)
+
 ## 特效上限 —— 超过就直接丢弃最老的。
 ##
 ## ⚠️ 必须有这个上限：BOSS 节点 6v6、30Hz 开火，一秒钟能产生几百条开火线。
@@ -178,6 +190,10 @@ func active_count() -> int:
 ##     这也是**唯一**能把「特效断了」与「特效被主动关掉」区分开的办法。
 const FX_ENABLED_DEFAULT := true
 var fx_enabled := FX_ENABLED_DEFAULT
+
+## 运行时可改的贴花颜色；由 shield_impact.gd 在建槽时读取。
+static var shield_decal_mid_color := Color(0.05, 0.30, 1.00, 1.0)
+static var shield_decal_high_color := Color(0.32, 0.70, 1.00, 1.0)
 
 
 ## 开火：在**开火方 → 被打击方**之间画一条黄色细线，亮一下就灭。
@@ -267,11 +283,60 @@ func spawn_tracer(from_meters: Vector3, to_meters: Vector3, hit: bool,
 ## ── 护盾为什么单独一档 ────────────────────────────────────────────
 ##  护盾挨打的手感不是「炸开」，是「整层壳被点亮、扩散、收回」。
 ##  ⇒ 2026-10-17 起用**真球壳 + 菲涅尔**（`fx_shield.gdshader`），不再用方片。
+## 运行时调色：炮击亮痕颜色。新生成的亮痕立即使用；已存在的亮痕保持当前帧。
+func set_artillery_colors(core: Color, edge: Color) -> void:
+	artillery_core_color = core
+	artillery_edge_color = edge
+
+## 炮击攻击特效：一道沿弹道的长条亮痕，头部停在护盾锚点上。
+##
+## 与 spawn_tracer 的区别：曳光是「一条读数线」，这个是攻击本身 ——
+## 更粗、更长、带方向感的头尾，命中那一下才成立。
+func spawn_artillery(from_meters: Vector3, to_meters: Vector3, quality: int = 3) -> void:
+	if not fx_enabled:
+		return
+	var a := from_meters / METERS_PER_UNIT
+	var b := to_meters / METERS_PER_UNIT
+	var span := (b - a).length()
+	if span < 0.05:
+		return
+	var dir := (b - a) / span
+	# 炮击亮痕必须完整连接攻击船与护盾，不能只画命中点附近的一截。
+	# shader 自己把尾部压暗，所以整段弹道仍有攻击方向感。
+	var length := clampf(span, ARTILLERY_MIN_LEN, ARTILLERY_MAX_LEN)
+	length = minf(length, span)
+
+	var mi := MeshInstance3D.new()
+	var q := QuadMesh.new()
+	q.size = Vector2(ARTILLERY_WIDTH, length)
+	mi.mesh = q
+	var mat := ShaderMaterial.new()
+	mat.shader = ARTILLERY_SHADER
+	mat.set_shader_parameter("core", artillery_core_color)
+	mat.set_shader_parameter("edge", artillery_edge_color)
+	mat.set_shader_parameter("intensity", 1.6 + float(clampi(quality, 0, 6)) * 0.10)
+	mi.material_override = mat
+	add_child(mi)
+
+	# 头部严格停在命中点，尾部往后拉
+	var tip := b
+	var tail := a
+	mi.position = (tail + tip) * 0.5
+	mi.look_at(tip, Vector3.UP)
+	mi.rotate_object_local(Vector3.RIGHT, PI * 0.5)
+	_push(mi, ARTILLERY_LIFE, Kind.TRACER)
+	# 命中端点补一小团白热，读起来才是打实了
+	_make_burst(0, to_meters, HIT_SIZE_BASE * 1.6, HIT_LIFE,
+			Color(0.92, 0.98, 1.0), Color(0.30, 0.62, 1.0), 3.2, 6.0)
+
 func spawn_hit(pos_meters: Vector3, quality: int, layer: StringName = &"") -> void:
 	if not fx_enabled:
 		return
+	# ★ 2026-10-21：护盾层不再画任何面积特效。
+	#   用户口径：「去掉蓝色命中环，只保留贴花」。
+	#   护盾受击由目标船自己的曲面贴花表现（eve_shield_impact.gd）——
+	#   贴花本来就长在壳面上，等敌方开火来点亮它，不需要第二套环。
 	if layer == &"shield":
-		_make_shield(pos_meters)
 		return
 	var tier := clampi(quality, 0, 6)
 	# 层优先、品质兜底（旧逻辑保留）：颜色要回答「打的是哪一层」
@@ -442,10 +507,14 @@ func _apply_envelope(n: Node3D, f: Dictionary, k: float) -> void:
 	var kind: int = int(f["kind"])
 	if kind == Kind.TRACER:
 		var mi := n as MeshInstance3D
-		if mi != null and mi.material_override != null:
+		if mi != null and mi.material_override is StandardMaterial3D:
 			var m := mi.material_override as StandardMaterial3D
 			m.albedo_color.a = fade * fade
 			m.emission_energy_multiplier = m.emission_energy_multiplier * 0.997 + 0.003 * fade
+		elif mi != null and mi.material_override is ShaderMaterial:
+			# 炮击亮痕用的是 ShaderMaterial，没有 albedo_color 可写，
+			# 淡出交给 intensity
+			(mi.material_override as ShaderMaterial).set_shader_parameter("intensity", fade * fade * 2.2)
 		return
 	if n is OmniLight3D:
 		(n as OmniLight3D).light_energy = 3.0 * fade * fade
