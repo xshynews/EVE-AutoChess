@@ -234,6 +234,7 @@ func _unit_tests() -> void:
 	_t_levels()
 	_t_beacon_and_loss()
 	_t_endings()
+	_t_enemy_plans()     # F1 ★ 敌方程序化编组配方（2026-10-27 用户定案）
 	# ── 阶段 B ──
 	_t_trait_table()     # B0 羁绊表阈值与效果（CSV 直录）
 	_t_merge()           # B1 三连合成（连锁 + 位置继承）
@@ -246,8 +247,10 @@ func _unit_tests() -> void:
 	_t_salvage()         # C3 打捞（残骸来源 / 下单 / 延迟到账占货位 / 刷新刷不掉 / 买走解锁）
 	_t_salvage_tier()    # C4 ★ 残骸星级反解 + 打捞框「数字残留」修复（2026-10-01）
 	await _t_salvage_scope()   # C5 ★★ 打捞范围 = 敌我双方（2026-10-01 用户定案）
+	_t_battle_losses()   # C6 ★★ 阵亡 ⇒ 移出编队（只能付费打捞拿回，2026-10-27）
 	# ── 阶段 D ──
 	_t_ship_yaw()        # D1 舰船朝向修正表（用户逐艘目视标定的落盘）
+	_t_render_interp()   # D2 ★★ 渲染插值（30Hz 仿真 ⇒ 渲染帧不再"静止后跳变"，2026-10-27）
 	_t_logistics()       # E1 ★ 后勤舰（攻击压制 + 真修友军 + 修层按防御类型，2026-10-01）
 
 
@@ -524,6 +527,141 @@ func _t_beacon_and_loss() -> void:
 	st.queue_free()
 
 
+## F1 ★ 敌方程序化编组配方（2026-10-27 用户定案）
+##
+## 用户把「困难 / 炼狱各挂一张静态替换表」（`comp_overrides`）整个换成了
+## **逐节点配方 + 按池抽船**（`EveEnemyPlans`）：
+##   简单　　：仍读节点表静态编组 —— 用户要求「简单就现在的不变」
+##   普通/困难/炼狱：共用同一套配方，种子 = 本局种子 + 节点号（**不含难度**）
+## ⇒ 「困难难度的舰船随机与上面的相同」是**结构上**成立的，本测试把它钉死。
+func _t_enemy_plans() -> void:
+	var problems := EveEnemyPlans.validate()
+	_expect(problems.is_empty(), "敌方配方表自检通过（%s）" % str(problems))
+
+	# ① 每个战斗节点都造得出船，艘数与用户配方一致
+	#    N4 / N10 / N14 是事件节点，没有编组 ⇒ 不在表里
+	# ★ 2026-10-27 用户定案：N7 支援护卫 1→2（共 5）、N8 加 2 支援护卫（共 6）、
+	#   N9 支援巡洋 1→2 且加 2 支援护卫（共 6）—— 与 RECIPE_STEPS 一致。
+	var want := {1: 2, 2: 2, 3: 3, 5: 4, 6: 4, 7: 5, 8: 6, 9: 6,
+			11: 8, 12: 8, 13: 9, 15: 11}
+	for idx in want.keys():
+		var ids := EveEnemyPlans.ship_ids(int(idx), 4242)
+		_expect(ids.size() == int(want[idx]),
+				"N%d 配方产出 %d 艘（实际 %d）" % [int(idx), int(want[idx]), ids.size()])
+		for sid in ids:
+			_expect(not EveShipDatabase.by_id(String(sid)).is_empty(),
+					"N%d 产出的 %s 在船表里" % [int(idx), sid])
+
+	# ② N9 必须是 STANDOFF「保持距离」（用户点名），且编组层认识这个模板
+	_expect(EveEnemyPlans.formation_of(9) == "STANDOFF",
+			"N9 阵型 = STANDOFF（实际 %s）" % EveEnemyPlans.formation_of(9))
+	_expect(EveEnemyComps.FORMATIONS.has("STANDOFF"), "编组层认识 STANDOFF 阵型")
+
+	# ③ ★ 普通与困难：同种子 ⇒ 同一批船（用户原话「困难难度的舰船随机与上面的相同」）
+	for idx in want.keys():
+		var n := _roster_keys("normal", int(idx), 4242)
+		var h := _roster_keys("hard", int(idx), 4242)
+		_expect(n == h, "N%d 普通与困难同种子摇出同一批船（普通 %s / 困难 %s）"
+				% [int(idx), str(n), str(h)])
+
+	# ④ 简单档仍走节点表静态编组；普通档走程序化编组
+	var st: EveRunState = EveRunState.new()
+	add_child(st)
+	st.set_difficulty("simple")
+	st.start_run(4242)
+	st.node_index = 1
+	_expect(not st.enemy_comp_id().begins_with("gen_"),
+			"简单档不生成程序化编组（实际 %s）" % st.enemy_comp_id())
+	st.set_difficulty("normal")
+	st.node_index = 1
+	_expect(st.enemy_comp_id().begins_with("gen_"),
+			"普通档走程序化编组（实际 %s）" % st.enemy_comp_id())
+	# 幂等：同一节点反复问，拿到的是同一副编组（HUD 刷新不会换脸）
+	var first := str(st.enemy_roster())
+	_expect(str(st.enemy_roster()) == first, "程序化编组幂等（同一节点不换脸）")
+	st.queue_free()
+
+	# ⑤ N15：战列与两艘战巡必须同族；4 巡洋 + 4 护卫只能来自对应的两族并集
+	for k in 8:
+		var ids := EveEnemyPlans.ship_ids(15, 900 + k)
+		_expect(ids.size() == 11, "N15 共 11 艘（实际 %d）" % ids.size())
+		var bs := String(ids[0])
+		var bs_fac := _faction_of(bs)
+		_expect(int(EveShipDatabase.by_id(bs)["cost"]) == 5,
+				"N15 第 1 艘是战列（cost 5，实际 %s）" % bs)
+		_expect(_faction_of(ids[1]) == bs_fac and _faction_of(ids[2]) == bs_fac,
+				"N15 两艘战巡与战列同族（战列 %s / 战巡 %s,%s）"
+				% [bs_fac, _faction_of(ids[1]), _faction_of(ids[2])])
+		var ag_side := bs_fac == "艾玛" or bs_fac == "盖伦特"
+		for i in range(3, 11):
+			var fac := _faction_of(ids[i])
+			var ok := (fac == "艾玛" or fac == "盖伦特") if ag_side \
+					else (fac == "加达里" or fac == "米玛塔尔")
+			_expect(ok, "N15 支援舰 #%d 属 %s 一侧（实际 %s）"
+					% [i, "艾玛+盖伦特" if ag_side else "加达里+米玛塔尔", fac])
+
+
+# ⑥ ★ 用户 2026-10-27「是该随机的要随机」：**换本局种子必须换一批船**
+	#    （走真实路径 start_run → enemy_roster，不是直接调配方）
+	for idx in [3, 12, 15]:
+		var seen := {}
+		for s in [11, 222, 3333, 44444, 555555, 6666666]:
+			seen[str(_roster_keys("normal", int(idx), s))] = true
+		_expect(seen.size() >= 3,
+				"N%d 换 6 个本局种子摇出 ≥3 种不同编组（实际 %d 种）"
+				% [int(idx), seen.size()])
+
+	# ⑦ N15 的两艘战巡必须来自**同族的攻击型战巡池**（池驱动，不是写死单艘）
+	for bs in EveEnemyPlans.REINFORCED_BATTLESHIP:
+		var pool: PackedStringArray = EveEnemyPlans._attack_bc_pool_of(String(bs))
+		_expect(not pool.is_empty(), "N15：%s 有攻击型战巡池" % bs)
+		for bc in pool:
+			var row := EveShipDatabase.by_id(String(bc))
+			_expect(not row.is_empty() and int(row.get("cost", -1)) == 4
+					and String(row.get("role", "")) == "攻击型"
+					and String(row.get("faction_cn", "")) == _faction_of(bs),
+					"N15：%s 的池成员 %s 是同族攻击型战巡" % [bs, bc])
+
+
+# ⑧ ★ 用户 2026-10-27 定的两条：N1 = 16 种可能、N2 的 30% 概率
+	#    「普通护卫每族还剩一艘，而且我允许重复，所以一共有 16 种可能」
+	_expect(EveEnemyPlans.NORMAL_FRIGATE.size() == 4,
+			"N1 普通护卫池 = 4 艘（每族 1 艘）⇒ 4² = 16 种可能（实际 %d 艘）"
+			% EveEnemyPlans.NORMAL_FRIGATE.size())
+	_expect(is_equal_approx(EveEnemyPlans.SUPPORT_FRIGATE_CHANCE, 0.30)
+			and is_equal_approx(EveEnemyPlans.SUPPORT_CRUISER_CHANCE, 0.30),
+			"N2（护卫）/ N7（巡洋）的 30% 常数 = 0.30")
+	# 实测触发率（N2：两艘护卫里出现电子战/后勤即触发）
+	var trig := 0
+	var samples := 30000
+	for sd in range(1, samples + 1):
+		for sid in EveEnemyPlans.ship_ids(2, sd):
+			if EveEnemyPlans.SUPPORT_FRIGATE.has(String(sid)):
+				trig += 1
+				break
+	var rate := float(trig) / float(samples)
+	_expect(absf(rate - 0.30) < 0.02,
+			"N2 实测 30%% 触发率 = %.2f%%（抽样 %d 局）" % [rate * 100.0, samples])
+
+
+## 用某难度跑一副编组，返回船 id 列表（顺序敏感 —— 直接比数组）
+func _roster_keys(diff_id: String, node: int, p_seed: int) -> Array:
+	var st: EveRunState = EveRunState.new()
+	add_child(st)
+	st.set_difficulty(diff_id)
+	st.start_run(p_seed)
+	st.node_index = node
+	var out := []
+	for e in st.enemy_roster():
+		out.append(String(e.get("ship_key", "")))
+	st.queue_free()
+	return out
+
+
+func _faction_of(ship_key) -> String:
+	return String(EveShipDatabase.by_id(String(ship_key)).get("faction_cn", ""))
+
+
 ## 结局判定：信标归零 → 撤离；打完节点 15 → 通关
 func _t_endings() -> void:
 	var st := _new_run(31)
@@ -611,6 +749,79 @@ func _t_trait_table() -> void:
 	var t2 := EveTraitTable.tier_of(&"faction", "艾玛", 2)
 	_expect((t2.get("pending", PackedStringArray()) as PackedStringArray).is_empty(),
 			"艾玛一档没有未实装项（装甲 +20% 是真加进去的）")
+
+	# ── 2026-10-26 新增两条羁绊 ─────────────────────────────────
+	_expect(str(th.get("logi")) == str([2, 4]),
+			"后勤阈值 = [2,4]（实际 %s）" % str(th.get("logi")))
+	_expect(str(th.get("ew")) == str([2, 4, 6]),
+			"电子战阈值 = [2,4,6]（实际 %s）" % str(th.get("ew")))
+
+	# 电子战兵源：8 艘 = 4 族 × 护卫/巡洋各 1，且必须在权威船表里真有这艘船
+	var ew := EveTraitTable.EW_SHIP_KEYS
+	_expect(ew.size() == 8, "电子战兵源 8 艘（实际 %d）" % ew.size())
+	var by_fac := {}
+	var bad_class: Array[String] = []
+	for k in ew:
+		var d: Dictionary = EveShipDatabase.by_id(String(k))
+		if d.is_empty():
+			bad_class.append("%s(表里没有)" % k)
+			continue
+		by_fac[int(d.get("faction", -1))] = int(by_fac.get(
+				int(d.get("faction", -1)), 0)) + 1
+		# ⚠️ `class` / `faction` 都是 int 枚举，不是中文字符串
+		var cls := int(d.get("class", -1))
+		if cls != EveShip.Class.FRIGATE and cls != EveShip.Class.CRUISER:
+			bad_class.append("%s(class=%d)" % [k, cls])
+	_expect(bad_class.is_empty(), "兵源全是护卫/巡洋且在船表里（问题：%s）" % str(bad_class))
+	_expect(by_fac.size() == 4, "兵源覆盖 4 个势力（实际 %s）" % str(by_fac))
+
+	# 电子战的档位与「敌方间隔」系数（唯一一条作用在敌方身上的羁绊）
+	_expect(is_equal_approx(float(EveTraitTable.tier_of(&"ew", "电子战", 2)["apply"]
+			.get("enemy_cycle_pct", 0.0)), 0.05), "电子战 2 艘 = 敌方间隔 +5%")
+	_expect(is_equal_approx(float(EveTraitTable.tier_of(&"ew", "电子战", 4)["apply"]
+			.get("enemy_cycle_pct", 0.0)), 0.10), "电子战 4 艘 = 敌方间隔 +10%")
+	_expect(is_equal_approx(float(EveTraitTable.tier_of(&"ew", "电子战", 6)["apply"]
+			.get("enemy_cycle_pct", 0.0)), 0.15), "电子战 6 艘 = 敌方间隔 +15%")
+
+	var ew_run := _new_run(59)
+	ew_run.level = 8
+	ew_run.field.clear()
+	for i in 6:
+		ew_run.field.append({"ship_key": ew[i], "star": 1, "cell": Vector2i(-1, -1)})
+	_expect(is_equal_approx(ew_run.enemy_cycle_pct(), 0.15),
+			"场上 6 艘电子战船 → enemy_cycle_pct = 0.15（实际 %.3f）"
+					% ew_run.enemy_cycle_pct())
+	# ⚠️ 电子战**不该**改自己的船：这条走敌方那一侧，自己的开火间隔必须不动
+	var own := EveShipDatabase.instantiate_by_id(String(ew[0]), 0, 9101)
+	var own_cycle0 := own.weapon_cycle
+	ew_run.apply_synergies_to([own] as Array)
+	_expect(is_equal_approx(own.weapon_cycle, own_cycle0),
+			"电子战不改自家开火间隔（%.3f → %.3f）" % [own_cycle0, own.weapon_cycle])
+	ew_run.field.resize(1)
+	_expect(is_equal_approx(ew_run.enemy_cycle_pct(), 0.0), "只剩 1 艘电子战船 → 惩罚归零")
+	ew_run.queue_free()
+
+	# 后勤：6 艘后勤船 → 二档，维修量 ×1.75、间隔 ×0.8
+	var logi: Array = []
+	for d in EveShipDatabase.all_ships():
+		if bool(d.get("is_logistics", false)):
+			logi.append(String(d["ship_key"]))
+	_expect(logi.size() == 8, "后勤船 8 艘（实际 %d）" % logi.size())
+	if logi.size() >= 4:
+		var lg := EveShipDatabase.instantiate_by_id(logi[0], 0, 9201)
+		var rep0 := lg.logistics_repair
+		var cyc0 := lg.logistics_cycle
+		var lg_run := _new_run(60)
+		lg_run.level = 8
+		lg_run.field.clear()
+		for i in 4:
+			lg_run.field.append({"ship_key": logi[i], "star": 1, "cell": Vector2i(-1, -1)})
+		lg_run.apply_synergies_to([lg] as Array)
+		_expect(is_equal_approx(lg.logistics_repair, rep0 * 1.75),
+				"后勤 4 艘 → 维修量 ×1.75（%.1f → %.1f）" % [rep0, lg.logistics_repair])
+		_expect(is_equal_approx(lg.logistics_cycle, cyc0 * 0.8),
+				"后勤 4 艘 → 间隔 ×0.8（%.2f → %.2f）" % [cyc0, lg.logistics_cycle])
+		lg_run.queue_free()
 
 
 ## B1：三连合成 —— 同 id 同星 ×3 → 升一星、可连锁、继承场上的格
@@ -1285,6 +1496,214 @@ func _t_salvage_scope() -> void:
 
 
 ## ══════════════════════════════════════════════════════════════════
+##  ★ C6 阵亡的我方舰船 ⇒ **移出编队**（2026-10-27 用户定案）
+## ══════════════════════════════════════════════════════════════════
+##
+## 用户原话：「我的船被击毁后，又回到了舰船队列，这不对，要回来只能通过
+##            打捞系统付费打捞回来」。
+##
+## ⚠️ 病根：`resolve_battle()` 从不碰 `field`，而 `EveFleetFactory.build_own()`
+##    每个准备阶段都从 `field_entries()` **重建**舰队 ⇒ 只要名单里还留着这艘船，
+##    下个准备阶段它就照常出场、照常吃羁绊，等于"没死过"。
+##
+## 这里钉四条：
+##   ① 不传 `lost_field` ⇒ 编队**一艘不动**（老调用点行为不变）
+##   ② 传 `lost_field` ⇒ 只删指定的那几艘，且**删对**（降序移除，不因下标前移删错）
+##   ③ 备战席**不受影响**（阵亡 ≠ 回备战席）
+##   ④ 付费打捞 → 下一节点商店取货 → 回备战席（**唯一**一条回来的路）
+func _t_battle_losses() -> void:
+	var keys := EveShipDatabase.by_cost(1)
+	_expect(keys.size() >= 3, "1 费船 ≥ 3 艘可供摆阵（实际 %d）" % keys.size())
+	if keys.size() < 3:
+		return
+	var keep_key := StringName(keys[1]["ship_key"])   # 第 1 艘（不下阵亡名单）
+
+	# ── ① 老调用点（不传 lost_field）⇒ 编队不变 ──
+	var st := _new_run(301)
+	st.field.clear()
+	st.bench.clear()
+	for i in 3:
+		st.field.append({"ship_key": StringName(keys[i]["ship_key"]),
+				"star": 1, "cell": Vector2i(7, i)})
+	st.bench.append({"ship_key": StringName(keys[0]["ship_key"]),
+			"star": 1, "cell": Vector2i(-1, -1)})
+	var bench_n := st.bench.size()
+	st.resolve_battle(0, [])
+	_expect(st.field.size() == 3,
+			"★ 不传 lost_field 时编队一艘不动（旧调用点兼容，实际 %d）" % st.field.size())
+
+	# ── ② 传 lost_field = [0,2]（第 0、2 艘阵亡）⇒ 只剩第 1 艘 ──
+	# ⚠️ 这两艘的 key 可能与第 1 艘相同，所以主判据是**数量**：
+	#    若实现是「升序移除」（先删 0，下标前移后 2 已越界）⇒ 剩 2 艘 ⇒ 这条会红。
+	var lost := [0, 2]
+	var lost_typed: Array[int] = []
+	lost_typed.assign(lost)
+	st.resolve_battle(1, [], [], 1.0, lost_typed)
+	_expect(st.field.size() == 1,
+			"★ 阵亡 2 艘已从编队移除（剩 %d）" % st.field.size())
+	var survived_key := &"<空>"
+	if st.field.size() > 0:
+		survived_key = StringName((st.field[0] as Dictionary).get("ship_key", &""))
+	_expect(st.field.size() == 1 and survived_key == keep_key,
+			"★ 删的是阵亡那两艘，活着的第 1 艘仍在（实际 %s）" % survived_key)
+	_expect(st.bench.size() == bench_n,
+			"★ 备战席不受影响（阵亡 ≠ 回备战席，实际 %d/%d）" % [st.bench.size(), bench_n])
+
+	# ── ①b 越界下标被安全忽略（UI 可能拿旧列表来删）──
+	var st_guard := _new_run(303)
+	st_guard.field.clear()
+	st_guard.bench.clear()
+	for i in 3:
+		st_guard.field.append({"ship_key": StringName(keys[i]["ship_key"]),
+				"star": 1, "cell": Vector2i(7, i)})
+	var oob: Array[int] = [0, 99]
+	st_guard.resolve_battle(1, [], [], 1.0, oob)
+	_expect(st_guard.field.size() == 2, "★ 越界下标被忽略，不崩不误删（实际 %d）" % st_guard.field.size())
+
+	# ── ③④ 阵亡 = 进残骸池 ⇒ 付费打捞 ⇒ 下一节点取货回备战席 ──
+	var st2 := _new_run(302)
+	st2.field.clear()
+	st2.bench.clear()
+	var dead_key := StringName(keys[0]["ship_key"])
+	st2.field.append({"ship_key": dead_key, "star": 1, "cell": Vector2i(7, 0)})
+	# 结算那一刻，`EvePhaseBattle.finished()` 会把这艘阵亡船同时收进 destroyed
+	# （敌我双方都收，见 C5）—— 这里照抄那个口径。
+	var dead_dict: Dictionary = EveShipDatabase.by_id(String(dead_key)).duplicate(true)
+	var lost1: Array[int] = [0]
+	st2.resolve_battle(1, [dead_dict], [], 1.0, lost1)
+	_expect(st2.field.is_empty(), "★ 唯一一艘被击毁 ⇒ 编队清空（实际 %d）" % st2.field.size())
+	_expect(st2.wrecks.size() == 1, "★ 阵亡的我方船进了残骸池（%d 艘）" % st2.wrecks.size())
+	if st2.wrecks.size() == 1:
+		_expect(int((st2.wrecks[0] as Dictionary).get("team", -1)) == 0,
+				"★ 残骸标记为我方（走半价）")
+	st2.coin = 99
+	var ord := st2.salvage_order([0])
+	_expect(bool(ord.get("ok", false)),
+			"★ 付费打捞下单成功（原因：%s）" % String(ord.get("reason", "")))
+	st2.advance()
+	var slot := -1
+	for i in st2.offers.size():
+		if st2.offers[i] is Dictionary and (st2.offers[i] as Dictionary).has("from_node"):
+			slot = i
+			break
+	_expect(slot >= 0, "★ 下一节点商店里出现修复品（占货位等取货）")
+	if slot >= 0:
+		var b := st2.buy(slot)
+		_expect(bool(b.get("ok", false)),
+				"打捞品可免费取货（原因：%s）" % String(b.get("reason", "")))
+		var back_key := &"<空>"
+		if st2.bench.size() > 0:
+			back_key = StringName((st2.bench[0] as Dictionary).get("ship_key", &""))
+		_expect(st2.bench.size() == 1 and back_key == dead_key,
+				"★★ 取货后回到备战席（**唯一**回来的路，实际 %s）" % back_key)
+
+	print("[阵亡移除] 不传参数编队不变 ✓ · 降序移除删对 ✓ · 越界安全 ✓ · "
+			+ "阵亡进残骸池 → 付费打捞 → 下一节点取货回备战席 ✓")
+
+	st.queue_free()
+	st_guard.queue_free()
+	st2.queue_free()
+
+
+## ══════════════════════════════════════════════════════════════════
+##  ★★ D2 渲染插值（2026-10-27 用户报的「舰船小幅高频抖动 / 发糊」）
+## ══════════════════════════════════════════════════════════════════
+##
+## 用户原话：「在舰船对战时候，这些舰船会有不明原因的小幅度高频率的抖动，
+##            你好好查查原因，这个抖动让人看不清船，会变得模糊，我不要这个模糊」
+##
+## ── 根因（`tools/probe_jitter.tscn` 实测，非推理）────────────────
+##  仿真跑 **30 Hz**，视觉层原来 `position = body.position` —— 直接写上一 tick
+##  的位置 ⇒ 两次 tick 之间的渲染帧**画面完全静止**，然后一帧跳过去：
+##     · 每 tick 位移 ≈ 54~59 m（2.5~2.7 px），峰值 85 m（3.97 px）
+##     · 60 fps → **50% 的帧完全没动**；144 fps → **79%**；240 fps → **88%**
+##     · 仿真自身 0% 速度方向反转 ⇒ **不是物理在振荡，是呈现层的跳变**
+##  「静止几帧 + 一次跳几像素」被眼睛读成抖动/发糊（高刷屏上尤其明显）。
+##
+## ── 修法：在 `previous_position` 与 `position` 之间插值 ────────────
+##  `EveBattleSimulator.interp_alpha()` 给出「处在两次 tick 之间的哪个位置」，
+##  `sync_from_body` 按它 lerp。实测 144 fps 下「没动的帧」79% → **0%**，
+##  单帧位移 3.74 px → 0.78 px。
+##
+## 这里钉五条（**前四条是"不许再退化"，最后一条是"旧行为不许变"**）：
+##   ① `interp_alpha()` 恒在 [0,1]（渲染层直接拿它当插值系数，越界会外插）
+##   ② 战斗结束后**必须恰好 1.0** —— 否则结算那一刻画面会停在"差一点"的位置
+##   ③ `sync_from_body` 必须收 `alpha`（少了它就又变成每帧跳变）
+##   ④ `sync_ships` 必须把 `alpha` **透传**下去（只加参数不传 = 白加）
+##   ⑤ `alpha = 1.0`（默认）时位置与 `body.position` **严格相等** ⇒ 布阵 /
+##      快进 / 老断言一条都不用改（这是"最小改动"的保证）
+func _t_render_interp() -> void:
+	# ── ① sim 级：alpha 恒在 [0,1] ──
+	# ⚠️ 编队要**非空**（空编队 `setup` 会直接判负 ⇒ `finished` 变 true ⇒ alpha 恒 1.0，
+	#    这条就测不到了）。一边一艘、互相够不着也行 —— 这里只关心累加器。
+	var own: Array[EveShip] = [EveShipDatabase.instantiate_by_id("punisher", 0, 7701)]
+	var enemy: Array[EveShip] = [EveShipDatabase.instantiate_by_id("slasher", 1, 7702)]
+	var sim := EveBattleSimulator.new()
+	sim.setup(own, enemy)
+	var a0 := sim.interp_alpha()
+	_expect(a0 >= 0.0 and a0 <= 1.0,
+			"★ `interp_alpha()` 初值 ∈ [0,1]（实际 %.3f）" % a0)
+	# ⚠️ 半步 ⇒ 累加器没过一个 tick ⇒ alpha 应恰为 0.5（确定性，不靠时间）
+	sim.step(EveBattleSimulator.FIXED_STEP * 0.5)
+	var a_half := sim.interp_alpha()
+	_expect(is_equal_approx(a_half, 0.5),
+			"★ 走半步 ⇒ `interp_alpha()` = 0.5（实际 %.3f）" % a_half)
+	# 再走半步 ⇒ 正好欠一个 tick ⇒ 累加器回 0
+	sim.step(EveBattleSimulator.FIXED_STEP * 0.5)
+	var a_roll := sim.interp_alpha()
+	_expect(is_equal_approx(a_roll, 0.0),
+			"★ 走满一个 tick ⇒ `interp_alpha()` 归 0（实际 %.3f）" % a_roll)
+
+	# ── ② finished ⇒ 恰好 1.0（否则结算画面停在"差一点"的地方）──
+	sim.finished = true
+	_expect(is_equal_approx(sim.interp_alpha(), 1.0),
+			"★★ 战斗结束后 `interp_alpha()` 必须恰好 1.0"
+			+ "（否则结算那一刻所有船会一起往回缩几像素，实际 %.3f）" % sim.interp_alpha())
+	# ⚠️ `EveBattleSimulator` 是 **RefCounted** ⇒ 不能 `free()`（会报
+	#    "Attempted to free a RefCounted object"）；作用域结束自动回收。
+	#    `own` / `enemy` 里的 EveShip 同理。
+
+	# ── ③④ 签名与透传（源码静态检查，与 46 轮 delta 那条同口径）──
+	var sv_txt := FileAccess.get_file_as_string("res://scripts/visual/eve_ship_visual.gd")
+	_expect(sv_txt.contains("alpha: float = 1.0"),
+			"★ `sync_from_body` 必须收 `alpha`（渲染插值系数）—— 少了它就又是每帧跳变")
+	var arena_txt := FileAccess.get_file_as_string("res://scripts/scene/eve_battle_arena.gd")
+	_expect(arena_txt.contains("func sync_ships(ships: Array[EveShip], delta: float = 1.0 / 60.0,")
+			and arena_txt.contains("alpha: float = 1.0"),
+			"★ `sync_ships` 必须收 `alpha`")
+	_expect(arena_txt.contains("sync_from_body(ship.body, ship.alive, delta, alpha)"),
+			"★ `sync_ships` 必须把 `alpha` **透传**给 `sync_from_body`（只加参数不传 = 白加）")
+	var pb_txt := FileAccess.get_file_as_string("res://scripts/scene/eve_phase_battle.gd")
+	_expect(pb_txt.contains("sim.interp_alpha()"),
+			"★ 战斗循环必须把 `sim.interp_alpha()` 传进 `sync_ships`"
+			+ "（否则插值系数恒为默认 1.0，插值等于没做）")
+
+	# ── ⑤ 行为级：alpha=1 严格等于旧行为；alpha<1 落在两 tick 之间 ──
+	# ⚠️ 用**离树**实例 + `alive=false`：`sync_from_body` 在 alive 分支里会碰
+	#    子节点（`_update_bars`），离树实例上没有；而 position 的赋值在
+	#    「alive 判断之前」就已经完成 ⇒ 这条路径足以验证插值算式。
+	var body := EveDestinyMotion.Body.new()
+	body.previous_position = Vector3(1000.0, 0.0, 0.0)
+	body.position = Vector3(3000.0, 0.0, 0.0)
+	var vis := EveShipVisual.new()
+	vis.sync_from_body(body, false, 1.0 / 60.0, 1.0)
+	_expect(is_equal_approx(vis.position.x, 3.0),
+			"★ alpha=1.0 ⇒ 位置 = 本 tick 位置（**旧行为不变**，实际 %.4f 世界单位）"
+					% vis.position.x)
+	vis.sync_from_body(body, false, 1.0 / 60.0, 0.0)
+	_expect(is_equal_approx(vis.position.x, 1.0),
+			"★ alpha=0.0 ⇒ 位置 = 上一 tick 位置（实际 %.4f）" % vis.position.x)
+	vis.sync_from_body(body, false, 1.0 / 60.0, 0.5)
+	_expect(is_equal_approx(vis.position.x, 2.0),
+			"★★ alpha=0.5 ⇒ 落在两 tick 中点（**插值真的生效了**，实际 %.4f）"
+					% vis.position.x)
+	vis.free()
+
+	print("[渲染插值] alpha∈[0,1] ✓ · 结束后=1.0 ✓ · 签名+透传 ✓ · "
+			+ "alpha=1 保持旧行为 ✓ · alpha=0.5 取中点 ✓")
+
+
+## ══════════════════════════════════════════════════════════════════
 ##  ★ E1 后勤舰（2026-10-01 用户定案：「攻击要低、后勤要真」）
 ## ══════════════════════════════════════════════════════════════════
 ##
@@ -1300,38 +1719,47 @@ func _t_salvage_scope() -> void:
 ##   ④ ★ **含自己**（2026-10-01 改口径）、不修结构、满血不修（三条边界）
 func _t_logistics() -> void:
 	# ── ① 攻击压制 ──
-	var atk_of := func(id: String) -> float:
+	# ⚠️ 2026-10-27（新数值体系）：船表新增 `attack_interval` 列（每秒发数档位），
+	#    派生值口径随之改变 —— `weapon_damage` 变成**每发齐射的 alpha**
+	#    （= 表列 attack × interval），真正的**火力（DPS）** = weapon_damage ÷ weapon_cycle。
+	#    ⛔ 别再拿 `weapon_damage` 直接当火力比 —— 它现在带了一个 0.60s 的系数，
+	#       会误报成「后勤压制失效」（护卫 13 → 8 的假象就是这么来的）。
+	var dps_of := func(id: String) -> float:
 		var d := EveShipDatabase.by_id(id)
-		return float(d.get("weapon_damage", 0.0))
+		return float(d.get("weapon_damage", 0.0)) / maxf(0.001, float(d.get("weapon_cycle", 1.0)))
 	var tbl_of := func(id: String) -> float:
 		var d := EveShipDatabase.by_id(id)
 		return float(d.get("attack", 0.0))
 
 	# 护卫档：攻击型 13 / 后勤 3
-	_expect(is_equal_approx(atk_of.call("condor"), 13.0)
-			and is_equal_approx(atk_of.call("bantam"), 3.0),
+	# ⚠️ 参考船取 `incursus`（盖伦特攻击型护卫，13）而**不是** `condor`：
+	#    ★ 2026-10-27 电子战兵源定为 condor/executioner 后，这两艘的攻击被
+	#    刻意降到 12（对齐同族防御型）⇒ 它们不再是「攻击型火力 13」的代表。
+	#    拿它们当参考会误判成「后勤压制失效」。参照组必须是不带电子战的攻击型。
+	_expect(is_equal_approx(dps_of.call("incursus"), 13.0)
+			and is_equal_approx(dps_of.call("bantam"), 3.0),
 			"护卫：攻击型火力 13 · 后勤火力 3（实际 %.0f / %.0f）"
-			% [atk_of.call("condor"), atk_of.call("bantam")])
+			% [dps_of.call("incursus"), dps_of.call("bantam")])
 	# 巡洋档：攻击型 40 / 后勤 10
-	_expect(is_equal_approx(atk_of.call("caracal"), 40.0)
-			and is_equal_approx(atk_of.call("osprey"), 10.0),
+	_expect(is_equal_approx(dps_of.call("caracal"), 40.0)
+			and is_equal_approx(dps_of.call("osprey"), 10.0),
 			"巡洋：攻击型火力 40 · 后勤火力 10（实际 %.0f / %.0f）"
-			% [atk_of.call("caracal"), atk_of.call("osprey")])
+			% [dps_of.call("caracal"), dps_of.call("osprey")])
 	# 后勤 ≤ 攻击型的 1/3（留出「没压到 0」的余量，但不许接近）
-	_expect(atk_of.call("bantam") <= atk_of.call("condor") / 3.0
-			and atk_of.call("osprey") <= atk_of.call("caracal") / 3.0,
+	_expect(dps_of.call("bantam") <= dps_of.call("incursus") / 3.0
+			and dps_of.call("osprey") <= dps_of.call("caracal") / 3.0,
 			"★ 后勤火力 ≤ 同吨位攻击型的 1/3")
 	# ⚠️ 不许压到 0 —— 完全不能打的单位落单会让战斗僵住
-	_expect(atk_of.call("bantam") > 0.0 and atk_of.call("osprey") > 0.0,
+	_expect(dps_of.call("bantam") > 0.0 and dps_of.call("osprey") > 0.0,
 			"★ 后勤火力 > 0（压到 0 会让落单的后勤舰造成僵局）")
 	# ★ 反向注入：`attack`（权威表原值）**必须没被改** ——
 	#    改了它等于伪造设计侧数据，HUD 上会显示一个假的「攻击」
 	_expect(is_equal_approx(tbl_of.call("bantam"), 12.0)
 			and is_equal_approx(tbl_of.call("osprey"), 35.0),
 			"★ 权威表的 attack 原值没被改（矮脚鸡 12 / 鱼鹰 35）")
-	_expect(not is_equal_approx(atk_of.call("bantam"), tbl_of.call("bantam")),
+	_expect(not is_equal_approx(dps_of.call("bantam"), tbl_of.call("bantam")),
 			"★ 后勤船的「表列攻击」与「实际火力」**故意不同**（%0.f vs %0.f）"
-			% [tbl_of.call("bantam"), atk_of.call("bantam")])
+			% [tbl_of.call("bantam"), dps_of.call("bantam")])
 
 	# ── ② + ③ 修层：8 艘后勤舰逐艘核对（4 派系 × 2 吨位）──
 	#    加达里 / 米玛塔尔 = 盾抗 → 修护盾

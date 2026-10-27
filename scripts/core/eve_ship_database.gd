@@ -48,6 +48,9 @@ const TERMS := preload("res://scripts/core/eve_terms.gd")
 
 const CELL_METERS := 6000.0
 const ARMOR_SHARE := 0.65
+## Fallback default for attack interval (sec/shot).
+## 2026-10-27: the table now carries a real gradient; this is only
+## the fallback when the column is missing.
 const ATTACK_CYCLE_SECONDS := 1.0
 
 ## ── ★ 2026-10-25 全局移速倍率（用户：「舰船速度目视过慢」）──────────
@@ -275,6 +278,13 @@ static func derive(row: Dictionary) -> Dictionary:
 	var logi_layer := (&"shield" if defense_id == CIDS.D_SHIELD else &"armor") if is_logi else &""
 	var logi_repair := float(LOGISTICS_REPAIR.get(cost, LOGISTICS_REPAIR[1])) if is_logi else 0.0
 
+	# 2026-10-27: fire rate (sec/shot) now comes from the table column.
+	# Alpha scales with cycle so DPS = damage/cycle stays identical,
+	# which keeps the existing balance untouched.
+	var cycle := float(row.get("attack_interval", ATTACK_CYCLE_SECONDS))
+	if cycle <= 0.0:
+		cycle = ATTACK_CYCLE_SECONDS
+
 	return {
 		# ── 身份 ──
 		"ship_key": StringName(row["id"]),
@@ -323,8 +333,9 @@ static func derive(row: Dictionary) -> Dictionary:
 		#    ⛔ 别为了让这两个数一致而改 `attack` —— 那会让
 		#       `warhead_scale()` 放大出来的 HUD 数字变成假的。
 		#       （`warhead_scale` 同时乘两者，所以星级/关卡缩放仍然同步。）
-		"weapon_damage": logi_atk if is_logi else float(row["attack"]),
-		"weapon_cycle": ATTACK_CYCLE_SECONDS,
+		"weapon_damage": (logi_atk if is_logi else float(row["attack"])) * cycle,
+		"weapon_cycle": cycle,
+		"shots_per_second": 1.0 / cycle,
 		"weapon_profile": WEAPON_PROFILE.get(StringName(weapon), PROFILE_MISSILE),
 		"optimal_range": optimal,
 		"falloff": float(WEAPON_FALLOFF.get(weapon_id, 0.0)),

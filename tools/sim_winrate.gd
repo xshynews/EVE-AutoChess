@@ -39,6 +39,15 @@ const BOSS_PROBE := false
 ## 炼狱 BOSS「钥匙是否凑齐」逐局打印（排查用，默认关闭）
 const KEY_DEBUG := false
 
+## ⚠️ 临时诊断开关（2026-10-26）：新羁绊「电子战 / 后勤」的加成值多少胜率。
+##    true = 只跑 `_trait_ab_experiment()`：把**倍率**从编队成本里剥出来单独量化 ——
+##      电子战：同一支 6 船队，敌方开火间隔 ×1.00 / 1.05 / 1.10 / 1.15
+##      后勤　：同一支含后勤的队，维修量/间隔 ×1.00 / ×1.30 / ×1.50（2 档）
+##              以及 ×1.75·0.8 / ×2.20·0.7（4 档）
+##    ⛔ 它**不改任何生产表**，只在这里临时乘倍率。
+##    ⚠️ 结论已抄进 `EveTraitTable.EFFECTS` 的注释里；要复测就把下面打开。
+const TRAIT_AB_PROBE := false
+
 const COL_STEP := 8000.0
 const ROW_STEP := 6000.0
 const STANDOFF_RATIO := 1.15
@@ -64,6 +73,10 @@ func _ready() -> void:
 	print("=".repeat(84))
 	if BOSS_PROBE:
 		_boss_experiment()
+		get_tree().quit()
+		return
+	if TRAIT_AB_PROBE:
+		_trait_ab_experiment()
 		get_tree().quit()
 		return
 	if ANTI_SWARM_PROBE:
@@ -321,6 +334,129 @@ func _set_stance(s, mode: String) -> void:
 			s.stance = 2
 		_:
 			pass
+
+
+# ══════════════════════════════════════════════════════════════
+#  ②c 新羁绊「电子战 / 后勤」的倍率价值（2026-10-26）
+# ══════════════════════════════════════════════════════════════
+##
+## 为什么单独做这个实验：
+##   羁绊在实战里同时带着**编队成本**（多带 2 艘后勤＝少 2 艘火力船），
+##   直接比「开/关羁绊」会把倍率价值和成本混在一起，看不出数值本身值多少。
+##   所以这里**固定编队**，只改倍率：
+##     电子战 = 把敌方 `weapon_cycle` 乘 m（m = 1.00 / 1.05 / 1.10 / 1.15）
+##     后勤   = 把后勤船 `logistics_repair` 乘 a、`logistics_cycle` 乘 c
+##   这样每一行的差就是「这个倍率本身」的价值。
+func _trait_ab_experiment() -> void:
+	print("\n" + "=".repeat(84))
+	print("②c 新羁绊倍率体检（固定编队，只改倍率；40 个固定种子 × 3 个节点）")
+	print("=".repeat(84))
+	var seeds := 40
+	var nodes := [8, 13, 15]
+
+	# ── 电子战：敌方开火间隔 ×m ──────────────────────────────
+	print("\n【电子战】我方固定 6 艘（惩罚者/秃鹫/分裂者/启示/狞獾/幼龙）")
+	var combat := ["punisher", "condor", "rifter", "omen", "caracal", "drake"]
+	for m in [1.0, 1.05, 1.10, 1.15]:
+		var wins := 0
+		var plays := 0
+		var taken := 0.0
+		var dealt := 0.0
+		var alive := 0.0
+		for ni in nodes:
+			for k in seeds:
+				var r := _trait_ab_case(int(ni), combat, m, Vector2.ZERO, 8100 + int(ni) * 100 + k)
+				plays += 1
+				wins += 1 if int(r["winner"]) == 0 else 0
+				taken += float(r["enemy_damage"])
+				dealt += float(r["own_damage"])
+				alive += float(r["alive"])
+		print("   敌方间隔 ×%.2f（惩罚 %+.0f%%）  胜 %2d/%d · 存活 %.1f/6 · 我挨伤 %.0f · 我输出 %.0f"
+				% [m, (1.0 / m - 1.0) * 100.0, wins, plays, alive / float(plays),
+					taken / float(plays), dealt / float(plays)])
+
+	# ── 后勤：维修量 ×a / 间隔 ×c（同一个编队内对照）────────────
+	# ⚠️ 除了胜率，还记「平均剩余存活舰数」——维修的直接收益体现在 EHP 上，
+	#    胜率被时限/斩杀线盖住了，看不出差别（实测 30% 时胜率一模一样）。
+	print("\n【后勤】")
+	for pair in [
+			# [说明, 编队, [基准, 现推荐, 加码候选]]
+			["4 火力 + 2 后勤（2 档）", ["punisher", "condor", "rifter", "omen",
+					"navitas", "exequror"],
+				[Vector2(1.0, 1.0), Vector2(1.30, 1.0), Vector2(1.50, 1.0)]],
+			["2 火力 + 4 后勤（4 档）", ["punisher", "condor",
+					"navitas", "exequror", "bantam", "scythe"],
+				[Vector2(1.0, 1.0), Vector2(1.75, 0.8), Vector2(2.20, 0.7)]],
+		]:
+		var keys: Array = pair[1]
+		print("   %s" % String(pair[0]))
+		for mult in pair[2]:
+			var v: Vector2 = mult
+			var wins := 0
+			var plays := 0
+			var taken := 0.0
+			var dealt := 0.0
+			var alive := 0.0
+			for ni in nodes:
+				for k in seeds:
+					var r := _trait_ab_case(int(ni), keys, 1.0, v, 8200 + int(ni) * 100 + k)
+					plays += 1
+					wins += 1 if int(r["winner"]) == 0 else 0
+					taken += float(r["enemy_damage"])
+					dealt += float(r["own_damage"])
+					alive += float(r["alive"])
+			print("     维修 ×%.2f / 间隔 ×%.2f  胜 %2d/%d · 存活 %.1f/%d · 我挨伤 %.0f · 我输出 %.0f"
+					% [v.x, v.y, wins, plays, alive / float(plays), keys.size(),
+						taken / float(plays), dealt / float(plays)])
+
+
+func _trait_ab_case(node_idx: int, keys: Array, enemy_cycle: float,
+		logi_mult: Vector2, seed_v: int) -> Dictionary:
+	var row: Dictionary = NODE.by_index(node_idx)
+	var fac := FACTORY.new()
+	var own: Array = []
+	var id := 1
+	for key in keys:
+		var s = DB.instantiate_by_id(String(key), 0, id)
+		id += 1
+		if s == null:
+			continue
+		fac.apply_doctrine(s)
+		# 后勤倍率只乘「本来就是后勤」的船（与 `EveShip.repair_scale` 同口径）
+		if logi_mult != Vector2.ZERO and s.logistics_repair > 0.0:
+			s.repair_scale(logi_mult.x, logi_mult.y)
+		own.append(s)
+	var enemy: Array = []
+	for sid in COMPS.ship_ids(String(row.get("comp", ""))):
+		var e = DB.instantiate_by_id(String(sid), 1, id)
+		id += 1
+		if e == null:
+			continue
+		RUN.apply_enemy_scaling(e, 1, float(row.get("scale", 1.0)))
+		fac.apply_doctrine(e)
+		if not is_equal_approx(enemy_cycle, 1.0):
+			e.cycle_scale(enemy_cycle)
+		enemy.append(e)
+	var dz := _deploy_z(own, enemy)
+	_place_own(own, dz[0], own.size())
+	_place_enemy(enemy, dz[1])
+	var sim = SIM.new()
+	sim.setup(_typed(own), _typed(enemy))
+	sim.set_seed(seed_v)
+	var limit := float(row.get("time", 45.0))
+	sim.set_time_limit(limit)
+	_run_sim(sim, limit)
+	var own_dmg := 0.0
+	var enemy_dmg := 0.0
+	var alive := 0
+	for s in own:
+		own_dmg += s.damage_dealt
+		if s.alive:
+			alive += 1
+	for s in enemy:
+		enemy_dmg += s.damage_dealt
+	return {"winner": sim.winner_team, "time": sim.elapsed, "alive": alive,
+			"own_damage": own_dmg, "enemy_damage": enemy_dmg}
 
 
 # ══════════════════════════════════════════════════════════════

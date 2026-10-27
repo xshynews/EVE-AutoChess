@@ -365,7 +365,8 @@ func _ready() -> void:
 
 	# ★ 战斗阶段模块接线（它的 `start()` 负责建模拟器，并把三条 sim 信号接到该接的地方）。
 	_battle_phase.setup(run, hud, audio, arena, _resolve_phase, _get_sim,
-			_get_own_ships, _get_enemy_ships, _on_unit_destroyed, _on_shot_fired)
+			_get_own_ships, _get_enemy_ships, _get_own_field_index,
+			_on_unit_destroyed, _on_shot_fired)
 
 	# ★ 准备阶段模块接线（事件节点四选一）。
 	_prep_phase.setup(run, hud, _resolve_phase, _refresh_run_ui, _clear_field, begin_prep)
@@ -769,8 +770,12 @@ func _snap_fleet_facing() -> void:
 ##     0.15 倍是"开战瞬间有个起步感"的观感调参，与朝向无关。
 ##     **别把朝向的职责塞回 velocity**（那就是旧写法的病根）。
 func _place_fleet(fleet: Array[EveShip], team: int) -> void:
-	# ★ 2026-10-23：困难 / 炼狱档的敌方按编组自带站位模板列阵。
-	#   简单 / 普通档保持通用阵列（`formation` 传空 = 老行为）。
+	# ★ 2026-10-27：敌方站位模板改由「编组自带 + 难度开关」共同决定。
+	#   难度档 `enemy_formation = true`（普通 / 困难 / 炼狱）时，读当前编组的
+	#   `formation`（普通档的编组来自 `EveEnemyPlans` 程序化配方，含 N9 的
+	#   `STANDOFF`「保持距离」）；`false`（简单档）时传空 = 沿用通用阵列。
+	#   ⛔ 别把这里退回「只有困难 / 炼狱才按阵型」—— 用户 2026-10-27 明确要
+	#      N9 在**普通档**就站在隔离带后方两格。
 	var formation := ""
 	if team == 1 and bool(run.difficulty_row().get("enemy_formation", false)):
 		formation = String(EveEnemyComps.by_id(run.enemy_comp_id()).get("formation", ""))
@@ -1629,6 +1634,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed:
 				_cam_dragged = false
+				# ⓪ 双击优先：视角中心选择（船 ⇒ 锁到它；空处 ⇒ 回默认）
+				#    ⚠️ 必须放在拿船判定**之前**还是**之后**？
+				#    放后面 —— 拿船的判定先跑，双击自家人也会先进入拖放，
+				#    与「拖放布阵」这条老交互不冲突。
+				if mb.double_click and _try_begin_drag(mb.position):
+					# 双击落在了可拖的船上：仍按拖放处理，不锁视角
+					return
+				if mb.double_click:
+					_try_focus_at(mb.position)
+					get_viewport().set_input_as_handled()
+					return
 				# ① 先试拿船（备战席 / 我方场上）。拿起来了 → 本次左键归拖放
 				if _try_begin_drag(mb.position):
 					return
@@ -1691,7 +1707,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 ## 点击选中最近的舰船（屏幕距离 60px 内）
-func _try_select_at(screen_pos: Vector2) -> void:
+## 找出屏幕上离 pos 最近的那艘活船（够得着 PICK_RADIUS 才算）
+func _pick_ship_at(screen_pos: Vector2) -> EveShip:
 	var best: EveShip = null
 	var best_dist := DEPLOY.PICK_RADIUS
 	for ship in _all_ships():
@@ -1702,8 +1719,38 @@ func _try_select_at(screen_pos: Vector2) -> void:
 		if d < best_dist:
 			best_dist = d
 			best = ship
+	return best
+
+
+func _try_select_at(screen_pos: Vector2) -> void:
+	var best := _pick_ship_at(screen_pos)
 	if best != null:
 		hud.show_ship(best)
+
+
+## 双击：视角中心选择（2026-10-27 用户定案）
+##
+## 双击某艘船 ⇒ 视角中心锁到它（船继续机动，镜头跟着走）
+## 双击空中   ⇒ 解除锁定并回默认机位
+##
+## ⚠️ 与「拖放布阵」不冲突：拿船的判定在 _unhandled_input 里**先**跑，
+##    拿起来了本次左键就归拖放，根本走不到这里。
+func _try_focus_at(screen_pos: Vector2) -> void:
+	var ship := _pick_ship_at(screen_pos)
+	if ship != null:
+		if arena.set_camera_lock(ship.id):
+			hud.show_ship(ship)
+			_log_focus(ship)
+		return
+	# 点到空处：解锁 + 回默认机位
+	arena.clear_camera_lock()
+	arena.reset_camera()
+
+
+func _log_focus(ship: EveShip) -> void:
+	if hud != null and hud.has_method("append_log"):
+		hud.append_log({"time": 0.0, "category": &"system",
+				"text": "视角锁定：%s★%d" % [ship.ship_name, ship.star]})
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1994,6 +2041,31 @@ func ai_camera(args: Dictionary) -> Dictionary:
 	}}
 
 
+## AI：视角中心选择（与鼠标双击同一条路径，供无头验证）
+##   focus_ship = <ship_id>  ⇒ 锁到那艘船
+##   focus_ship = -1        ⇒ 解锁
+##   focus_at = [x, y]      ⇒ 按屏幕坐标双击（船 / 空处自动分流）
+func ai_focus(args: Dictionary) -> Dictionary:
+	if arena == null:
+		return {"ok": false, "reason": "竞技场未就绪"}
+	if args.has("focus_ship"):
+		var sid := int(args["focus_ship"])
+		if sid < 0:
+			arena.clear_camera_lock()
+		else:
+			var ok := arena.set_camera_lock(sid)
+			if not ok:
+				return {"ok": false, "reason": "没有这艘船 id=%d" % sid}
+	if args.has("focus_at"):
+		var f: Array = args["focus_at"]
+		if f.size() == 2:
+			_try_focus_at(Vector2(float(f[0]), float(f[1])))
+	return {"ok": true, "data": {
+		"lock_id": arena.camera_lock_id(),
+		"focus": [arena.orion_cam.get_focus().x, arena.orion_cam.get_focus().y, arena.orion_cam.get_focus().z],
+	}}
+
+
 func ai_frame(mode: String) -> Dictionary:
 	if arena == null:
 		return {"ok": false, "reason": "竞技场未就绪"}
@@ -2235,14 +2307,85 @@ func ai_calibrate_mouse() -> Dictionary:
 	}}
 
 
+
+# ══════════════════════════════════════════════════════════════════
+#  AI 操作的可视光标（不抢用户物理鼠标）
+# ══════════════════════════════════════════════════════════════════
+# 2026-10-27：用户要求「模拟鼠标操作，不是真的拿鼠标去操作」。
+# 所以不再 warp 真实光标，改为在游戏内画一个指示器 —— 用户既看得见 AI 在点哪里，
+# 又随时能拿回自己的鼠标。
+
+var _cursor_layer: CanvasLayer = null
+var _cursor_visual: ColorRect = null
+var _cursor_on := true
+## 光标托管：AI 注入事件后把 OS 光标还回用户原位。
+## Godot 收到注入的 motion 会把 OS 光标同步过去（引擎行为，绕不开），
+## 只能「用完即还」—— 用户随时能拿回自己的鼠标。
+var _cursor_locked := false
+var _cursor_home := Vector2.ZERO
+## 还原窗口：注入事件后引擎会把 OS 光标同步过去，只能在随后几帧持续还原压住它。
+var _cursor_restore_ms := 0.0
+
+
+func _ensure_cursor_visual() -> void:
+	if _cursor_visual != null and is_instance_valid(_cursor_visual):
+		return
+	_cursor_layer = CanvasLayer.new()
+	_cursor_layer.layer = 128          # 压在 HUD 之上，但不吃输入
+	add_child(_cursor_layer)
+	var ring := ColorRect.new()
+	ring.color = Color(1.0, 0.82, 0.15, 0.28)
+	ring.size = Vector2(26, 26)
+	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_cursor_layer.add_child(ring)
+	_cursor_visual = ColorRect.new()
+	_cursor_visual.color = Color(1.0, 0.92, 0.35, 0.95)
+	_cursor_visual.size = Vector2(9, 9)
+	_cursor_visual.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_cursor_layer.add_child(_cursor_visual)
+	_cursor_visual.set_meta("ring", ring)
+
+
+func _show_cursor(p: Vector2) -> void:
+	if not _cursor_on:
+		return
+	_ensure_cursor_visual()
+	if _cursor_visual == null:
+		return
+	var ring: ColorRect = _cursor_visual.get_meta("ring")
+	_cursor_visual.position = p - _cursor_visual.size * 0.5
+	ring.position = p - ring.size * 0.5
+
+
+## 开始托管光标：记住用户当前光标位置，之后每次注入都还原到它。
+func ai_cursor_lock(on: bool) -> Dictionary:
+	_cursor_locked = on
+	if on:
+		_cursor_home = DisplayServer.mouse_get_position()
+		_cursor_restore_ms = 0.0
+	return {"ok": true, "data": {"home": [_cursor_home.x, _cursor_home.y], "locked": on}}
+
+
+## 开关 AI 指示光标（验收 / 用户自己想看干净画面时用）
+func ai_cursor_visible(on: bool) -> Dictionary:
+	_cursor_on = on
+	if not on and _cursor_visual != null and is_instance_valid(_cursor_visual):
+		_cursor_visual.visible = false
+		var ring: ColorRect = _cursor_visual.get_meta("ring")
+		if ring != null:
+			ring.visible = false
+	return {"ok": true, "data": {"on": on}}
+
+
 ## 把光标挪到 (x,y) 并回报那一格到底命中谁。内部用。
 func _hit_at(p: Vector2) -> Control:
-	Input.warp_mouse(p)
+	# ⛔ 不 warp 真实光标（不和用户抢鼠标），只推事件
 	var m := InputEventMouseMotion.new()
 	m.position = p
 	m.global_position = p
+	m.relative = Vector2.ZERO
 	Input.parse_input_event(m)
-	# 等两帧，让 DisplayServer 把真实鼠标事件喂回来
+	# 等两帧，让 hover 状态更新
 	# （只等一帧会读到上一次的位置 —— 这就是「偏移」的另一个来源）
 	await get_tree().create_timer(0.05).timeout
 	var vp := get_viewport()
@@ -2469,12 +2612,15 @@ func ai_mouse_move(x: float, y: float) -> Dictionary:
 		return {"ok": false, "reason": "no viewport"}
 	var p := Vector2(clampf(x, 0.0, vp.get_visible_rect().size.x),
 			clampf(y, 0.0, vp.get_visible_rect().size.y))
-	Input.warp_mouse(p)
+	# ⛔ 不抢用户光标：只推事件，不 warp
 	var m := InputEventMouseMotion.new()
 	m.position = p
 	m.global_position = p
-	m.relative = p - vp.get_mouse_position()
-	vp.push_input(m, true)
+	m.relative = Vector2.ZERO
+	# ⛔ motion 走 parse_input_event（只更新 hover，不同步 OS 光标）；
+	#    按钮走 push_input（才驱动 Button 按下）。两者混用是唯一不抢鼠标的组合。
+	Input.parse_input_event(m)
+	_show_cursor(p)
 	return {"ok": true, "data": {"x": p.x, "y": p.y}}
 
 
@@ -2518,11 +2664,20 @@ func ai_mouse_click(x: float, y: float, button: int = MOUSE_BUTTON_LEFT) -> Dict
 		return {"ok": false, "reason": "no viewport"}
 	var sz := vp.get_visible_rect().size
 	var p := Vector2(clampf(x, 0.0, sz.x), clampf(y, 0.0, sz.y))
-	ai_mouse_move(p.x, p.y)
-	await get_tree().create_timer(0.06).timeout
+	# ⚠️ 必须先发一次 motion：GUI 的鼠标焦点要靠它建立，
+	#    否则 press 送出去了但没人接收（商店卡就点不动）。
+	#    motion 走 parse_input_event —— 只更新 hover，**不同步 OS 光标**。
+	var mm := InputEventMouseMotion.new()
+	mm.position = p
+	mm.global_position = p
+	mm.relative = Vector2.ZERO
+	Input.parse_input_event(mm)
 	_press(true, button, p)
 	await get_tree().create_timer(0.06).timeout
 	_press(false, button, p)
+	if _cursor_locked:
+		_cursor_restore_ms = 400.0
+	_show_cursor(p)
 	return {"ok": true, "data": {"x": p.x, "y": p.y}}
 
 

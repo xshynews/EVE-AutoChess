@@ -35,7 +35,13 @@ func reset() -> void:
 ##
 ## ⚠️ 每次准备阶段都**重新造实例** ⇒ 上一节点打残的血量不会带过来 ——
 ##    这是自走棋的基本盘（每回合开打前全员满血）。
-func build_own(run: EveRunState) -> Array[EveShip]:
+## 从任意 run 建一支舰队。
+##
+## ⚠️ 2026-10-27：`team` 参数是为**多人对战**加的。
+##    以前只有单机用（恒为 0 = 己方），所以没人发现它写死了。
+##    PvP 时两支舰队都要走这个函数，第二支必须给 team=1，
+##    否则双方都是「自己人」—— 模拟器一方开打就直接判完（实测 1 步结束）。
+func build_own(run: EveRunState, team: int = 0) -> Array[EveShip]:
 	var out: Array[EveShip] = []
 	var idx_map: Array[int] = []
 	var entries := run.field_entries()
@@ -43,7 +49,7 @@ func build_own(run: EveRunState) -> Array[EveShip]:
 		var e: Dictionary = entries[i]
 		var key := String(e.get("ship_key", ""))
 		var star := int(e.get("star", 1))
-		var ship := EveShipDatabase.instantiate_by_id(key, 0, next_id)
+		var ship := EveShipDatabase.instantiate_by_id(key, team, next_id)
 		if ship == null:
 			continue
 		next_id += 1
@@ -85,6 +91,13 @@ func build_enemy(run: EveRunState) -> Array[EveShip]:
 	#    所以海盗王的 6 艘同派系船会吃到满档，而不是白板。
 	if bool(run.difficulty_row().get("enemy_traits", false)):
 		EveRunState.apply_fleet_traits(out)
+	# ★ 2026-10-26：电子战羁绊（全表唯一一条「削敌方」的）—— 落点必须在这一侧。
+	#   `cycle_scale(1+pct)` = 开火更慢；敌方输出按 1/(1+pct) 衰减（15% ⇒ −13% DPS）。
+	#   ⚠️ 不能写进 `_apply_synergy`：那条管道只遍历**自己的**舰队。
+	var jam := run.enemy_cycle_pct()
+	if jam > 0.0:
+		for s in out:
+			s.cycle_scale(1.0 + jam)
 	# ★ 2026-10-24：炼狱 BOSS 的「壁垒」—— 玩家没凑出钥匙时，敌方全体只吃 10% 伤害。
 	# ⚠️ 乘在**受击侧**（`ship.incoming_mult`），不改敌方的输出 ——
 	#    壁垒是「打不动」，不是「它打你更疼」。

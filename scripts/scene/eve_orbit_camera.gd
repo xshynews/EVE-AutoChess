@@ -195,19 +195,9 @@ var attached: bool = true
 ## 相机节点
 var camera: Camera3D = null
 
-## ── 受击震屏（2026-10-17 打击感改造 · 用户选定「轻微」档）────────────
-##
-##  trauma 模型：外部只投喂 0..1 的"冲击量"，实际幅度取 **平方** ——
-##  小冲击几乎看不出、大冲击（击毁）才明显，这是打击感的常见做法。
-##
-##  ⚠️ 0.2° 是**用户拍板值**（"只有击毁时轻颤，不干扰瞄准"）。
-##     要加档就改这三个数，别在调用点散布魔法数字。
-##  ⚠️ 只作用于相机**局部**位置与 roll，绝不碰 focus / yaw / pitch ——
-##     否则自动取景会把抖动累积成"视角漂移"，玩家会认为相机坏了。
-const SHAKE_MAX_ROLL := 0.00349     ## 0.2°（弧度）
-const SHAKE_MAX_SHIFT := 0.035      ## 世界单位；2.6 单位船身 ≈ 121px，约 1.6px
-const SHAKE_DECAY := 0.55           ## 从满强度衰减到 0 的秒数
-var trauma := 0.0
+## ⛔ 2026-10-27 删除受击震屏：原来这里的 `SHAKE_MAX_ROLL / SHAKE_MAX_SHIFT /
+##    SHAKE_DECAY / trauma` 与 `add_trauma()` / `_apply_shake()` 整组已移除。
+##    理由见 `apply_to_camera()` 下方那段（用户裁决：单帧位移取消掉）。
 
 ## 上一帧视角是否还在收敛（供外部判断「是否还在动」）
 var animating: bool = false
@@ -331,13 +321,6 @@ func _process(delta: float) -> void:
 	if camera == null:
 		return
 	var changed := _step(delta)
-	# ── 受击震屏（2026-10-17 打击感改造）──────────────────────────
-	# ⚠️ 每帧都要重算：`apply_to_camera` 是**覆盖式**写入（position = focus + offset），
-	#    如果只在 trauma 变化时写，最后一帧的随机偏移会永久留在相机上。
-	#    这是一类很隐蔽的"镜头慢慢跑偏" bug，别改成条件写入。
-	if trauma > 0.0:
-		trauma = maxf(0.0, trauma - delta / SHAKE_DECAY)
-		changed = true
 	if changed:
 		apply_to_camera()
 
@@ -561,30 +544,21 @@ func apply_to_camera() -> void:
 	camera.position = focus + offset
 	camera.look_at(focus, Vector3.UP)
 	camera.far = maxf(20_000.0, dist * 30.0)
-	_apply_shake()
 
 
-## 外部投喂震屏冲击量（0..1）。击毁约 0.85、重击约 0.15、普通命中小于 0.02。
+## ⛔ 2026-10-27 **删除**：受击震屏（`add_trauma` / `_apply_shake` / `trauma`）。
 ##
-## ⚠️ 累加并夹到 1：连杀时连续投喂会叠加成一次更强的震，
-##    这正是"多艘船同时炸"该有的读法。
-func add_trauma(v: float) -> void:
-	trauma = clampf(trauma + v, 0.0, 1.0)
-
-
-## 把当前 trauma 写进相机（局部位置 + roll）。
+## 用户裁决：
+##   「这个受击反馈不是这么做的，现在做不合适 ……不过现阶段就别做了，做了也取消掉，
+##     尤其是单帧位移，取消掉」
 ##
-## ⚠️ 必须在 `look_at` **之后**做：look_at 会覆盖整份 basis，
-##    先抖后看向焦点等于白抖。
-func _apply_shake() -> void:
-	if trauma <= 0.0 or camera == null:
-		return
-	var s := trauma * trauma
-	var b := camera.transform.basis
-	var jitter := (b.x * randf_range(-1.0, 1.0) + b.y * randf_range(-1.0, 1.0)) \
-			* (SHAKE_MAX_SHIFT * s)
-	camera.position += jitter
-	camera.rotate_object_local(Vector3(0, 0, 1), randf_range(-1.0, 1.0) * SHAKE_MAX_ROLL * s)
+## 原实现是「每帧给相机 `position` 加一个随机偏移」= **单帧位移**，
+## 表现就是整个画面高频抖动、发糊 —— 与用户要的"看不清船"恰好相反。
+##
+## 正确做法（用户给定，**现阶段不做**，将来要做时按这个来）：
+##   只有舰船被**高出自己两个吨位以上**的舰船命中时，**那艘船**后退 0.2~0.3 格，
+##   用来示意"被重击"。
+##   ⚠️ 注意主语是**被击中的那艘船**，不是相机 —— 相机绝不参与打击感。
 
 
 ## 相机到焦点的距离（世界单位）

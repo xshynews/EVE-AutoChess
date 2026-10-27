@@ -1689,16 +1689,33 @@ func ai_quit_game() -> Dictionary:
 
 # ── 鼠标合成（与战斗场景同一套口径）────────────────────────────
 # 用户定案：不准后台操作。AI 必须像人一样挪光标、点按钮。
+## 光标托管状态（与战斗场景同一套语义）：用完即还，不和用户抢鼠标。
+var _cursor_locked := false
+var _cursor_home := Vector2.ZERO
+var _cursor_restore_ms := 0.0
+
+
+func ai_cursor_lock(on: bool) -> Dictionary:
+	_cursor_locked = on
+	if on:
+		_cursor_home = DisplayServer.mouse_get_position()
+		_cursor_restore_ms = 0.0
+	return {"ok": true, "data": {"home": [_cursor_home.x, _cursor_home.y], "locked": on}}
+
+
 func ai_mouse_move(x: float, y: float) -> Dictionary:
 	var vp := get_viewport()
 	if vp == null:
 		return {"ok": false, "reason": "no viewport"}
 	var sz := vp.get_visible_rect().size
 	var p := Vector2(clampf(x, 0.0, sz.x), clampf(y, 0.0, sz.y))
-	Input.warp_mouse(p)
+	# ⛔ 2026-10-27：不再 warp 真实光标（不和用户抢鼠标），只推事件；
+	#    引擎会把 OS 光标同步过去，所以托管开启时**用完立刻还回去**。
 	var m := InputEventMouseMotion.new()
 	m.position = p
 	m.global_position = p
+	m.relative = Vector2.ZERO
+	# motion 走 parse_input_event（只更新 hover，不同步 OS 光标）
 	Input.parse_input_event(m)
 	return {"ok": true, "data": {"x": p.x, "y": p.y}}
 

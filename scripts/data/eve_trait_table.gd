@@ -48,6 +48,48 @@ const GROUPS: Array = [
 	{"key": &"faction", "label": "势力 FACTION", "tiers": [2, 4]},
 	{"key": &"weapon", "label": "武器 WEAPON", "tiers": [3, 6]},
 	{"key": &"defense", "label": "防御 DEFENSE", "tiers": [3, 6]},
+	# ★ 2026-10-26 新增（用户：「新加两个羁绊，电子战和后勤」）。
+	#   后勤的来源**不是新造的**：权威表第 13 列 `logistics` 早就有值（8 艘，每族 2 艘），
+	#   而且维修机制是真的在跑（见 eve_ship.logistics_repair / _repair_one）。
+	#   所以这条线只是「把已有的那件事放大」，不需要新机制。
+	#   ⚠️ 单成员组：组里只有「后勤」一条 ⇒ 计数 = 场上后勤船数。
+	{"key": &"logi", "label": "后勤 LOGISTICS", "tiers": [2, 4]},
+	# ★ 2026-10-26 新增（用户：「新加两个羁绊，电子战和后勤」）。
+	#   兵源（用户定：**每族一艘护卫 + 一艘巡洋**，共 8 艘 —— 战列太难拿，
+	#   而电子战必须是「中期就能凑出来」的羁绊）。
+	#   ⚠️ 阈值 [2,4,6]：和武器/防御同口径（3 档、6 艘满档）。
+	#   数值 5% / 10% / 15% 由用户直接指定（「从 5% 以 5% 递增到 15%」）。
+	#   效果 = **削敌方**（攻击间隔 ×(1+5~15%)），是全表唯一一条负向羁绊，
+	#   落在 `EveFleetFactory.build_enemy` 那一侧，见 `EveRunState.enemy_cycle_pct()`。
+	{"key": &"ew", "label": "电子战 ELECTRONIC WARFARE", "tiers": [2, 4, 6]},
+]
+
+
+## 电子战的兵源（8 艘 = 4 族 × 护卫 1 + 巡洋 1）。
+##
+## ⚠️ **权威船表里没有「电子战」这一列**（52 艘只有 faction/weapon/defense/logistics），
+##    所以名单只能记在这里 —— 但它必须像权威列一样是**唯一真源**：
+##    计数、档案行、商店预览全走同一份，⛔ 别在别处再抄一份。
+##
+## ── 名单怎么来的（★ 2026-10-27 用户改过一次，别按旧名单推理）────────────
+##  · 规则由用户定：**每族出护卫 1 + 巡洋 1，共 4×2 = 8 艘**。
+##  · 成员由用户逐艘点名：
+##      加达里 小鹰级 / 巨鸟级 · 盖伦特 特里斯坦级 / 狂怒者级
+##      米玛塔尔 伐木者级 / 刺客级 · 艾玛 刽子手级 / 启示级
+##  · ⚠️ 其中 lore 上最像电子战的只有 3 艘（特里斯坦/狂怒者＝无人机 ECM、
+##    伐木者＝停滞缠绕），其余是游戏性指派 —— ⛔ 不要倒过来编 lore。
+##  · ⚠️ 权威船表里**没有「电子战」这一列**，所以名单只能记在这里；但它必须
+##    像权威列一样是**唯一真源**（计数 / 档案行 / 商店预览全走同一份）。
+##  · ⚠️ 用户同时把这几艘的**数值归一**了（见 `eve_ship_table.gd` 对应行）：
+##    攻击型的攻击降到同族防御型档位、防御型的血降到攻击型档位 ⇒ 电子战船
+##    的战斗力被刻意抹平。改这几艘的数值前先看清那条注释。
+##  · 全表里 lore 上最像电子战的还有毒蝎级（ECM 战列）与末日沙场级（毁电战列），
+##    但用户明确要求兵源只取护卫 + 巡洋 ⇒ 这两艘**不在本羁绊里**。
+const EW_SHIP_KEYS: PackedStringArray = [
+	"condor", "moa",           # 加达里（小鹰级 / 巨鸟级）
+	"tristan", "vexor",        # 盖伦特（特里斯坦级 / 狂怒者级）
+	"slasher", "stabber",      # 米玛塔尔（伐木者级 / 刺客级）
+	"executioner", "omen",     # 艾玛（刽子手级 / 启示级）
 ]
 
 ## 成员（显示名 + 颜色）。颜色约定：
@@ -73,6 +115,19 @@ static func members(group: StringName) -> Array[Dictionary]:
 			return [
 				{"name": "甲抗", "label": TERMS.trait_member(&"defense", "甲抗"), "color": EveWindow.C_DEFENSE},
 				{"name": "盾抗", "label": TERMS.trait_member(&"defense", "盾抗"), "color": EveWindow.C_DEFENSE},
+			]
+		&"logi":
+			# 单成员：整条羁绊就是「场上后勤船的数量」。颜色取卡面 N 标的绿（同一语义）。
+			return [
+				{"name": "后勤", "label": TERMS.trait_member(&"logi", "后勤"),
+						"color": Color(0.52, 0.86, 0.68)},
+			]
+		&"ew":
+			# 单成员，同「后勤」的理由。紫色 = 「干扰/异常」的通用语义，
+			# 刻意不用任何一族的识别色（这条羁绊是**跨族**的）。
+			return [
+				{"name": "电子战", "label": TERMS.trait_member(&"ew", "电子战"),
+						"color": Color(0.66, 0.55, 0.95)},
 			]
 	return []
 
@@ -156,6 +211,66 @@ const EFFECTS: Dictionary = {
 				"apply": {"shield_flat": 150.0}, "pending": []},
 			6: {"text": "护盾 +300 · 破盾 1s 无敌",
 				"apply": {"shield_flat": 300.0}, "pending": ["破盾 1s 无敌"]},
+		},
+	},
+	# ★ 2026-10-26 新增「后勤」。**只放大已有的维修机制**（不编新机制）：
+	#   维修量 = LOGISTICS_REPAIR[cost]（12 / 56 / 120 点每次），间隔 2.0s。
+	#
+	#   数值来自 `tools/sim_winrate.gd` 的 ②c 实测（40 种子 × 3 节点 = 120 局/格，
+	#   固定编队只改倍率，把「倍率价值」和「多带后勤船的成本」剥开量）：
+	#     2 档 +30%：胜 77/120 → 77/120、存活 3.4 → 3.5 —— **完全测不出差别**
+	#     2 档 +50%：胜 77 → 79、存活 3.4 → 3.6   ⇒ 一档给 50% 才有「凑出来了」的手感
+	#     4 档 +75%·间隔×0.8：胜 77 → 80、存活 3.2 → **4.0**（+0.8 艘，最明显的收益）
+	#     4 档 +120%·间隔×0.7：与上一行**完全同值**（胜 80 / 存活 4.0）⇒ 维修已经饱和
+	#         （兜底的治疗被「目标已死/已满」吃掉），再往上加是无效数值。
+	#   ⛔ 所以 4 档停在 +75%·×0.8；⛔ 别把 2 档退回 30%（实测等于没有）。
+	#
+	#   ⚠️ 读表注意：同一张表里「我挨伤」是**上涨**的（1074 → 1189 → 2185）。
+	#      那不是变弱 —— 维修让战斗拖长，总挨伤自然变多，但**存活数同时上涨**
+	#      （4 档 3.2 → 4.0）。判后勤的收益只能看 `存活`，⛔ 别看 `挨伤`。
+	#      同理「我输出」会**下降**（少了 2 艘火力船），那是编队成本，不是羁绊减益。
+	#
+	#   对比口径：势力 4 档是全族 +44% 装甲；后勤 4 档高得多，但**只对后勤船生效**，
+	#   且后勤船攻击只有同级一半（LOGISTICS_ATTACK 10 vs 40），多带的后勤船本身就是机会成本。
+	&"logi": {
+		"后勤": {
+			2: {"text": "维修量 +50%",
+				"apply": {"repair_pct": 0.50}, "pending": []},
+			4: {"text": "维修量 +75% · 维修间隔 ×0.8",
+				"apply": {"repair_pct": 0.75, "repair_cycle_pct": 0.20}, "pending": []},
+		},
+	},
+	# ★ 2026-10-26 新增「电子战」。**唯一一条削敌方的羁绊**：
+	#   把敌方全体开火间隔 ×(1 + 5% / 10% / 15%)（不是加给自己的船）。
+	#
+	#   数值换算（给设计侧对账用）：
+	#     +5%  ⇒ 敌方 DPS ×1/1.05 = 0.952（−4.8%）  ⇒ 我方等效血 +5.0%
+	#     +10% ⇒ ×1/1.10 = 0.909（−9.1%）           ⇒ +10.0%
+	#     +15% ⇒ ×1/1.15 = 0.870（−13.0%）          ⇒ +15.0%
+	#   ⇒ 满档 15% ≈ **全队** +15% 等效血（不分势力、不挑武器）。
+	#
+	#   ★ 2026-10-26 实测（`sim_winrate` ②c：固定 6 船队，只把敌方间隔乘 m；
+	#     40 种子 × 3 节点 = 120 局/格）：
+	#       m=1.00  胜 102/120 · 存活 3.4 · 我挨伤 803
+	#       m=1.05  胜 111/120 · 存活 3.4 · 我挨伤 780（−2.9%）
+	#       m=1.10  胜 107/120 · 存活 3.5 · 我挨伤 764（−4.9%）
+	#       m=1.15  胜 112/120 · 存活 3.5 · 我挨伤 743（−7.5%）
+	#     ⇒ 挨伤**单调**下降（数值口径可信），胜率 +5~8pp（样本内偏噪但方向一致）。
+	#     ⚠️ 实测挨伤只降 7.5% 而不是 13%：敌方 DPS 变低 ⇒ 战斗变长 ⇒ 多挨几轮，
+	#        所以「等效血 +15%」是上限，真实收益约一半。别照字面把 15% 当 +15% 血。
+	#   比「势力 4 档 +44%」弱，但势力那条只加本族；而且电子战是乘在敌方输出上，
+	#   与任何加血/加甲/维修都是**乘法叠加**，不会贬值。
+	#   ⚠️ `enemy_cycle_pct` 由 `EveRunState.enemy_cycle_pct()` 取出，
+	#     在 `EveFleetFactory.build_enemy()` 里落到敌舰 —— ⛔ 别在 `_apply_synergy` 里加，
+	#     那是「给自己的船」的管道，落到敌方要换一侧（见那里的注释）。
+	&"ew": {
+		"电子战": {
+			2: {"text": "敌方攻击间隔 +5%",
+				"apply": {"enemy_cycle_pct": 0.05}, "pending": []},
+			4: {"text": "敌方攻击间隔 +10%",
+				"apply": {"enemy_cycle_pct": 0.10}, "pending": []},
+			6: {"text": "敌方攻击间隔 +15%",
+				"apply": {"enemy_cycle_pct": 0.15}, "pending": []},
 		},
 	},
 }
@@ -291,6 +406,10 @@ static func count(ships: Array, group: StringName) -> Dictionary:
 			hit = _first_in(traits, ["激光炮", "混合炮", "射弹炮", "导弹"])
 		elif group == &"defense":
 			hit = _first_in(traits, ["甲抗", "盾抗"])
+		elif group == &"logi":
+			hit = "后勤" if _is_logi(s) else ""
+		elif group == &"ew":
+			hit = "电子战" if _is_ew(s) else ""
 		if hit != "" and known.has(hit):
 			known[hit] = int(known[hit]) + 1
 	return known
@@ -335,6 +454,49 @@ static func _first_in(traits: PackedStringArray, pool: Array) -> String:
 	return ""
 
 
+## 是不是后勤船（羁绊「后勤」的唯一判据）。
+##
+## ⚠️ 三种来源都要认（与 `_traits_of` 同一套理由）：
+##   ① `EveShip.is_logistics`（权威表第 13 列）
+##   ② 派生字典的 `is_logistics`（商店卡 / 图鉴）
+##   ③ 编制条目 `{ship_key, ...}` —— 没有 is_logistics，必须回查数据库
+## ⛔ 别拿 `role == "后勤"` 当主键：`role` 是显示字段，权威判据是 `logistics` 列。
+static func _is_logi(s) -> bool:
+	if s == null:
+		return false
+	if s is EveShip:
+		return (s as EveShip).is_logistics
+	if s is Dictionary:
+		var d: Dictionary = s
+		var direct: Variant = d.get("is_logistics", null)
+		if direct != null:
+			return bool(direct)
+		var k := String(d.get("ship_key", ""))
+		if k != "":
+			return bool(EveShipDatabase.by_id(k).get("is_logistics", false))
+	return false
+
+
+## 是不是电子战船（羁绊「电子战」的唯一判据）。
+##
+## ⚠️ 与 `_is_logi` 同一套三种来源的口径：EveShip 用 `ship_key`、字典先看
+##    自带的 `is_ew`（测试/预览可以显式声明），否则回查 `ship_key`。
+##    ⛔ 判据只有 `EW_SHIP_KEYS` 一份 —— 派生字典里**不另存** `is_ew`
+##    （避免「表改了、字典没改」的两份真相）。
+static func _is_ew(s) -> bool:
+	if s == null:
+		return false
+	if s is EveShip:
+		return EW_SHIP_KEYS.has(String((s as EveShip).ship_key))
+	if s is Dictionary:
+		var d: Dictionary = s
+		var direct: Variant = d.get("is_ew", null)
+		if direct != null:
+			return bool(direct)
+		return EW_SHIP_KEYS.has(String(d.get("ship_key", "")))
+	return false
+
+
 ## 一艘船在某组里归属哪一条（档案窗显示「这艘船属于哪个势力」用）
 static func group_of_ship(ship: EveShip, group: StringName) -> String:
 	if ship == null:
@@ -343,6 +505,8 @@ static func group_of_ship(ship: EveShip, group: StringName) -> String:
 		&"faction": return ship.faction_name()
 		&"weapon":  return String(ship.weapon_type)
 		&"defense": return String(ship.defense_type)
+		&"logi":    return "后勤" if ship.is_logistics else ""
+		&"ew":      return "电子战" if _is_ew(ship) else ""
 	return ""
 
 

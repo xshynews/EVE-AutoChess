@@ -57,7 +57,7 @@ func _process(_dt: float) -> void:
 			var opts := []
 			for i in 8:
 				opts.append({"name": "测试舰 %d" % (i + 1), "tag": "测试",
-						"icon": null, "desc": "占位"})
+						"icon": &"diamond", "desc": "占位"})
 			ev.call("show_ship_pick", opts)
 			ev.show()          # ⚠️ `show_options()` 只填内容，不负责显形（HUD 才负责）
 			ev.call("_apply_rect", ev.call("_effective_rect"))
@@ -107,29 +107,52 @@ func _report() -> void:
 			worst = dead
 			worst_name = "%s/%s" % [key, cn]
 	_lines.append("")
+	# ── 新增「后勤」组之后：两扇窗还装得下吗（2026-10-26）─────────────
+	_lines.append("")
+	_lines.append("── 新增羁绊组后的内容高度（内容最小高 > 可用高 = 底部被裁）──")
+	for pair in [["synergy_window", "舰队构成"], ["dossier_window", "舰船档案"]]:
+		var wn = _battle.get("hud").get(String(pair[0]))
+		if wn == null:
+			_lines.append("  %s 不存在" % pair[0])
+			continue
+		if String(pair[0]) == "dossier_window":
+			wn.show()
+			wn.call("_set_expanded", true)
+		var c: Control = wn.get("content")
+		var need: float = c.get_combined_minimum_size().y
+		# ⚠️ 不能拿 `c.size.y` 当「可用高」—— 内容超框时它会被子控件的最小高撑大，
+		#    于是「need ≤ 可用」永远成立（这正是上一版漏报 36px 的原因）。
+		#    真正要问的是「内容最小高 + 上外框 + 下内距 ≤ 窗高」。
+		var chrome_top: float = c.global_position.y - wn.global_position.y
+		var need_total: float = need + chrome_top + 8.0
+		_lines.append("  %s %s：窗 %.0f 高 · 内容最小 %.0f + 外框 %.0f = %.0f → %s"
+				% [pair[0], pair[1], wn.size.y, need, chrome_top + 8.0, need_total,
+						"OK" if need_total <= wn.size.y + 0.5
+						else "★ 裁掉 %.0f px" % (need_total - wn.size.y)])
+
 	if worst > 4.0:
 		_lines.append("★ 最大死白 = %.1f px（%s）—— 它（以及所有 >4px 的）都应被填满" % [worst, worst_name])
 	else:
 		_lines.append("★ 最大死白 = %.1f px —— 各窗内容都填满了窗口" % worst)
 
-	# ── 商店卡：定位小标 N/C/T（2026-10-25）─────────────────────────
+	# ── 商店卡：定位小标 N/C/T —— ★ 2026-10-27 已删除 ────────────────
+	#   用户：「去掉 CTN 的标志，以后再定，毕竟现在也丑」。
+	#   ⇒ 这里从「打印每张卡角标的位置」改成「断言角标确实不存在」，
+	#     免得以后有人悄悄加回来而没人发现。
 	_lines.append("")
-	_lines.append("── 商店卡定位小标（应在每张卡立绘的右上角）──")
+	_lines.append("── 商店卡定位小标（2026-10-27 已按用户要求删除，应全部为空）──")
 	var shop = hud.get("shop_window")
 	if shop == null:
 		_lines.append("  shop_window 不存在")
 	else:
 		var widgets: Array = shop.get("_card_widgets")
-		for i in mini(widgets.size(), 5):
+		var stray := 0
+		for i in widgets.size():
 			var w: Dictionary = widgets[i]
-			var b: Label = w.get("badge")
-			var art_c: Control = w.get("art")
-			if b == null or art_c == null:
-				continue
-			var rel := b.global_position - art_c.global_position
-			_lines.append("  卡%d 标「%s」 立绘 %.0f×%.0f · 标偏移 (%.0f,%.0f) 尺寸 %.0f×%.0f"
-					% [i, b.text, art_c.size.x, art_c.size.y,
-						rel.x, rel.y, b.size.x, b.size.y])
+			if w.has("badge"):
+				stray += 1
+				_lines.append("  ⛔ 卡%d 仍有 `badge` 键 —— 与「已删除」不符" % i)
+		_lines.append("  ✓ 共 %d 张卡，均无角标（残留 %d 个）" % [widgets.size(), stray])
 
 	# ── 事件·选船：8 张卡时横向滚动是否接管（2026-10-25）─────────────
 	_lines.append("")

@@ -30,6 +30,27 @@ var _armor_bar: MeshInstance3D = null
 var _hull_bar: MeshInstance3D = null
 var _name_label: Label3D = null
 var _stance_label: Label3D = null
+## 敌我识别（2026-10-27）
+##   方案 D：血条外框染阵营色 + 名字前 ▲/◆ 徽标
+##   方案 B：名牌底板（半透明深色托住名字）+ 左侧阵营色条
+## 两个方案都实装了，用 team_id_mode 切换对比。
+var _team_frame: MeshInstance3D = null
+var _team_frame_mat: StandardMaterial3D = null
+var _name_plate: MeshInstance3D = null
+var _name_stripe: MeshInstance3D = null
+## 敌我识别模式：0 = 关 · 1 = 方案D · 2 = 方案B
+var team_id_mode := 1
+
+## ── 敌我识别配色（方案 D）─────────────────────────────────
+## ★ 2026-10-27 用户：「颜色不是很喜欢，去掉荧光色」。
+##   原来那组是 (0.35,0.95,1.00) 青 / (1.00,0.32,0.26) 红 ——
+##   饱和度和明度都顶到格，在暗星空上像霓虹灯，久看刺眼。
+##   现在换成**低饱和金属色**：钢蓝 / 砖红，压暗但保留足够对比度。
+##
+## 双编码仍然保留：色相 + 明度都错开。红蓝在色盲视角下可能同亮度，
+## 所以敌方的红更暗、我方的蓝更亮，不靠单一通道判断。
+const TEAM_OWN := Color(0.44, 0.64, 0.80)      ## 我方：钢蓝
+const TEAM_FOE := Color(0.78, 0.40, 0.33)      ## 敌方：砖红
 
 var _last_pos: Vector3 = Vector3.ZERO
 var _visual_scale: float = 1.0
@@ -217,6 +238,8 @@ func setup(p_ship: EveShip) -> void:
 	add_child(label_root)
 	_build_bars()
 	_build_labels()
+	# 敌我识别（必须在 _build_labels 之后：要改它刚建好的标签颜色）
+	_build_team_id()
 
 	# 船体与信息层的缩放。两种态的差异见 BOARD_EXAGGERATION 的说明，
 	# 实现在 _apply_scale() 里（切换布阵态时也要走同一条路径，别抄第二份）。
@@ -954,6 +977,128 @@ func _build_engines() -> void:
 	hull_root.add_child(omni)
 
 
+# ------------------------------------------------------------------ 敌我识别
+
+## 敌我识别 · 方案 D：血条外框染色 + 名字前阵营徽标。
+##
+## 为什么不用船底环（方案 A，用户否了）：多一层地面元素会让混战画面变忙，
+## 而且船体翻滚时还要额外处理环的水平保持。方案 D 全部挂在 label_root 上，
+## 跟随已有的 billboard 逻辑，一行同步代码都不用加。
+func _build_team_id() -> void:
+	if team_id_mode <= 0:
+		return
+	var mine := ship == null or ship.team == 0
+	var col: Color = TEAM_OWN if mine else TEAM_FOE
+
+	# ② 名字前加阵营徽标：▲ 我方 / ◆ 敌方
+	#    ⚠️ 字形已核实：msyh / msyhbd / simsun 都有 U+25B2 与 U+25C6。
+	#    ⚠️ 用「前缀 + 同色」而不是单独一个 Label3D：多一个节点就要多管一份
+	#       位置同步，而 Label3D 的 billboard 是自带的，拆开反而容易错位。
+	if _name_label != null:
+		var mark := "\u25B2 " if mine else "\u25C6 "
+		if not _name_label.text.begins_with(mark):
+			_name_label.text = mark + _name_label.text
+		_name_label.modulate = col
+		_name_label.outline_modulate = Color(0.10, 0.02, 0.02, 0.92) if not mine \
+				else Color(0.01, 0.06, 0.09, 0.92)
+
+	if team_id_mode >= 2:
+		_build_name_plate(col)
+
+	# ① 血条外框：一个略大的空心矩形，染阵营色
+	#    ⚠️ 用 QuadMesh 画「边框」而不是四个细长条：一个节点、一次绘制，
+	#       且能跟着 label_root 一起 billboard / 缩放。
+	var fm := StandardMaterial3D.new()
+	fm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	fm.albedo_color = Color(col.r, col.g, col.b, 0.95)
+	fm.emission_enabled = true
+	fm.emission = col
+	# ⚠️ 自发光压到 0.45：原来 1.1 在暗背景下会「发亮」，
+	#    用户反馈就是这种荧光感。现在只保留一点点辉光，主要靠固有色。
+	fm.emission_energy_multiplier = 0.45
+	fm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	fm.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	fm.billboard_keep_scale = true
+	fm.disable_fog = true
+	fm.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_team_frame_mat = fm
+	var fq := QuadMesh.new()
+	fq.size = Vector2(BAR_WIDTH + 0.10, 0.075 + 0.055)
+	_team_frame = MeshInstance3D.new()
+	_team_frame.name = "TeamFrame"
+	_team_frame.mesh = fq
+	_team_frame.material_override = fm
+	_team_frame.position = Vector3(0, LABEL_HEIGHT + 0.08, -0.001)
+	label_root.add_child(_team_frame)
+
+
+## 方案 B：名牌底板 + 左侧阵营色条。
+##
+## ══════════════════════════════════════════════════════════════════
+##  三个必须处理的坑
+## ══════════════════════════════════════════════════════════════════
+##  ① **绘制顺序**：底板必须画在文字下面。文字 Label3D 的 `no_depth_test`
+##     是 true（永远不被船体挡住），所以不能靠深度分层 —— 改用
+##     `render_priority`：透明物体验完 priority 再比距离，
+##     给底板 -1 就保证它先画、文字后画覆盖上去。
+##  ② **底板宽度**：Label3D 不报告文字像素宽，只能估算。
+##     口径 = 字符数 x 字号 x pixel_size（中文近似方块字，1 字 ≈ 1 字号宽），
+##     再加固定余量给描边和徽标。估窄了会露馅，所以往宽给。
+##  ③ **别让底板吃输入**：它是 MeshInstance3D，本来就不参与 GUI 命中，
+##     但 `no_depth_test = true` 会让它画到船前面去 —— 看着像一层雾。
+func _build_name_plate(col: Color) -> void:
+	if _name_label == null:
+		return
+	# ② 估算文字宽：字符数 x 字号(32) x pixel_size(0.010) = 0.32/字
+	var chars := _name_label.text.length()
+	var tw := float(chars) * 0.32 + 0.34
+	var th := 0.46
+	var cy := 1.65
+
+	# 底板
+	var pm := StandardMaterial3D.new()
+	pm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	pm.albedo_color = Color(0.055, 0.075, 0.105, 0.72)
+	pm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	pm.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	pm.billboard_keep_scale = true
+	pm.disable_fog = true
+	pm.cull_mode = BaseMaterial3D.CULL_DISABLED
+	pm.render_priority = -1        ## ① 先画，好让文字盖上来
+	pm.no_depth_test = false
+	var pq := QuadMesh.new()
+	pq.size = Vector2(tw, th)
+	_name_plate = MeshInstance3D.new()
+	_name_plate.name = "NamePlate"
+	_name_plate.mesh = pq
+	_name_plate.material_override = pm
+	_name_plate.position = Vector3(0, cy, 0)
+	label_root.add_child(_name_plate)
+
+	# 左侧色条
+	var sm := StandardMaterial3D.new()
+	sm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	sm.albedo_color = Color(col.r, col.g, col.b, 0.95)
+	sm.emission_enabled = true
+	sm.emission = col
+	sm.emission_energy_multiplier = 0.35
+	sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	sm.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	sm.billboard_keep_scale = true
+	sm.disable_fog = true
+	sm.cull_mode = BaseMaterial3D.CULL_DISABLED
+	sm.render_priority = -1
+	sm.no_depth_test = false
+	var sq := QuadMesh.new()
+	sq.size = Vector2(0.055, th)
+	_name_stripe = MeshInstance3D.new()
+	_name_stripe.name = "NameStripe"
+	_name_stripe.mesh = sq
+	_name_stripe.material_override = sm
+	_name_stripe.position = Vector3(-tw * 0.5 + 0.028, cy, 0)
+	label_root.add_child(_name_stripe)
+
+
 func _add_box(pos: Vector3, size: Vector3, mat: Material) -> void:
 	var mi := MeshInstance3D.new()
 	var box := BoxMesh.new()
@@ -1201,9 +1346,25 @@ func _build_labels() -> void:
 ##  稳态（速度方向不变）下滞后收敛到 0 ⇒ **严格** bow = v。
 ##
 ##  跑过：红线 46 · 2026-09-26 第二十二轮（用户：「船头明确需要朝着前进方向」）
-func sync_from_body(body: EveDestinyMotion.Body, alive: bool, delta: float = 1.0 / 60.0) -> void:
+##
+## ── 渲染插值（2026-10-27）────────────────────────────────────────
+## `alpha` = **渲染插值系数**（0..1，见 `EveBattleSimulator.interp_alpha()`）。
+##
+## ⚠️⚠️ 为什么需要它（2026-10-27 用户报的「舰船小幅高频抖动、看不清、发糊」）：
+##   仿真 30 Hz、渲染 60~240 Hz。原来这里直接 `position = body.position` ⇒
+##   两次 tick 之间的那几帧**画面完全静止**，然后一帧跳过 2.5~4 px
+##   （实测 144 fps 下 **79% 的渲染帧画面纹丝不动**，见 `tools/probe_jitter.tscn`）。
+##   ⇒ 在 `previous_position` 与 `position` 之间线性插值，运动立刻变连续。
+##   代价：画面比仿真晚一个 tick（33 ms），这是固定步长 + 插值渲染的标准取舍。
+##
+## ⚠️ 默认 `1.0` = **直接取本 tick 位置（旧行为）** —— 布阵 / 快进 / 验收脚本
+##    走默认值，位置仍然与 `body.position` **严格相等**，老断言一条都不用改。
+func sync_from_body(body: EveDestinyMotion.Body, alive: bool, delta: float = 1.0 / 60.0, alpha: float = 1.0) -> void:
 	# 米 → 世界单位（渲染层唯一的单位换算点）
-	position = body.position / METERS_PER_UNIT
+	var p: Vector3 = body.position
+	if alpha < 1.0:
+		p = body.previous_position.lerp(body.position, clampf(alpha, 0.0, 1.0))
+	position = p / METERS_PER_UNIT
 
 	# 舰艏跟随速度方向 —— 完整旋转对齐，见上方红线 46
 	# ★★★ 45 轮：**舰艏的朝向来源改为「目标方向优先」**（用户实机诉求）。

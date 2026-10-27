@@ -122,6 +122,10 @@ func _menu_cmd(sc: Node, cmd: String, args: Dictionary) -> Dictionary:
 			return _res(sc.call("ai_ui_map"))
 		"mouse_move":
 			return _res(sc.call("ai_mouse_move", float(args.get("x", 0)), float(args.get("y", 0))))
+		"cursor_visible":
+			return _res(sc.call("ai_cursor_visible", bool(args.get("on", true))))
+		"cursor_lock":
+			return _res(sc.call("ai_cursor_lock", bool(args.get("on", true))))
 		"hover":
 			return await _res(await sc.call("ai_hover", float(args.get("x", 0)), float(args.get("y", 0))))
 		"ui_click":
@@ -217,6 +221,8 @@ func _battle_cmd(sc: Node, cmd: String, args: Dictionary) -> Dictionary:
 					float(args.get("bx", 0)), float(args.get("by", 0)), int(args.get("steps", 12))))
 		"hover":
 			return await _res(await sc.call("ai_hover", float(args.get("x", 0)), float(args.get("y", 0))))
+		"cursor_lock":
+			return await _res(await sc.call("ai_cursor_lock", bool(args.get("on", true))))
 		"buy":
 			return _res(sc.call("ai_buy", int(args.get("index", 0))))
 		"refresh":
@@ -277,6 +283,8 @@ func _battle_cmd(sc: Node, cmd: String, args: Dictionary) -> Dictionary:
 			return _res(sc.call("ai_camera", args))
 		"frame":
 			return _res(sc.call("ai_frame", String(args.get("mode", "battle"))))
+		"focus":
+			return await _res(await sc.call("ai_focus", args))
 		"colors":
 			return _res(sc.call("ai_colors", args))
 		"ui_map":
@@ -334,6 +342,13 @@ func _slim_ship_row(d: Dictionary) -> Dictionary:
 		"armor": d.get("armor", 0),
 		"hull": d.get("hull", 0),
 		"optimal_range": d.get("optimal_range", 0),
+		# 2026-10-27：射速三件套也导出（用户要求补的数据）
+		"weapon_cycle": d.get("weapon_cycle", 0.0),
+		"weapon_damage": d.get("weapon_damage", 0.0),
+		"shots_per_second": d.get("shots_per_second", 0.0),
+		"max_speed": d.get("max_speed", 0.0),
+		"range_cells": d.get("range_cells", 0),
+		"speed_cells": d.get("speed_cells", 0.0),
 		"is_logistics": bool(d.get("is_logistics", false)),
 	}
 	if d.has("cell"):

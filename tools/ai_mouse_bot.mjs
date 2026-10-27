@@ -34,8 +34,16 @@ const arg = (k, d) => {
   const i = argv.indexOf("--" + k);
   return i >= 0 && argv[i + 1] !== undefined ? argv[i + 1] : d;
 };
-const WATCH = argv.includes("--watch") || argv.includes("--demo");
-const DELAY = Number(arg("delay", WATCH ? 2600 : 300));
+// 默认就是演示模式：用户要「看得清操作步骤」，所以慢 + 只打关键动作。
+const WATCH = !argv.includes("--fast");
+// 人类操作节奏：默认 1100ms/步（人点一下鼠标大约 0.6~1.2s）。
+// 用户明确要求「降低操作的速度到人类操作鼠标那样的速度，不然根本看不清」。
+const DELAY = Number(arg("delay", WATCH ? 1100 : 250));
+// 点击内部节奏（毫秒）：移动到目标后停一下 → 按下 → 保持 → 松开
+const T_MOVE = Number(arg("move", 220));     // 每段移动间隔
+const T_HOVER = Number(arg("hover", 260));   // 到位后停顿（人的反应时间）
+const T_HOLD = Number(arg("hold", 90));      // 按多久
+const T_AFTER = Number(arg("after", 420));   // 松手后停顿
 const DIFF = arg("difficulty", "");
 const MAX_NODES = Number(arg("nodes", 15));
 const ROUNDS = Math.max(1, Number(arg("rounds", 1)));
@@ -95,6 +103,16 @@ const uiMap = async () => {
 
 // ---- mouse primitives ----
 const move = (x, y) => send("mouse_move", { x, y });
+
+/** 人类节奏点击：移动到目标 → 停顿 → 按下 → 保持 → 松开 → 停顿 */
+async function humanClick(x, y, button) {
+  await move(x, y);
+  await sleep(T_HOVER);
+  await send("mouse_down", { x, y, button: button || 1 });
+  await sleep(T_HOLD);
+  await send("mouse_up", { x, y, button: button || 1 });
+  await sleep(T_AFTER);
+}
 const clickPath = async (p) => {
   const r = await send("ui_click_path", { path: p });
   if (!r.ok) note("click failed " + p.slice(-24) + ": " + (r.error || JSON.stringify(r.data)));
@@ -127,10 +145,11 @@ async function phasedDrag(slotRect, row, col, label) {
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
     await move(Math.round(sx + (cx - sx) * t), Math.round(sy + (cy - sy) * t));
-    await sleep(WATCH ? 110 : 60);
+    await sleep(T_MOVE);
   }
-  await sleep(WATCH ? 500 : 200);
+  await sleep(T_HOVER);
   const up = await send("mouse_up", { x: cx, y: cy });
+  await sleep(T_AFTER);
   await sleep(WATCH ? 900 : 500);
   return up.ok;
 }
@@ -172,8 +191,22 @@ async function clickStartBattle() {
 // ---- main menu ----
 const DIFF_NAMES = ["simple", "normal", "hard", "inferno"];
 async function menuStart() {
+  // ⚠️ 必须先确保在主菜单：上一局结束时的画面可能停在战斗/结算/结局，
+  //    不回去就会「接着看上一局打完」—— 假通关（实测 29 秒打完困难档）。
+  for (let i = 0; i < 12; i++) {
+    const s0 = await state();
+    if (!s0) { await sleep(800); continue; }
+    if (s0.scene === "menu") break;
+    step("退回主菜单", "当前在 " + s0.scene + " / " + (s0.phase_name || "-"));
+    await send("back_to_menu");
+    await sleep(2000);
+  }
   const s = await state();
-  if (!s || s.scene !== "menu") return;
+  if (!s || s.scene !== "menu") {
+    note("到不了主菜单，放弃本轮");
+    return false;
+  }
+  // ⚠️ 这里不能提前 return —— 下面才是真正的选难度 + 点开始
   step("main menu: click Campaign", "left mode column");
   await clickNamed("Mode_campaign");
   await pace();
@@ -212,8 +245,9 @@ async function menuStart() {
     const t = await state();
     if (!t) continue;
     if (t.scene === "intro") { step("skip intro cutscene", "no info in it"); await send("finish"); await sleep(900); }
-    if (t.scene === "battle") return;
+    if (t.scene === "battle") return true;
   }
+  return true;
 }
 
 
@@ -243,6 +277,13 @@ function countTraits(ships) {
     const d = firstIn(tr, DEFENSE); if (d) out.defense[d]++;
   }
   return out;
+}
+
+/** 还差几艘到下一档（0 = 已满档）。 */
+function nextTier(group, n) {
+  const t = TIERS[group] || [];
+  for (const v of t) if (n < v) return v - n;
+  return 0;
 }
 
 /** 某标签当前落在哪一档（返回 0 / 3 / 6 之类的阈值）。 */
@@ -284,42 +325,83 @@ async function prep(s) {
   const cards = (map && map.shop_cards) || [];
   const slots = (map && map.bench_slots) || [];
 
-  // 1) 买：先算羁绊，再按「能上档 > 同组已多 > 高费」排序（这是这个品类的核心决策）
-  let coin = s.economy ? s.economy.coin : 0;
+  // ══════════════════════════════════════════════════════════════
+  // ① 决策：像正常玩家那样想 —— 定体系 → 看缺口 → 只在缺口上花钱
+  // ══════════════════════════════════════════════════════════════
+  const coin = s.economy ? s.economy.coin : 0;
+  const lv = s.economy ? s.economy.level : 1;
+  const node1 = s.node ? s.node.index : 1;
   const owned = [...(s.field || []), ...(s.bench || [])];
   const counts = countTraits(owned);
+
+  // 体系选择：早期按「已经最多的那组」定主体系（滚雪球），
+  // 否则按当前场上最强的单组定。没有积累时默认武器组（一档只要 3 艘最好凑）。
+  const pickMain = () => {
+    let best = { g: "weapon", name: "", n: 0 };
+    for (const g of ["faction", "weapon", "defense"]) {
+      for (const [nm, n] of Object.entries(counts[g])) {
+        if (n > best.n) best = { g, name: nm, n };
+      }
+    }
+    if (!best.name) {
+      // 还没有积累：按本节点敌人的防御类型反推克制的武器组
+      const def = (s.enemy || [])[0] ? (s.enemy[0].defense_type || "") : "";
+      best.name = def === "盾抗" ? "激光炮" : def === "甲抗" ? "导弹" : "混合炮";
+      best.g = "weapon";
+    }
+    return best;
+  };
+  const main = pickMain();
+  const mainNeed = nextTier(main.g, main.n);   // 还差几艘到下一档（0 = 已满档）
   const traitLine = ["faction", "weapon", "defense"]
     .map((g) => g.slice(0, 3) + ":" + Object.entries(counts[g]).filter(([, v]) => v > 0).map(([k, v]) => k + v).join("/"))
     .filter((x) => x.split(":")[1])
     .join("  ");
-  if (traitLine) note("当前羁绊 " + traitLine);
+  step("分析局势",
+    "主体系 " + main.name + " " + main.n + " 艘" +
+    (mainNeed > 0 ? "，再 " + mainNeed + " 艘上档" : "，已满档") +
+    (traitLine ? " ｜ 全部：" + traitLine : ""));
+  await pace();
 
-  // ⚠️ 备战席只有 8 格；满了还买等于浪费（船会进不来 / 花钱打水漂）
-  const benchUsed = (s.bench || []).length;
-  const benchRoom = 8 - benchUsed;
+  // ⚠️ 备战席只有 8 格；满了还买等于浪费
+  const benchRoom = 8 - (s.bench || []).length;
   if (benchRoom <= 0) note("备战席已满，本轮不买船");
 
+  // 打分：能推进主体系 > 能上任何档 > 同组 > 高费
   const scored = cards
     .map((c) => {
       const offer = ((s.shop || {}).offers || [])[c.index];
       if (!offer || !offer.ship_key) return null;
       const sc = scoreOffer(offer, counts);
-      return { c, offer, score: sc.score, reason: sc.reason };
+      // 主体系加成：这是「正常玩家」和「乱买」的分水岭
+      const tags = offer.traits || [];
+      const isMain = tags.includes(main.name);
+      const willAdvance = isMain && mainNeed > 0;
+      return {
+        c, offer,
+        score: sc.score + (willAdvance ? 1000 : 0) + (isMain ? 120 : 0),
+        reason: willAdvance ? ("推进主体系 " + main.name + " → 上档")
+                 : isMain ? ("同主体系 " + main.name) : sc.reason,
+      };
     })
     .filter(Boolean)
     .sort((a, b) => b.score - a.score);
 
+  // 星币纪律：只在「能推进体系」或「快要满仓」时花，否则存着吃利息
   let bought = 0;
   for (const it of scored) {
     if (bought >= benchRoom) break;
     if (it.offer.cost > coin - 2) continue;
+    // 不推进体系又不满仓 ⇒ 不花（存到 10/20/30 吃利息）
+    if (!/推进主体系|同主体系/.test(it.reason) && coin - it.offer.cost >= 10 && node1 < 12) {
+      note("跳过 " + it.offer.name + "（不推进体系，留着吃利息）");
+      continue;
+    }
     step("鼠标点商店第 " + it.c.index + " 张：" + it.offer.name,
       "◆" + it.offer.cost + " · " + it.reason + " · 剩 ◆" + (coin - it.offer.cost));
     await clickPath(it.c.path);
     await pace();
-    coin -= it.offer.cost;
     bought++;
-    // 买完立刻更新计数（后面的卡打分才准）
     const t = it.offer.traits || [];
     const f = firstIn(t, FACTION); if (f) counts.faction[f]++;
     const w = firstIn(t, WEAPON); if (w) counts.weapon[w]++;
@@ -327,13 +409,11 @@ async function prep(s) {
   }
   if (bought) note("共买入 " + bought + " 艘");
 
-  // 1b) 买经验：星币 >= 12 且等级 < 6
-  const lv = s.economy ? s.economy.level : 1;
-  if (coin >= 12 && lv < 6) {
+  // ② 买经验：只在「体系已经推进完、钱又多」时买（正常玩家不会前期抢经验）
+  if (bought === 0 && coin >= 20 && lv < 6) {
     step("鼠标点「加速等级」", "◆" + coin + " · Lv" + lv + " → Lv" + (lv + 1) + "（多一个上场位 + 更好的商店概率）");
     await clickNamed("加速等级");
     await pace();
-    coin -= 4;
   }
 
   // 2) deploy: phased drag bench -> free cell
@@ -418,7 +498,7 @@ async function clickCardVerified(card, tag) {
   const [cx, cy] = center(card.rect);
   const tries = [60, 0, 30, 90, 120, 15, 45, 75, 105, 135];
   for (const dx of tries) {
-    await send("mouse_click", { x: cx + dx, y: cy });
+    await humanClick(cx + dx, cy);
     await sleep(1100);
     const t = await state();
     if (!t) continue;
@@ -477,10 +557,14 @@ async function main() {
 }
 
 async function playOneRound() {
+  // 接管光标：AI 每次注入后自动把 OS 光标还给用户原来的位置
+  await send("cursor_lock", { on: true });
   const t0 = Date.now();
   const rec = { difficulty: DIFF || "simple", ending: "", node: 0, beacon: 0, cleared: false, seconds: 0 };
-  await menuStart();
-  let stuckKey = "", stuckN = 0;
+  const okMenu = await menuStart();
+  if (!okMenu) { rec.ending = "NO_MENU"; rec.seconds = 0; return rec; }
+  let stuckKey = "", stuckMs = 0, warned = false;
+  let lastTick = Date.now();
   let guard = 0;
   while (guard++ < 900) {
     const s = await state();
@@ -497,14 +581,23 @@ async function playOneRound() {
     }
 
     const key = s.phase_name + ":" + node;
-    if (key === stuckKey) stuckN++; else { stuckKey = key; stuckN = 0; }
-    if (stuckN === 18) {
-      console.log("WARN stuck at " + key + ", trying dialog / continue");
+    // ⚠️ 卡住检测按**时间**算，不按迭代次数：一场战斗要真跑 45 秒，
+    //    按次数算会把正常战斗误报成卡住（实测每个节点都误报一次）。
+    const now = Date.now();
+    if (key === stuckKey) {
+      stuckMs += now - lastTick;
+    } else {
+      stuckKey = key; stuckMs = 0; warned = false;
+    }
+    lastTick = now;
+    if (stuckMs > 70000 && !warned) {
+      warned = true;
+      console.log("WARN  " + key + " 已停留 " + Math.round(stuckMs / 1000) + "s，试试点确认框 / 继续");
       await send("dialog_confirm");
       await clickNamed("继续 · 下一节点");
     }
-    if (stuckN > 40) {
-      console.log("ERROR stuck at " + key + ", giving up");
+    if (stuckMs > 180000) {
+      console.log("ERROR  " + key + " 卡住超过 180s，放弃本局");
       rec.ending = "STUCK"; rec.node = node; rec.beacon = s.economy.beacon;
       rec.seconds = Math.round((Date.now() - t0) / 1000);
       return rec;

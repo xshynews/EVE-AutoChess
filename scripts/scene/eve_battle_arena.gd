@@ -197,6 +197,9 @@ func _ready() -> void:
 var _cam_focus := Vector3.ZERO
 var _cam_focus_initialized := false
 var _cam_last_span := Vector2.ZERO
+## 视角锁定的舰船 id（-1 = 不锁，跟随整支舰队）。
+## 2026-10-27 用户定案：双击某艘船 => 视角中心锁到它；双击空中 => 回默认。
+var _cam_lock_id := -1
 ## 布阵取景的焦点是否已初始化（棋盘显形的那一刻直接落到目标，之后才 lerp）
 var _board_focus_init := false
 ## 棋盘取景模式：0 = 我方部署区（拖放用）/ 1 = 整块棋盘（按 B 检查用）
@@ -268,6 +271,17 @@ func _process(delta: float) -> void:
 		_cam_focus_initialized = true
 	else:
 		_cam_focus = _cam_focus.lerp(center, clampf(delta / 0.8, 0.0, 1.0))
+
+	# 视角锁定：焦点跟这艘船走，不跟舰队包围盒
+	if _cam_lock_id >= 0:
+		var ln = _ship_nodes.get(_cam_lock_id, null)
+		if ln != null and is_instance_valid(ln):
+			# 锁定用更快的时间常数（0.35s）：单船机动比舰队重心活跃
+			_cam_focus = _cam_focus.lerp(ln.position, clampf(delta / 0.35, 0.0, 1.0))
+			orion_cam.set_focus_point(_cam_focus)
+			return
+		# 锁的船没了（被击毁）=> 自动解锁，回默认跟随
+		_cam_lock_id = -1
 
 	orion_cam.set_focus_point(_cam_focus)
 
@@ -711,10 +725,46 @@ func frame_battlefield(fit_ships: bool = false) -> void:
 	_cam_last_span = Vector2(half_x, half_z)
 
 
+## ── 视角中心选择（2026-10-27 用户定案）──────────────────────
+##
+## 双击某艘船 ⇒ 视角中心锁到它（船继续机动，镜头跟着走）
+## 双击空中   ⇒ 解除锁定并回默认机位
+##
+## ⚠️ 锁定只改**焦点**，不动角度与视距 —— 玩家自己转的角度、
+##    滚出来的缩放都不被覆盖。锁的船被击毁时自动解锁。
+
+## 锁定到指定舰船 id；id 无效 / 已不存在时返回 false
+func set_camera_lock(ship_id: int) -> bool:
+	if ship_id < 0 or not _ship_nodes.has(ship_id):
+		_cam_lock_id = -1
+		return false
+	var nd = _ship_nodes.get(ship_id, null)
+	if nd == null or not is_instance_valid(nd):
+		_cam_lock_id = -1
+		return false
+	_cam_lock_id = ship_id
+	# 立刻把焦点挪到船身上，再交给 _follow_camera 平滑跟随
+	_cam_focus = nd.position
+	return true
+
+
+## 解除视角锁定（不动机位）
+func clear_camera_lock() -> void:
+	_cam_lock_id = -1
+
+
+## 当前锁定的舰船 id（-1 = 没锁）
+func camera_lock_id() -> int:
+	return _cam_lock_id
+
+
 ## 复位相机到默认机位（双击中键 / 调试用）
 func reset_camera() -> void:
 	if orion_cam == null:
 		return
+	# 回默认机位 = 同时解除视角锁定
+	_cam_lock_id = -1
+	_cam_focus_initialized = false
 	orion_cam.reset()
 	if board != null and board.visible:
 		frame_board()
@@ -751,22 +801,21 @@ func fx_artillery(from_meters: Vector3, to_meters: Vector3, quality: int = 3) ->
 
 ## 命中爆点（`layer` = 真实受击层：shield / armor / hull）
 ##
-## ★ 2026-10-17：重击（SMASHING / WRECKING，品质 ≥ 5）额外给相机一点冲击。
-##   普通命中**不给** —— 6v6 高频射击下每一次都震 = 镜头永远在抖 = 晕。
+## ⛔ 2026-10-27 **删除**：原来 quality ≥ 5 会给相机投喂震屏冲击量（`add_trauma`）。
+##    用户裁决见 `eve_orbit_camera.gd::apply_to_camera()` 下方那段 ——
+##    受击反馈不做相机单帧位移；将来要做的是「**被击中那艘船**后退 0.2~0.3 格」。
 func fx_hit(pos_meters: Vector3, quality: int, layer: StringName = &"") -> void:
 	if battle_fx != null:
 		battle_fx.spawn_hit(pos_meters, quality, layer)
-	if quality >= 5 and orion_cam != null:
-		orion_cam.call("add_trauma", 0.05 * float(quality - 4))
 
 
 ## 击毁爆炸
+##
+## ⛔ 2026-10-27 **删除**：原来这里给相机投喂 0.85 震屏（`add_trauma`）。
+##    理由同上 —— 相机不参与打击感。
 func fx_boom(pos_meters: Vector3) -> void:
 	if battle_fx != null:
 		battle_fx.spawn_boom(pos_meters)
-	# 击毁是整套打击感里唯一「必须震」的事件（用户拍板：轻微档）
-	if orion_cam != null:
-		orion_cam.call("add_trauma", 0.85)
 
 
 ## 清空特效（重开一局 / 清场时调）
@@ -1359,12 +1408,18 @@ func remove_ship_visual(ship_id: int) -> void:
 ## ★ 46 轮：额外传 `delta` —— 视觉层要用它做**舰艏角速度限速**
 ##   （`EveShipVisual.FACING_MAX_DEG_PER_SEC`）。限速依赖时间步长才能做到
 ##   「与帧率无关」；不传 delta 就只能假定 60 FPS，掉帧时会转得变慢。
-func sync_ships(ships: Array[EveShip], delta: float = 1.0 / 60.0) -> void:
+##
+## ★★ 2026-10-27：再加 `alpha` —— **渲染插值系数**（见
+##   `EveBattleSimulator.interp_alpha()`）。战斗循环传 `sim.interp_alpha()`，
+##   消除「30 Hz 仿真 ⇒ 渲染帧静止若干帧后一次跳几像素」的抖动。
+##   ⚠️ 默认 `1.0` = 老行为（位置 = 本 tick 位置），布阵 / 快进 / 验收脚本不用改。
+func sync_ships(ships: Array[EveShip], delta: float = 1.0 / 60.0,
+		alpha: float = 1.0) -> void:
 	for ship in ships:
 		var visual: Node3D = _ship_nodes.get(ship.id)
 		if visual == null:
 			continue
-		visual.sync_from_body(ship.body, ship.alive, delta)
+		visual.sync_from_body(ship.body, ship.alive, delta, alpha)
 
 
 ## ★ 53 轮：**瞬时**把舰队姿态摆到 `body.aim_dir`（不走 slerp 平滑）。

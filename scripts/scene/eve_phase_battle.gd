@@ -36,6 +36,9 @@ var _resolve = null
 var _get_sim: Callable = Callable()
 var _own_ships_cb: Callable = Callable()
 var _enemy_ships_cb: Callable = Callable()
+## ★ 2026-10-27：现取「上场下标映射」（fleet 下标 → `run.field` 下标）。
+##   结算时用它把阵亡的我方舰船翻译成 `field` 下标，交给 `resolve_battle()` 删。
+var _own_field_index_cb: Callable = Callable()
 var _on_unit_destroyed_cb: Callable = Callable()
 var _on_shot_fired_cb: Callable = Callable()
 
@@ -43,6 +46,7 @@ var _on_shot_fired_cb: Callable = Callable()
 func setup(p_run: EveRunState, p_hud: EveHudRoot, p_audio: EveAudio,
 		p_arena: EveBattleArena, p_resolve, p_get_sim: Callable,
 		p_own_ships: Callable, p_enemy_ships: Callable,
+		p_own_field_index: Callable,
 		p_on_unit_destroyed: Callable, p_on_shot_fired: Callable) -> void:
 	_run = p_run
 	_hud = p_hud
@@ -52,6 +56,7 @@ func setup(p_run: EveRunState, p_hud: EveHudRoot, p_audio: EveAudio,
 	_get_sim = p_get_sim
 	_own_ships_cb = p_own_ships
 	_enemy_ships_cb = p_enemy_ships
+	_own_field_index_cb = p_own_field_index
 	_on_unit_destroyed_cb = p_on_unit_destroyed
 	_on_shot_fired_cb = p_on_shot_fired
 
@@ -160,7 +165,9 @@ func tick(delta: float) -> void:
 		sync_log()
 		check_sudden_death()
 	if sim != null:
-		_arena.sync_ships(sim.ships, delta)
+		# ★ 2026-10-27：传 `interp_alpha()` —— 仿真 30 Hz、渲染 60~240 Hz，
+		#   不插值的话中间那几帧画面完全静止、再一帧跳几像素（用户报的"抖动/发糊"）。
+		_arena.sync_ships(sim.ships, delta, sim.interp_alpha())
 
 
 ## 把模拟器新产生的日志搬进 HUD（只搬增量的那一截）。
@@ -312,10 +319,24 @@ func finished(winner_team: int) -> void:
 	var own_alive := _count_alive(own)
 	var reason := end_reason(own.is_empty(), enemy_alive, own_alive, timeout_forfeit)
 
+	# ★ 2026-10-27：算出阵亡的我方舰船在 `run.field` 里的**下标** ——
+	#    交给 `resolve_battle()` 把它们从编队移除（否则下个准备阶段舰队一重建
+	#    它们就"复活"了，见 `resolve_battle()` 里那段长注释）。
+	# ⚠️ 映射用 fleet→field 的 idx_map：`own[i]` 对应 `field[idx_map[i]]`，
+	#    两者**严格同下标对齐**（见 `EveFleetFactory.last_idx_map` 顶注）。
+	#    `own` 为空（未部署判负）时自然得到空数组 ⇒ 不会误删别人的船。
+	var lost_field: Array[int] = []
+	var idx_map: Array = _own_field_index_cb.call()
+	for i in own.size():
+		if i >= idx_map.size():
+			break
+		if not (own[i] as EveShip).alive:
+			lost_field.append(int(idx_map[i]))
+
 	# ⚠️ 结算前的信标读数必须**先记下来** —— resolve_battle 会就地改 run.beacon，
 	#    返回值里的 beacon 是结算后的值，光凭它算不出「掉了多少」。
 	var beacon_before := _run.beacon
-	var res := _run.resolve_battle(winner_team, destroyed, sources, m_scale)
+	var res := _run.resolve_battle(winner_team, destroyed, sources, m_scale, lost_field)
 
 	# ── 阶段 D：开战镜头收回 ──
 	# 推近是为了看交战，结算就该把构图还回来（不然结算页浮在一个贴脸的特写上）。

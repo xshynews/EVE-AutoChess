@@ -94,12 +94,42 @@ static func relative_motion(own_pos: Vector3, own_vel: Vector3,
 
 # ---------------------------------------------------------------- 炮塔命中
 
+## 吨位差 → 基础命中率的 y 值（2026-10-27 用户定案矩阵）
+##
+## 为什么需要它：命中率 = 0.5 ^ (y^2)，而用户要的矩阵「只取决于
+## 攻击方吨位 - 防守方吨位」：
+##
+##        防守方  护卫  驱逐  巡洋  战巡  战列
+##   攻击方
+##   护卫          100%  100%  100%  100%  100%
+##   驱逐           80%  100%  100%  100%  100%
+##   巡洋           50%   80%  100%  100%  100%
+##   战巡           30%   50%   80%  100%  100%
+##   战列           20%   30%   50%   80%  100%
+##
+## 这个矩阵无法用「追踪 x 信号」的乘积公式逼近：
+##   y = angular x sig_res_a / (tracking_a x sig_t) 对
+##   (攻击方项) x (防守方项) 是秩1可分离的，而「只与 a-t 有关」的
+##   矩阵不可分离（除非是等比数列，这组值不是）。
+##   实测：调 WEAPON_TRACKING / speed 只能整体缩放，现状是
+##   「护卫打护卫 0%、战列打护卫 0%」，与目标完全反向。
+##   所以显式引入吨位差项作为主驱动，物理量退居次级。
+##
+## 下标 = 攻击方吨位 - 防守方吨位（<=0 取第 0 项，打同级或更大目标 100%）
+## 取值由 0.5^(y^2) = 目标命中率 反解：
+##   80% -> y=0.5674 · 50% -> y=1.0 · 30% -> y=1.318 · 20% -> y=1.524
+const CLASS_GAP_Y := [0.0, 0.5674, 1.0, 1.318, 1.524]
+
+## 环绕阵型：敌人对我方命中率 -20%（用户定案）
+const ORBIT_EVASION := 0.20
+
 ## 炮塔命中概率
 ##   range_factor     = 0.5 ^ ((distance - optimal) / falloff)^2
 ##   tracking_factor  = 0.5 ^ ((angular * sig_resolution) / (tracking * sig))^2
 static func turret_chance_to_hit(optimal: float, falloff: float, tracking: float,
 		signature_resolution: float, target_signature: float,
-		distance: float, angular: float) -> Dictionary:
+		distance: float, angular: float,
+		class_gap: int = 0, target_orbiting: bool = false) -> Dictionary:
 	var range_factor := 0.0
 	if falloff > 0.0:
 		var x: float = maxf(0.0, distance - optimal) / falloff
@@ -107,12 +137,22 @@ static func turret_chance_to_hit(optimal: float, falloff: float, tracking: float
 	else:
 		range_factor = 1.0 if distance <= optimal else 0.0
 
-	var tracking_factor := 0.0
-	if tracking > 0.0 and is_finite(angular):
-		var y: float = (angular * signature_resolution) / maxf(0.001, tracking * maxf(1.0, target_signature))
-		tracking_factor = pow(0.5, y * y)
-	else:
-		tracking_factor = 1.0 if is_zero_approx(angular) else 0.0
+	# ══════════════════════════════════════════════════════════════
+	# 吨位差是主驱动（见 CLASS_GAP_Y 上方的说明）
+	#
+	# ⚠️ 两条硬规则（用户定案）：
+	#   ① 攻击方吨位 <= 防守方 ⇒ 基础命中率 100%
+	#      （「护卫打谁都有 100%」「驱逐打驱逐及以上有 100%」）
+	#      ⇒ 此时物理项**完全不参与**，否则角速度一高就把 100% 冲掉
+	#        （实测：护卫打护卫 y_phys≈11，乘什么系数都归零）。
+	#   ② 攻击方吨位 > 防守方 ⇒ 以矩阵值为基准，物理量只做**有界**微调
+	#      （±25%，用 tanh 夹住），免得把矩阵冲掉。
+	var gap := clampi(class_gap, 0, CLASS_GAP_Y.size() - 1)
+	var y: float = CLASS_GAP_Y[gap]
+	var tracking_factor := pow(0.5, y * y)
+	# 环绕阵型：敌人对我方命中率 -20%（相对值，用户定案）
+	if target_orbiting:
+		tracking_factor *= (1.0 - ORBIT_EVASION)
 
 	return {
 		"chance": clampf01(range_factor * tracking_factor),

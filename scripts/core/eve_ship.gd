@@ -449,6 +449,18 @@ func speed_scale(m: float) -> void:
 		body.max_speed = maxf(1.0, body.max_speed * m)
 
 
+## 后勤维修强化 —— 羁绊「后勤」用（2026-10-26）。
+##
+## `amount_mult` 乘每次修理量，`cycle_mult` 乘修理间隔（<1 = 修得更勤）。
+## ⚠️ 非后勤船 `logistics_repair` 是 0 ⇒ 直接返回，不留「半生效状态」。
+## ⛔ 间隔下限 0.3s：再快就低于战斗 tick 的可读分辨率，视觉上变成持续回血。
+func repair_scale(amount_mult: float, cycle_mult: float) -> void:
+	if logistics_repair <= 0.0 or logistics_layer.is_empty():
+		return
+	logistics_repair *= amount_mult
+	logistics_cycle = maxf(0.3, logistics_cycle * cycle_mult)
+
+
 ## ★ 2026-10-10（i18n）：以下三个是**显示名**，走 `EveTerms` 取词
 ##   （英文 = EVE 官方原名，中文 = 官方译名）。
 ##

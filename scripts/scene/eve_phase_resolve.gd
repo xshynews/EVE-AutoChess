@@ -152,7 +152,9 @@ func tick(delta: float) -> void:
 			popup()
 	var sim = _sim_cb.call()
 	if sim != null:
-		_arena.sync_ships(sim.ships, delta)
+		# ★ 2026-10-27：战斗已结束 ⇒ `interp_alpha()` 返回 1.0（画面停在**最终**位置，
+		#   不会因为残留的累加器余量把船"往回缩几像素"）。
+		_arena.sync_ships(sim.ships, delta, sim.interp_alpha())
 	if resolve_timer > 0.0:
 		resolve_timer -= delta
 		if resolve_timer <= 0.0:

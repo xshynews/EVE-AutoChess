@@ -450,10 +450,19 @@ func _t_mobile_layout() -> void:
 		_ok(is_equal_approx(syn.size.y, HUD_SCRIPT.MOBILE_SYN_H),
 				"%s ★ 舰队构成外框固定 %.0f（内容在裁剪宿主内，不参与槽位计算）"
 				% [tag, syn.size.y])
-		var compact_height := h < 780.0
-		_ok(eq.size.y >= (HUD_SCRIPT.RECT_EQ.size.y if compact_height else 150.0) - 0.5,
-				"%s ★ 装备外框 %.0f（短屏保设计稿下限，其余空间保实测最小 150）"
-				% [tag, eq.size.y])
+		# ②b-3 ★ 2026-10-26：装备栏位的「舒适高度」改成**按左列高度预算判定**。
+		#    原判据是「h ≥ 780 就必须 ≥150」，那是在羁绊只有 3 组、构成槽位 364 时成立的。
+		#    羁绊加到 5 组后构成必须给到 412，h=800（真机 1080/1.35）的左列
+		#    只剩 116 —— 这不是布局 bug，而是高度预算用完了：
+		#      94(顶条下) + 412 + 10 + 116 + 10 + 158 = 800 = 整屏。
+		#    装备 116 恰好等于**设计稿**，8 格（2×4 · 35 高）全可见、不裁切，
+		#    只是不再额外放大 —— 属于可接受的降级。⛔ 别为了凑 150 去压构成窗（会切掉第 5 组）。
+		var eq_budget := h - (top.end.y + 12.0) - HUD_SCRIPT.MOBILE_SYN_H \
+				- 2.0 * HUD_SCRIPT.MOBILE_COL_GAP - HUD_SCRIPT.MOBILE_AUG_H
+		var eq_floor := 150.0 if eq_budget >= 150.0 else HUD_SCRIPT.RECT_EQ.size.y
+		_ok(eq.size.y >= eq_floor - 0.5,
+				"%s ★ 装备外框 %.0f（预算 %.0f → 下限 %.0f；够则保 150，不够退回设计稿 116）"
+				% [tag, eq.size.y, eq_budget, eq_floor])
 		_ok(aug.size.y >= 0.0 and aug.end.y <= h + 0.5,
 				"%s ★ 增益外框在屏内（%.0f..%.0f；内容超出时仅窗内裁剪）"
 				% [tag, aug.position.y, aug.end.y])

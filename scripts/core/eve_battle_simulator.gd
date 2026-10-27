@@ -227,6 +227,39 @@ func step(dt: float = FIXED_STEP) -> void:
 		_accum = 0.0
 
 
+## ★★ 2026-10-27：**渲染插值系数**（0..1）—— 给视觉层用来做插值渲染。
+##
+## ══════════════════════════════════════════════════════════════════
+##  为什么必须有它（用户报的「舰船小幅高频抖动、看不清、发糊」）
+## ══════════════════════════════════════════════════════════════════
+##  仿真跑 **30 Hz**（`TICK_RATE`），渲染跑 60~240 Hz，而视觉层原来
+##  `position = body.position` —— 也就是**直接写上一 tick 的位置**。
+##  ⇒ 两次 tick 之间的那几帧，画面**完全静止**，然后一帧跳过去。
+##
+##  实测（`tools/probe_jitter.tscn`，4v4 巡洋，1 世界单位 ≈ 46.5 px）：
+##      · 每 tick 位移 ≈ 54~59 m（**2.5~2.7 px**），峰值 85 m（3.97 px）
+##      · 60 fps  → **50% 的渲染帧画面完全没动**，动的那帧跳 3.6~6.8 px
+##      · 144 fps → **79% 的帧没动**
+##      · 240 fps → **88% 的帧没动**
+##      · 仿真自身 0% 速度方向反转（**不是物理在振荡，纯粹是呈现层的跳变**）
+##  「静止几帧 + 一次跳几像素」被眼睛读成抖动/发糊，在高刷屏上尤其明显。
+##
+##  本函数返回的就是那个「当前处在两次 tick 之间的哪个位置」：
+##      alpha = 0 → 刚走完一次 tick（应显示 `previous_position` 一侧）
+##      alpha = 1 → 下一次 tick 即将发生
+##  ⚠️ 调用方（`EveBattleArena.sync_ships`）用它做
+##     `previous_position.lerp(position, alpha)`，代价是**画面比仿真晚一个 tick**
+##     （33 ms），这是固定步长 + 插值渲染的标准取舍，肉眼无感；换来的是连续运动。
+##
+##  ⚠️⚠️ 战斗结束后**必须返回 1.0**：那时 `step()` 已不再推进、`_accum` 冻在某个
+##     残值上，若继续按它插值，画面会永远停在"离最终位置差一点"的地方 ——
+##     表现就是「结算那一刻所有船同时往回缩几像素」。
+func interp_alpha() -> float:
+	if finished:
+		return 1.0
+	return clampf(_accum / FIXED_STEP, 0.0, 1.0)
+
+
 ## 明确「跑满这段时间」—— **无单帧上限**，仅供无头验收 / 快进使用。
 ##
 ## ⚠️ 与 `step()` 的区别只有上限：`step()` 是"每帧最多补 8 tick 跟住真实时间"，
@@ -568,10 +601,13 @@ func _fire_once(ship: EveShip, target: EveShip) -> void:
 		quality = EveCombatCore.HitQuality.HIT
 	else:
 		# 炮塔：射程 x 追踪
+		# 2026-10-27：把吨位差与目标阵型传进去（用户定案的命中率矩阵）
+		var gap := ship.cost - target.cost
+		var tgt_orbit := target.stance == EveCombatCore.Stance.ORBIT
 		var app := EveCombatCore.turret_chance_to_hit(
 			ship.optimal_range, ship.falloff, ship.tracking,
 			ship.signature_resolution, _effective_signature(target),
-			distance, angular
+			distance, angular, gap, tgt_orbit
 		)
 		var roll := rng.randf()
 		var result := EveCombatCore.turret_hit_quality(float(app["chance"]), roll)

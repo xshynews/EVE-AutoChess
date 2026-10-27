@@ -320,6 +320,24 @@ var rng := RandomNumberGenerator.new()
 ##   （商店 / 事件 / 战斗命中判定都不再受全局随机影响）。
 var run_seed: int = 0
 
+## ── ★ 2026-10-27：程序化敌方编组的种子基准 ────────────────────────
+##
+## 难度 2/3/4 档的编组由 `EveEnemyPlans` 按「节点配方 + 本基准 + 节点号」
+## 现摇（见 `enemy_roster_seed()`）。要求有两条，缺一不可：
+##   ① **本局内恒定** —— 重载存档 / 重进同一关必须摇出同一批船
+##      （否则玩家能靠反复重载"刷"到更弱的敌人）；
+##   ② **跨局不同** —— 否则每一局的敌人都一模一样。
+##
+## ⛔ 为什么不能直接用 `run_seed`：`start_run(0)` 是「随机局」，此时
+##    `run_seed` 恒为 0 ⇒ 所有随机局的敌人会完全相同（违反 ②）。
+##    所以开局时把基准**定死**在这里：固定种子局就等于 `run_seed`，
+##    随机局则从 `rng` 抽一个，再随存档持久化（见 `to_dict`/`from_dict`）。
+var _comp_seed_base: int = 0
+
+## 本局已摇出的编组：comp_id → true（只用于避免重复登记，成员在
+## `EveEnemyComps` 的运行时表里）。
+var _gen_comps: Dictionary = {}
+
 var _pools: Dictionary = {}                ## cost → Array[Dictionary]（52 艘派生一次就够）
 
 
@@ -436,6 +454,11 @@ func start_run(p_seed: int = 0) -> void:
 	else:
 		rng.seed = p_seed
 	run_seed = p_seed
+	# ★ 程序化编组的基准：固定种子局用它；随机局抽一个再随存档带走。
+	# ⚠️ 必须在 `rng.seed/randomize()` 之后取 —— 随机局的 `rng` 此刻才可用。
+	_comp_seed_base = p_seed if p_seed != 0 else rng.randi()
+	_gen_comps.clear()
+	EveEnemyComps.clear_runtime()
 
 	coin = int(difficulty_row().get("start_gold", START_GOLD))
 	level = 1
@@ -515,6 +538,7 @@ func battle_seed() -> int:
 func to_dict() -> Dictionary:
 	return {
 		"run_seed": run_seed,
+		"comp_seed": _comp_seed_base,
 		"difficulty": difficulty_id,
 		"phase": phase,
 		"ending": ending,
@@ -543,6 +567,14 @@ func from_dict(d: Dictionary) -> bool:
 	if d.is_empty():
 		return false
 	run_seed = int(d.get("run_seed", 0))
+	# ★ 程序化编组基准也要还原 —— 不还原的话「继续上一局」的敌人会重摇，
+	#   而玩家在上一次进关时已经见过那批船了（HUD/存档语义都会错位）。
+	# ⚠️ 字段缺省回退到 `run_seed`：老存档没有这个键，用 run_seed 重算即可
+	#   （固定种子局本来就等于 run_seed；随机局的老存档会退化成"当局固定"，
+	#    可以接受，比直接崩好）。
+	_comp_seed_base = int(d.get("comp_seed", run_seed))
+	_gen_comps.clear()
+	EveEnemyComps.clear_runtime()
 	difficulty_id = String(d.get("difficulty", "simple"))
 	phase = int(d.get("phase", Phase.PREP))
 	ending = int(d.get("ending", Ending.NONE))
@@ -753,7 +785,20 @@ func buy(index: int) -> Dictionary:
 
 ## 造一条新的编制记录。cell = (-1,-1) 表示「位置交给默认阵型」
 static func _make_entry(key: StringName, star: int) -> Dictionary:
-	return {"ship_key": key, "star": star, "cell": Vector2i(-1, -1)}
+	var out := {"ship_key": key, "star": star, "cell": Vector2i(-1, -1)}
+	# 2026-10-27: traits must be stored in the roster entry too.
+	# Before, only ship_key was kept, so EveTraitTable._traits_of() could
+	# never read labels from roster entries (trait counting was blind).
+	var d := EveShipDatabase.by_id(key)
+	if not d.is_empty():
+		out["traits"] = d.get("traits", [])
+		out["name"] = d.get("name", "")
+		out["cost"] = d.get("cost", 1)
+		out["faction_cn"] = d.get("faction_cn", "")
+		out["weapon_type"] = d.get("weapon_type", "")
+		out["defense_type"] = d.get("defense_type", "")
+		out["is_logistics"] = d.get("logistics", false)
+	return out
 
 
 ## 付费刷新（2 星币）
@@ -1679,6 +1724,22 @@ func active_synergies() -> Array[Dictionary]:
 	return out
 
 
+## 电子战羁绊的「敌方开火间隔惩罚」系数（0 = 没凑出来，0.05 / 0.10 / 0.15 = 二/三档）。
+##
+## ⚠️ 这是全表**唯一**一条作用在敌方身上的羁绊 ⇒ 它**不进** `_apply_synergy`
+##    （那条管道只改「自己的船」）。由 `EveFleetFactory.build_enemy()` 取用，
+##    落到敌舰的 `weapon_cycle`（`cycle_scale(1 + pct)`）。
+## ⚠️ 取 max 而不是累加：每档只有一个值生效（与 `tier_of` 的「替换不叠加」口径一致）。
+func enemy_cycle_pct() -> float:
+	var out := 0.0
+	for a in active_synergies():
+		if StringName(a["group"]) != &"ew":
+			continue
+		var apply: Dictionary = a.get("apply", {})
+		out = maxf(out, float(apply.get("enemy_cycle_pct", 0.0)))
+	return out
+
+
 ## 把生效的羁绊乘进一支舰队，返回生效清单（供 HUD / 日志用）。
 ##
 ## ⚠️ 受益范围：只有**带该羁绊的船**吃到加成（艾玛 +20% 装甲 = 场上艾玛船 +20%）。
@@ -1778,6 +1839,11 @@ static func _apply_synergy(ship: EveShip, apply: Dictionary) -> void:
 	# ★ 2026-10-24：穿甲（武器羁绊「激光炮 6 艘：无视 25% 装甲」）现在**真的生效**。
 	#   落到 `EveShip.armor_pierce`，由模拟器传给 `EveCombatCore.apply_damage()`。
 	ship.armor_pierce = maxf(ship.armor_pierce, float(apply.get("armor_pierce", 0.0)))
+	# ★ 2026-10-26：后勤羁绊（放大已有维修：维修量 / 维修间隔）。
+	#   ⚠️ 只对后勤船生效（`repair_scale` 内部按 `logistics_repair > 0` 拦掉）。
+	if apply.has("repair_pct") or apply.has("repair_cycle_pct"):
+		ship.repair_scale(1.0 + float(apply.get("repair_pct", 0.0)),
+				1.0 - float(apply.get("repair_cycle_pct", 0.0)))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -2049,19 +2115,63 @@ func battle_seconds() -> float:
 	return float(n.get("time", 45.0)) if not n.is_empty() else 45.0
 
 
+## 本节点的编组 id。
+##
+## ★ 2026-10-27：分两条路 ——
+##   · 难度档 `random_comps = true`（普通/困难/炼狱）⇒ 走 `EveEnemyPlans`
+##     的程序化配方，现摇一副并登记，返回 `gen_N{节点号}`。
+##     ⛔ 只有简单档是 `false`（用户要求「简单就现在的不变」），它继续用
+##        节点表里的静态编组 —— 也是 verify_run 里两条既有锚点的载体。
+##   ⚠️ 旧的 `comp_overrides`（按节点号换静态编组的替换表）**已废止**：
+##      普通/困难/炼狱现在共用同一套配方，差别只剩倍率与羁绊。
 func enemy_comp_id() -> String:
 	var n := current_node()
 	if n.is_empty():
 		return ""
-	# ★ 2026-10-24：难度档的「关卡设计」—— 按节点号换编组。
-	# 简单档的 comp_overrides 是空字典（原样走节点表）；其余三档都有各自的表
-	# （普通 = 反小船狼群；困难/炼狱 = 单轴编组 + 反小船狼群，见 EveCampaignTiers）。
-	var ov: Dictionary = difficulty_row().get("comp_overrides", {})
-	if ov.has(node_index):
-		var alt := String(ov[node_index])
-		if EveEnemyComps.has_comp(alt):
-			return alt
+	if bool(difficulty_row().get("random_comps", false)):
+		return _ensure_random_comp()
 	return String(n.get("comp", ""))
+
+
+## 程序化编组的随机种子 = `(本局基准, 节点号)`。
+##
+## ⚠️ **不含难度** —— 这是「困难与普通的舰船随机相同」的结构保证
+##    （用户原话：「困难难度的舰船随机与上面的相同」）。别把 difficulty 混进来。
+## ⚠️ 用 `* 7919` 式的质数错位，与 `battle_seed()` 同一手法，避免
+##    相邻节点号摇出高度相关的编组。
+func enemy_roster_seed() -> int:
+	var src := comp_source_node if comp_source_node > 0 else node_index
+	return absi(_comp_seed_base * 104729 + src * 7919) + 1
+
+
+## 确保当前节点的程序化编组已摇出并登记，返回它的 comp_id。
+##
+## ⚠️ 幂等：同一节点重复调用只会登记一次（`_gen_comps` 挡住），
+##    ⇒ HUD 每次刷新都拿得到同一批船，不会"看一眼就换一批"。
+## 多人对战：把本回合的编组来源指定成另一个节点号。
+## 0 = 不覆盖（用当前节点号）⇒ 单机永远为 0，行为不变。
+##
+## ⚠️ 为什么需要它：多人是「阶段 x 回合」，PvE 回合要按用户配的节点取编组
+##    （见 EveMatchState.PVE_SOURCE_NODE）。直接改 node_index 会连带改动
+##    败亡代价 / 事件 / 阶段标签等一堆东西，所以只覆盖「编组来源」这一件事。
+var comp_source_node := 0
+
+
+func _ensure_random_comp() -> String:
+	var src := comp_source_node if comp_source_node > 0 else node_index
+	var comp_id := "gen_N%d" % src
+	if _gen_comps.has(comp_id):
+		return comp_id
+	var plan := EveEnemyPlans.build(src, enemy_roster_seed())
+	if plan.is_empty():
+		# 配方缺失（比如把某个战斗节点漏配了）⇒ 退回节点表静态编组。
+		# ⚠️ 这里**故意不报错也不留半截状态**：退化成静态编组至少还能打，
+		#    而报错会让整局卡死。数据层已由 `EveEnemyPlans.validate()` 兜底喊话。
+		return String(current_node().get("comp", ""))
+	EveEnemyComps.register_runtime(comp_id, String(plan["name"]),
+			String(plan["formation"]), plan["ships"])
+	_gen_comps[comp_id] = true
+	return comp_id
 
 
 func enemy_comp_name() -> String:
@@ -2194,8 +2304,13 @@ func loss_preview() -> int:
 ##     不传时自动退化为「现查船表 + 按 power_scale 假定」。
 ##   `power_scale` = 本节点敌方倍率，`sources` 缺失时用它倒推。
 ##   两者都缺省时行为与旧版一致（验收里的老调用点不用改）。
+##
+## ★★ 2026-10-27 新增第 5 个**可选**参数 `lost_field`（同样别当位置参数乱插）：
+##    阵亡的我方舰船在 `field` 里的**下标**列表。结算时按它把这批船从编队移除。
+##    理由见函数体内的长注释（不传 = 旧行为不变）。
 func resolve_battle(winner_team: int, destroyed: Array = [],
-		sources: Array = [], power_scale: float = 1.0) -> Dictionary:
+		sources: Array = [], power_scale: float = 1.0,
+		lost_field: Array[int] = []) -> Dictionary:
 	if phase == Phase.ENDING:
 		return {}
 	var won: bool = winner_team == 0
@@ -2239,6 +2354,39 @@ func resolve_battle(winner_team: int, destroyed: Array = [],
 
 	# 残骸：击毁的敌船里最贵的一艘（旧的没下单的残骸在这里作废）
 	_set_wreck_from(destroyed, sources, power_scale)
+
+	# ── 阵亡的我方舰船：**从编队里移除**（2026-10-27 用户口径）──────────
+	#
+	# 用户原话：「我的船被击毁后，又回到了舰船队列，这不对，要回来只能通过
+	# 打捞系统付费打捞回来」。
+	#
+	# ⚠️ 为什么必须在这一处收口：`EveFleetFactory.build_own()` 每个准备阶段都
+	#    从 `field_entries()` **重建**舰队 —— 只要 `field` 里还留着这艘船，
+	#    下一个准备阶段它就会照常出现在战场上、照常吃羁绊，等于"没死过"。
+	#    而 `field` 在本函数之前**从不被这场战斗改动**（只有 deploy / recall /
+	#    sell / merge 动它）⇒ 不在这里删，就没有任何地方会删。
+	#
+	# ⚠️ `lost_field` 是 `field` 的**下标**（调用方用 fleet→field 的 idx_map 算出，
+	#    见 `EveFleetFactory.last_idx_map`）。移除必须**降序**：
+	#    先删前面的会让后面的下标整体前移 ⇒ 删错船（最隐蔽的一类错）。
+	#
+	# ⚠️ 只在 `lost_field` 非空时动手 ⇒ 老的调用点（不传这个参数）行为一字不变。
+	if not lost_field.is_empty() and not field.is_empty():
+		var idxs: Array[int] = lost_field.duplicate()
+		idxs.sort()
+		idxs.reverse()
+		var lost_names := PackedStringArray()
+		for i in idxs:
+			if i < 0 or i >= field.size():
+				continue
+			var e: Dictionary = field[i]
+			var d := EveShipDatabase.by_id(String(e.get("ship_key", "")))
+			lost_names.append("%s★%d" % [String(d.get("name",
+					String(e.get("ship_key", "?")))), int(e.get("star", 1))])
+			field.remove_at(i)
+		if not lost_names.is_empty():
+			log_event.emit("我方 %d 艘被击毁，已移出编队（%s）—— 可在结算页付费打捞"
+					% [lost_names.size(), ", ".join(lost_names)], &"damage")
 
 	phase = Phase.RESOLVE
 	phase_changed.emit(phase)

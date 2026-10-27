@@ -31,7 +31,10 @@ const T := preload("res://scripts/core/eve_text.gd")
 
 const W_COLLAPSED := 128.0
 const H_COLLAPSED := 128.0
-const H_EXPANDED := 320.0
+## ⚠️ 2026-10-26：320 → **376**。羁绊行从 3 条（势力/武器/防御）加到 5 条（+后勤 +电子战），
+##    内容最小高实测 332，加上外框（标题栏 33 + 下内距 8）需要 373 —— 320 会裁掉最后一行。
+##    ⛔ 与其压行高，不如把窗加高：这是「一屏看全舰船档案」的窗，缺一行比多 56px 更难接受。
+const H_EXPANDED := 376.0
 
 var ship: EveShip = null
 
