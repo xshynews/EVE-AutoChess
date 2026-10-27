@@ -130,6 +130,13 @@ func _ready() -> void:
 	print("  全库 %.3f ~ %.3f  总比值 %.2f×   %s" % [
 			allL.min(), allL.max(), allL.max() / maxf(allL.min(), 0.0001),
 			"★ 档序严格 ✓" if ok else "⚠ 有重叠"])
+	# ⚠️ 2026-10-27：本表量的是**最长轴**；自 2026-10-27 起「大小」的判据已改为
+	#   **体积**（用户：「巡洋尤其是暴君比战列都大」⇒ 只钉长度治不了 ——
+	#   敦实的船长度小、体积却大）。所以**长度重叠是预期结果**，不代表坏了。
+	#   档序是否真的单调，请看 `tools/probe_ship_bulk.tscn` 的 ④ 段（体积口径）。
+	print("  注：本表口径 = 最长轴。2026-10-27 起档序判据是**体积** ——")
+	print("      长度重叠属预期（敦实船短而厚、细长船长而薄），"
+			+ "请看 tools/probe_ship_bulk.tscn 的 ④ 段")
 
 	if DisplayServer.get_name() == "headless":
 		print("")

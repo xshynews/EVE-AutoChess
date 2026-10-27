@@ -251,6 +251,7 @@ func _unit_tests() -> void:
 	# ── 阶段 D ──
 	_t_ship_yaw()        # D1 舰船朝向修正表（用户逐艘目视标定的落盘）
 	_t_render_interp()   # D2 ★★ 渲染插值（30Hz 仿真 ⇒ 渲染帧不再"静止后跳变"，2026-10-27）
+	_t_formation_focus() # D3 ★★ 阵型 + 集火（旗舰=吨位最高 · 全队同目标 · 敌我双方，2026-10-27）
 	_t_logistics()       # E1 ★ 后勤舰（攻击压制 + 真修友军 + 修层按防御类型，2026-10-01）
 
 
@@ -1701,6 +1702,245 @@ func _t_render_interp() -> void:
 
 	print("[渲染插值] alpha∈[0,1] ✓ · 结束后=1.0 ✓ · 签名+透传 ✓ · "
 			+ "alpha=1 保持旧行为 ✓ · alpha=0.5 取中点 ✓")
+
+
+## ══════════════════════════════════════════════════════════════════
+##  ★★ E2 阵型 + 集火（2026-10-27 用户定案）
+## ══════════════════════════════════════════════════════════════════
+##
+## 用户原话：「阵型环绕，我觉得得学习一下EVE，需要选出一艘船来领头，
+##           让我方其他船都跟随它一起动，然后一起集火一艘船」
+##
+## 三条定案：① 旗舰 = 吨位最高的活船（死了自动改选）
+##           ② 敌我双方都生效
+##           ③ 全队集火同一艘船
+##
+## ── 每条断言都在防什么 ──────────────────────────────────────────
+##   · 旗舰选错（选了血最多 / 最快的）⇒ 最快的护卫当旗舰 ⇒ 战列掉队、
+##     "跟随"变成"追不上"；
+##   · 集火没生效（还按各自评分挑）⇒ 5 艘船打 5 个目标，谁都打不死 ⇒
+##     战斗不收敛（这是自走棋红线，也是 45 轮"超时判负"的老病根）；
+##   · 旗舰死了不改选 ⇒ 全队永远跟着一艘尸体，静止挨打；
+##   · 只给我方开 ⇒ 敌方各自为战，难度井喷 / 玩家看不懂"为什么敌人都打我同一艘"。
+func _t_formation_focus() -> void:
+	# ── ① 旗舰 = 吨位最高的活船（用真实船表：护卫/驱逐/巡洋/战列各一）──
+	# ⚠️ 构造顺序**故意**把战列放中间：若实现是"取第一艘"或"取最后一艘"，
+	#    这条会立刻飘红（放在末尾/开头的写法都能被逮到）。
+	var own: Array[EveShip] = [
+		EveShipDatabase.instantiate_by_id("punisher", 0, 8801),    # 护卫 1 费
+		EveShipDatabase.instantiate_by_id("cormorant", 0, 8802),   # 驱逐 2 费
+		EveShipDatabase.instantiate_by_id("abaddon", 0, 8803),     # 战列 5 费 ← 应选
+		EveShipDatabase.instantiate_by_id("omen", 0, 8804),        # 巡洋 3 费
+	]
+	var foe: Array[EveShip] = [
+		EveShipDatabase.instantiate_by_id("slasher", 1, 8901),
+		EveShipDatabase.instantiate_by_id("typhoon", 1, 8902),     # 战列 ← 应选
+	]
+	var sim := EveBattleSimulator.new()
+	sim.setup(own, foe)
+	sim._refresh_command()
+	var flag0: EveShip = sim.flagship_of(0)
+	var flag1: EveShip = sim.flagship_of(1)
+	_expect(flag0 != null and flag0.ship_key == StringName("abaddon"),
+			"★★ 旗舰选举：吨位最高（我方应为战列 abaddon，实际 %s）"
+					% ("null" if flag0 == null else String(flag0.ship_key)))
+	_expect(flag1 != null and flag1.ship_key == StringName("typhoon"),
+			"★★ 旗舰选举：**敌方同样生效**（敌方应为战列 typhoon，实际 %s）"
+					% ("null" if flag1 == null else String(flag1.ship_key)))
+
+	# ── ② 全队集火：四艘我方船打**同一个**目标 ──
+	sim._refresh_targets()
+	var ids := {}
+	for s in own:
+		ids[s.target_id] = true
+	_expect(ids.size() == 1,
+			"★★ 全队集火：我方 4 艘船锁定**同一个** target_id（实际 %d 个不同目标）"
+					% ids.size())
+	# 敌方 2 艘也应是同一个（②"敌我双方都生效"）
+	var foe_ids := {}
+	for s in foe:
+		foe_ids[s.target_id] = true
+	_expect(foe_ids.size() == 1,
+			"★★ 全队集火：敌方同样只锁一个目标（实际 %d 个）" % foe_ids.size())
+
+	# ── ③ 集火目标由旗舰点名 ⇒ 必然是「舰队的」而不是各自的 ──
+	# 断言点名结果与旗舰自己的最优评分一致 —— 换掉 `_name_focus` 就会红。
+	var focus0: EveShip = sim.focus_target_of(0)
+	_expect(focus0 != null and focus0.team == 1,
+			"★★ 集火点名：我方点名的是**敌人**（不能点到自己人）")
+	var all_same := true
+	if focus0 != null:
+		for s in own:
+			if s.target_id != focus0.id:
+				all_same = false
+	_expect(all_same, "★★ 集火点名：全队 target 都等于 `focus_target_of()` 的返回值")
+
+	# ── ④ 旗舰阵亡 ⇒ 当场改选（不能跟着尸体走）──
+	if flag0 != null:
+		flag0.alive = false
+	sim._refresh_command()
+	var flag0b: EveShip = sim.flagship_of(0)
+	_expect(flag0b != null and flag0b.alive and flag0b != flag0,
+			"★★ 旗舰改选：旗舰阵亡后换人（且新旗舰必须活着，实际 %s）"
+					% ("null" if flag0b == null else String(flag0b.ship_key)))
+	# 新旗舰应是剩下的最高吨位 = 巡洋 omen
+	_expect(flag0b != null and flag0b.ship_key == StringName("omen"),
+			"★★ 旗舰改选：补位的是**剩余里吨位最高**的（应为巡洋 omen，实际 %s）"
+					% ("null" if flag0b == null else String(flag0b.ship_key)))
+
+	# ── ⑤ 阵型槽位：跟班全在旗舰**身后**且互不重叠 ──
+	# 基准朝向 = +Z ⇒ 后方 = −Z，横向 = ±X
+	var slot_a := EveBattleSimulator.formation_slot(flag0b, Vector3(0, 0, 1), 0)
+	var slot_b := EveBattleSimulator.formation_slot(flag0b, Vector3(0, 0, 1), 1)
+	var fx := flag0b.body.position
+	_expect(slot_a.z < fx.z - 1.0,
+			"★ 阵型槽位：跟班在旗舰**身后**（槽位 z 应小于旗舰 z，实际 %.1f vs %.1f）"
+					% [slot_a.z, fx.z])
+	_expect(absf(slot_a.x - slot_b.x) >= EveBattleSimulator.FORMATION_COL_STEP - 1.0,
+			"★ 阵型槽位：同一排相邻槽位横向间距 = FORMATION_COL_STEP（实际 %.0f m）"
+					% absf(slot_a.x - slot_b.x))
+	# 朝向旋转 90°：基准 +Z → +X ⇒ **整个偏移向量**跟着转 90°（含横向轴）。
+	# ⚠️ 断言**完整偏移**而不是只断言"后方落在 −X"：横向轴也必须跟着转 ——
+	#    只判后方会把「横向没跟着转」漏掉（那种船队会变成"排成一列纵队"）。
+	var off_a := slot_a - fx
+	var slot_r := EveBattleSimulator.formation_slot(flag0b, Vector3(1, 0, 0), 0)
+	var off_r := slot_r - fx
+	# +90° 绕 Y：x' = z, z' = −x
+	var want_r := Vector3(off_a.z, 0.0, -off_a.x)
+	_expect(off_r.distance_to(want_r) < 1.0,
+			"★★ 阵型随航向旋转 90°：偏移向量必须整体旋转（期望 %s，实际 %s）"
+					% [str(want_r.snappedf(0.1)), str(off_r.snappedf(0.1))])
+	# 退化保护：基准为零向量（集火目标已死）时不能出 NaN
+	var slot_z := EveBattleSimulator.formation_slot(flag0b, Vector3.ZERO, 0)
+	_expect(not (is_nan(slot_z.x) or is_nan(slot_z.z)),
+			"★ 阵型退化保护：基准为零向量时不许产生 NaN（实际 %s）" % str(slot_z))
+
+	# ── ⑥ 集火迟滞：全队换目标 = 全员重新锁定 ⇒ 裕度必须比单舰宽 ──
+	# ⚠️ 单舰裕度 `SWITCH_MARGIN` 是 `_refresh_targets` 内的**局部常量**（0.015），
+	#    类外读不到 ⇒ 这里把期望值**写死**（红线 40：期望值独立于被测方）。
+	const SINGLE_SHIP_MARGIN := 0.015
+	_expect(EveBattleSimulator.FOCUS_SWITCH_MARGIN > SINGLE_SHIP_MARGIN * 5.0,
+			"★ 集火迟滞（%.2f）必须显著宽于单舰（%.3f）—— 全队一起换目标 = 全员重新锁定"
+					% [EveBattleSimulator.FOCUS_SWITCH_MARGIN, SINGLE_SHIP_MARGIN])
+	# `_refresh_command` 必须**先存后清** —— 直接 clear 会让迟滞记忆消失（每轮重选）
+	# ⚠️ 用 `load().source_code` 而不是 `FileAccess.get_file_as_string`：
+	#    后者在**导出包**里读不到源码（静默拿到空串 ⇒ 断言恒假）。
+	var cmd_scr: GDScript = load("res://scripts/core/eve_battle_simulator.gd")
+	var cmd_txt := "" if cmd_scr == null else cmd_scr.source_code
+	_expect(cmd_txt.contains("var prev: Dictionary = _focus_target.duplicate()"),
+			"★★ 集火迟滞：`_refresh_command` 必须先 `duplicate()` 存下上轮点名再清空"
+			+ "（直接 clear ⇒ `cur == null` ⇒ 每轮重选，迟滞形同虚设）")
+
+	# ── ⑦ ★★ 收敛性：阵型**不许**把战斗拖长（A/B 教训固化）────────────
+	#
+	#  这是本组最贵的一条，也是**唯一能抓住那类回归**的一条。
+	#  它防的是一种非常自然、但致命的写法：拿「**本舰**够不着主目标」当
+	#  走阵型的判据 —— 跟班于是被派往旗舰**身后** 6~18 km 的槽位，而旗舰
+	#  已经停在交战距离上 ⇒ **槽位比旗舰更远离敌人** ⇒ 短射程跟班永远
+	#  进不了射程，全队排着队不开火。
+	#  实测（`probe_formation`，同一局同一随机种子）：
+	#      镜像 5v5 关阵型 39.1s → 含阵型 **540.0s**（14 倍）
+	#      混编 5v5 43.9s → 89.1s
+	#
+	#  ★ 最终语义（用户 2026-10-27 定案「强制保持阵型，不许各自接战」）：
+	#    阵型**永远不解除**，收敛改由**旗舰把整队推到覆盖站位**保证 ——
+	#    只要还有跟班够不着，旗舰就会继续推（`_flagship_advance`）。
+	#    所以这条断言的意义变成：**「强制保持阵型」这个选择本身不许**
+	#    把战斗拖到不可接受（必须仍在 180s 兜底内收敛）。
+	#  ⚠️ 阈值取 140s：实测 79.5s（强制阵型比"接敌即解散"的 63.5s 慢，
+	#    因为整队站桩输出、不再各自走位），留 ~1.75 倍余量；
+	#    而回归态是 540s，差近 4 倍 —— 不会误报也不会漏报。
+	var m_own: Array[EveShip] = []
+	var m_foe: Array[EveShip] = []
+	for i in 5:
+		m_own.append(EveShipDatabase.instantiate_by_id("punisher", 0, 9500 + i))
+		m_foe.append(EveShipDatabase.instantiate_by_id("punisher", 1, 9600 + i))
+	var m_sim := EveBattleSimulator.new()
+	m_sim.set_seed(9102)
+	m_sim.setup(m_own, m_foe)
+	# 与 `probe_formation` 同口径的两排布阵（x 间距 8 km，z 从 ±14 km 起）
+	_place_two_rows(m_own, -1)
+	_place_two_rows(m_foe, 1)
+	var m_guard := 0
+	while not m_sim.finished and m_guard < EveBattleSimulator.MAX_TICKS * 4:
+		m_sim.step(EveBattleSimulator.FIXED_STEP)
+		m_guard += 1
+	_expect(m_sim.finished and m_sim.elapsed < 140.0,
+			"★★ 收敛性：镜像 5v5 必须在 140s 内分出胜负（强制保持阵型 + 集火不许把战斗拖长 —— "
+			+ "实测 %.1fs%s；回归态是 540s）" % [m_sim.elapsed,
+					"" if m_sim.finished else "，且仍未收敛"])
+
+	# ── ⑧ ★★ 指挥层盘面语义：`is_flagship` / `is_focused` 要与模拟器一致 ──
+	#
+	#  视觉层（`EveShipVisual._update_command_badges`）只读这两个字段，
+	#  ⛔ 它不自己判"谁吨位最高"（那必然与模拟器漂移，红线 40）。
+	#  ⇒ 字段写歪 = 盘面上标错人，而战斗逻辑完全正常 —— 只能靠这里抓。
+	#
+	#  ⚠️ 这是**重刷**语义：旧旗舰卸任后必须被摘掉，否则盘面上有两个指挥环。
+	#     断言"全队恰有一艘 is_flagship"正是这个。
+	var fs := EveBattleSimulator.new()
+	var fs_own: Array[EveShip] = [
+		EveShipDatabase.instantiate_by_id("punisher", 0, 9701),   # 巡洋
+		EveShipDatabase.instantiate_by_id("abaddon", 0, 9702),    # 战列 ← 旗舰
+		EveShipDatabase.instantiate_by_id("slasher", 0, 9703),    # 护卫
+	]
+	var fs_foe: Array[EveShip] = [
+		EveShipDatabase.instantiate_by_id("typhoon", 1, 9801),    # 战列 ← 敌方旗舰
+		EveShipDatabase.instantiate_by_id("slasher", 1, 9802),
+	]
+	fs.setup(fs_own, fs_foe)
+	fs._refresh_targets()
+	var n_flag := 0
+	var n_focus := 0
+	for s in fs_own:
+		n_flag += 1 if s.is_flagship else 0
+		n_focus += 1 if s.is_focused else 0
+	for s in fs_foe:
+		n_flag += 1 if s.is_flagship else 0
+		n_focus += 1 if s.is_focused else 0
+	_expect(n_flag == 2, "★★ 盘面标记：全场恰有 2 艘 `is_flagship`（每队一艘，实际 %d）" % n_flag)
+	_expect(fs_own[1].is_flagship and fs_foe[0].is_flagship,
+			"★★ 盘面标记：指挥舰 = 各队吨位最高（应为 abaddon / typhoon）")
+	_expect(n_focus == 2, "★★ 盘面标记：全场恰有 2 艘 `is_focused`（各队点名的敌方，实际 %d）"
+			% n_focus)
+	# ⚠️ 注意 `is_focused` 的语义：**被敌方全队集火** ——
+	#    我方船完全可能（也应该）挂着它（敌人也在集火我们）。
+	#    ⛔ 第一版这里写成"我方船不许 is_focused"，是**断言写错了**：
+	#       它把「被敌人集火」误当成「被自己人集火」。
+	#    正确的判据是：我方身上那些 `is_focused` 必须恰好等于**敌方**的点名。
+	var foe_focus: EveShip = fs.focus_target_of(1)
+	for s in fs_own:
+		_expect(s.is_focused == (foe_focus != null and foe_focus == s),
+				"★★ 盘面标记：我方 `is_focused` 必须恰好是**敌方**的点名对象（%s）"
+						% s.ship_name)
+	# 旧旗舰卸任 ⇒ 标记必须摘掉（防"两个指挥环"）
+	fs_own[1].alive = false
+	fs._refresh_command()
+	_expect(not fs_own[1].is_flagship,
+			"★★ 盘面标记：旧旗舰阵亡后必须**摘掉** `is_flagship`（否则盘面两个指挥环）")
+	var new_flag: EveShip = fs.flagship_of(0)
+	_expect(new_flag != null and new_flag.is_flagship,
+			"★★ 盘面标记：新旗舰必须**戴上** `is_flagship`（补位 %s）"
+					% ("null" if new_flag == null else new_flag.ship_name))
+
+	print("[阵型集火] 旗舰=吨位最高(敌我) ✓ · 全队同目标 ✓ · 旗舰阵亡改选 ✓ · "
+			+ "槽位在旗舰身后且随航向旋转 ✓ · 集火迟滞 ✓ · 收敛性 ✓ · 盘面标记 ✓")
+
+
+## 两排布阵（与 `probe_formation._place` / arena 的默认布阵同口径）。
+## ⚠️ 独立写一遍、不复用主代码 —— 验收要能发现"布阵口径被改坏"（红线 40）。
+func _place_two_rows(fleet: Array[EveShip], side: int) -> void:
+	var col := 0
+	var row := 0
+	for s in fleet:
+		s.body.position = Vector3((float(col) - 1.5) * 8_000.0, 0.0,
+				float(side) * (14_000.0 + float(row) * 6_000.0))
+		s.body.previous_position = s.body.position
+		s.body.aim_dir = Vector3(0.0, 0.0, -float(side))
+		col += 1
+		if col >= 4:
+			col = 0
+			row += 1
 
 
 ## ══════════════════════════════════════════════════════════════════
@@ -4753,9 +4993,11 @@ func _t_ship_yaw() -> void:
 			and EveShipVisual.tier_level(EveShip.Class.BATTLE_CRUISER) == 8
 			and EveShipVisual.tier_level(EveShip.Class.BATTLESHIP) == 10,
 			"体型 10 级刻度：护卫1 / 驱逐3 / 巡洋6 / 战巡8 / 战列10")
-	_expect(is_equal_approx(EveShipVisual.tier_base_length(EveShip.Class.FRIGATE), 2.184)
-			and is_equal_approx(EveShipVisual.tier_base_length(EveShip.Class.BATTLESHIP), 4.212),
-			"体型锚点：等级1=2.184（因卡萨斯）/ 等级10=4.212（暴君）")
+	# ★ 2026-10-27：锚点语义从「屏幕长度」改为「目标体积等效尺度 E」
+	#   （用户：「巡洋，尤其是暴君等船那是真的大，比战列都大」⇒ 只钉长度治不了）
+	_expect(is_equal_approx(EveShipVisual.tier_base_length(EveShip.Class.FRIGATE), 1.25)
+			and is_equal_approx(EveShipVisual.tier_base_length(EveShip.Class.BATTLESHIP), 3.00),
+			"体型锚点：等级1=1.25 / 等级10=3.00（体积等效尺度 E）")
 	var cls_ladder := [EveShip.Class.FRIGATE, EveShip.Class.DESTROYER, EveShip.Class.CRUISER,
 			EveShip.Class.BATTLE_CRUISER, EveShip.Class.BATTLESHIP]
 	var s_spread: float = EveShipVisual.CLASS_SCALE_SPREAD

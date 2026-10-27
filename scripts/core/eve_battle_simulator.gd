@@ -179,6 +179,10 @@ func setup(own_ships: Array[EveShip], enemy_ships: Array[EveShip]) -> void:
 	_accum = 0.0
 	_next_target_refresh = 0.0
 	_target_switches = 0
+	# ★ 2026-10-27：阵型/集火状态也要重置 —— 复用同一个模拟器重开一局时，
+	#   上一场的旗舰与集火目标会**静默地留在身上**（新船 id 恰好撞上就串味）。
+	_flagship.clear()
+	_focus_target.clear()
 	# 时限回到默认（180s），由调用方决定是否用 set_time_limit() 收窄。
 	# ⚠️ 必须在这里重置而不是依赖新实例 —— 复用同一个模拟器重开一局时，
 	#    上一场的时限会静默地留在身上。
@@ -339,10 +343,73 @@ func _advance_one_tick(dt: float) -> void:
 ## 加了迟滞后应显著下降（目标稳定在几十~几百）。
 var _target_switches := 0
 
+## ══════════════════════════════════════════════════════════════════
+##  阵型与集火（2026-10-27 用户定案）
+## ══════════════════════════════════════════════════════════════════
+##
+## 用户原话：「阵型环绕，我觉得得学习一下EVE，需要选出一艘船来领头，
+##           让我方其他船都跟随它一起动，然后一起集火一艘船」
+##
+## 三条定案（用户选定）：
+##   ① 旗舰 = **吨位最高且活着的那艘**（死了当场改选，不设继任仪式）
+##   ② **敌我双方都生效**（不是只给我方的加成）
+##   ③ 全队集火**同一艘船**
+##
+## ── 为什么旗舰要选「吨位最高」而不是「血最多 / 随便一艘」────────────
+##   · 吨位最高的船是全场**最慢**的 ⇒ 其余船都比它快 ⇒ **一定跟得上**。
+##     反过来（旗舰选最快的护卫）会出现「旗舰跑前面、战列掉队」。
+##   · 也是血最厚的 ⇒ 不会频繁猝死、编队不会反复改选。
+##
+## ── 为什么集火目标由**旗舰点名**、而不是全队投票 ─────────────────
+##   · 投票永远投不出稳定多数（每艘船的最佳目标不同），会在两个候选
+##     之间来回倒 —— 那是 45/46 轮刚修掉的「舰艏乱摆」的同一种病。
+##   · 旗舰点名 = EVE 里的 FC（舰队指挥）叫火，玩家一眼能看懂。
+##   ⚠️ 代价（有意接受）：旗舰的射程决定了全队的接敌距离。射程更短的船
+##      够不着时会**脱队自己去打**（见 `_follow_formation`）—— 这是必须的，
+##      否则短射程船会被队形钉在射程外，一枪不开、战斗也不收敛。
+##
+## ⚠️ 槽位间距沿用 `EveBattleArena.default_formation()` 的 8 km / 6 km ——
+##    开局阵列与运动阵列**同一套尺度**，否则一开打队形会「缩一下」。
+##    8 km 远大于两船半径之和（最大 220+220 m）⇒ 不会互相挤。
+const FORMATION_COL_STEP := 8_000.0   ## 横向槽距（米）
+const FORMATION_ROW_STEP := 6_000.0   ## 纵向槽距（米）
+const FORMATION_COLS := 3             ## 每排几列（居中，与开局阵列同宽）
+
+## 全队集火目标的**换目标迟滞**（比例），比单舰的 1.5% 宽得多。
+##
+## 为什么必须更宽：全队一起换目标 = **全员重新锁定**（锁定 3.5 秒里一枪不放）。
+## 单舰抖一下只是丢一艘船的节奏，全队抖一下是整齐地掉一整轮火力。
+const FOCUS_SWITCH_MARGIN := 0.15
+
+## team → EveShip：本队旗舰（吨位最高的活船）。每刷新周期重算，死了自动改选。
+## 用 Dictionary 而不是定长数组：team 现在只有 0/1，但别把队数焊死。
+var _flagship: Dictionary = {}
+## team → EveShip：本队集火目标（旗舰「点名」的结果）。
+## 缺键 / 值为 null = 本队没点名 ⇒ 退回「各自按 `_score_target` 挑」的老逻辑。
+var _focus_target: Dictionary = {}
+
+## 本队旗舰（供 HUD / 探针 / 验收读取）。无 ⇒ null。
+func flagship_of(team: int) -> EveShip:
+	return _flagship.get(team)
+
+## 本队集火目标（供 HUD / 探针 / 验收读取）。无 ⇒ null。
+func focus_target_of(team: int) -> EveShip:
+	return _focus_target.get(team)
+
+
 func _refresh_targets() -> void:
+	# ★ 2026-10-27：先重算「谁领头 + 集火谁」，再据此指派目标。
+	_refresh_command()
 	for ship in ships:
 		if not ship.alive:
 			continue
+		# ★ 2026-10-27：**全队集火** —— 本队有集火目标时一律打它。
+		var focus: EveShip = _focus_target.get(ship.team)
+		if focus != null and focus.alive:
+			if ship.target_id != focus.id:
+				_set_target(ship, focus)
+			continue
+		# 兜底：本队没集火目标（旗舰或敌人已打光）⇒ 回到各自评分。
 		var best: EveShip = null
 		var best_score := -INF
 		var cur_score := -INF
@@ -393,11 +460,7 @@ func _refresh_targets() -> void:
 		if best != null and best.id != ship.target_id \
 				and (must_switch or best.id == -1 \
 				or best_score > threshold):
-			ship.target_id = best.id
-			ship.locked = false
-			ship.lock_elapsed = 0.0
-			_target_switches += 1
-			_log(&"system", "%s 锁定目标：%s" % [ship.ship_name, best.ship_name])
+			_set_target(ship, best)
 
 	# ★ 45 轮：**每 tick 刷新「舰艏该朝哪」** —— 视觉层只读 `body.aim_dir`。
 	#
@@ -455,6 +518,168 @@ func _in_reach(ship: EveShip, other: EveShip) -> bool:
 		return false
 	var dist := ship.body.position.distance_to(other.body.position)
 	return dist <= ship.optimal_range + ship.falloff
+
+
+# ------------------------------------------------------------ 指挥层（旗舰 / 集火）
+
+## 唯一换目标的落点 —— 锁状态必须**整组**重置，别在调用点各写一份。
+##
+## ⚠️ `locked = false` + `lock_elapsed = 0` 是必须的：换了目标还留着 `locked`
+##    会让船对着新目标**立刻开火**（旧锁定被"继承"过去），
+##    等于集火换目标零成本 —— 那会让集火强到破坏平衡。
+## ⚠️ 只在**真的换了**的时候计数与记日志（`_target_switches` 是防抖指标，
+##    重复设同一个目标是常态，不能算进去，否则那个数字立刻失去意义）。
+func _set_target(ship: EveShip, tgt: EveShip) -> void:
+	if tgt == null or ship.target_id == tgt.id:
+		return
+	ship.target_id = tgt.id
+	ship.locked = false
+	ship.lock_elapsed = 0.0
+	_target_switches += 1
+	_log(&"system", "%s 锁定目标：%s" % [ship.ship_name, tgt.ship_name])
+
+
+## 重算「谁领头 + 集火谁」。每 `TARGET_REFRESH_INTERVAL` 跑一次（与索敌同频）。
+##
+## ⚠️ 必须**先算完两队的指挥、再统一指派目标** —— 否则先处理的那一队
+##    会按「对方还没点名」的状态挑目标，两队结果不对称（我方先跑就占便宜）。
+##    这个函数只写 `_flagship` / `_focus_target`，⛔ 不碰任何 `target_id`。
+func _refresh_command() -> void:
+	# ⚠️ 先把上一轮的集火目标存下来再清空 —— 迟滞的**记忆**就在它身上。
+	#    直接 `clear()` 会让 `_name_focus` 每次都看到 `cur == null`
+	#    ⇒ 每轮重新选、迟滞完全失效（全队跟着抖动换目标）。
+	var prev: Dictionary = _focus_target.duplicate()
+	_flagship.clear()
+	_focus_target.clear()
+	for team in _team_ids():
+		_flagship[team] = _elect_flagship(team)
+	for team in _team_ids():
+		var flag: EveShip = _flagship.get(team)
+		if flag == null:
+			continue
+		_focus_target[team] = _name_focus(flag, team, prev.get(team))
+	# ★ 2026-10-27：把指挥层结果**镜像到盘面语义字段**（视觉层只读 `EveShip`）。
+	#   ⚠️ 必须整场重刷一遍（而不是只给新旗舰/新目标置位）—— 否则旧旗舰
+	#      卸任后 `is_flagship` 会永久留在身上，盘面上就有两个"指挥舰"。
+	for s in ships:
+		s.is_flagship = false
+		s.is_focused = false
+	for team in _team_ids():
+		var flag2: EveShip = _flagship.get(team)
+		if flag2 != null:
+			flag2.is_flagship = true
+		var focus2: EveShip = _focus_target.get(team)
+		if focus2 != null:
+			focus2.is_focused = true
+
+
+## 本场出现过的队伍 id（排序后返回，保证指挥层的处理顺序**确定**）。
+func _team_ids() -> Array:
+	var seen := {}
+	for s in ships:
+		seen[s.team] = true
+	var out := seen.keys()
+	out.sort()
+	return out
+
+
+## 旗舰选举：**吨位最高**的活船；吨位并列则取 id 最小（结果确定、可复现）。
+##
+## ⚠️ 用 `ship_class`（吨位档）而不是 `cost`：两者现在同源，但语义上
+##    「谁大谁领头」看的是舰级，cost 是经济字段（将来可能被羁绊改成 0 费）。
+func _elect_flagship(team: int) -> EveShip:
+	var best: EveShip = null
+	for s in ships:
+		if not s.alive or s.team != team:
+			continue
+		if best == null:
+			best = s
+			continue
+		if s.ship_class > best.ship_class:
+			best = s
+		elif s.ship_class == best.ship_class and s.id < best.id:
+			best = s
+	return best
+
+
+## 旗舰「点名」集火目标：按**旗舰自己的**评分挑，全场只有它一个人有权决定。
+##
+## ★ 迟滞比单舰宽得多（`FOCUS_SWITCH_MARGIN`）—— 全队换目标 = 全员重新锁定。
+##   做法与 `_refresh_targets` 的单舰迟滞同构：
+##     ① 当前点名死了 / 不存在 ⇒ 立刻重选；
+##     ② 新候选必须显著优于当前点名（超出裕度）才允许换。
+##   ⚠️ 这里**不用** `_is_valid_target` 的额外过滤 —— 集火目标只需要「活着 + 敌对」，
+##      反正够不着的船会脱队自己去打（见 `_advance_with_formation`）。
+func _name_focus(flag: EveShip, team: int, cur: EveShip) -> EveShip:
+	# 上一轮的点名还有效吗？（死了 / 不在场上 ⇒ 重选）
+	if cur != null and (not cur.alive or not _ship_by_id.has(cur.id)):
+		cur = null
+	var best: EveShip = null
+	var best_score := -INF
+	var cur_score := -INF
+	for other in ships:
+		if not other.alive or other.team == team:
+			continue
+		if not _is_valid_target(other):
+			continue
+		var score := _score_target(flag, other,
+				flag.body.position.distance_to(other.body.position))
+		if other == cur:
+			cur_score = score
+		if score > best_score:
+			best_score = score
+			best = other
+	if best == null:
+		return cur
+	if cur == null:
+		return best
+	# 迟滞：新候选要显著更优才换（负分时按 |cur| 缩放，与单舰口径一致）
+	var threshold := cur_score + absf(cur_score) * FOCUS_SWITCH_MARGIN + 1.0
+	if best != cur and best_score > threshold:
+		_log(&"system", "旗舰 %s 集火点名：%s" % [flag.ship_name, best.ship_name])
+		return best
+	return cur
+
+
+## 跟随用的**槽位世界坐标**（米）—— 以旗舰位置与航向为基准。
+##
+## ── 阵型形状 ─────────────────────────────────────────────────────
+##   槽位排成「旗舰**身后**的网格」：
+##        F  F  F          ← 旗舰（前排正中）
+##        o  o  o          ← 第 1 排跟班
+##        o  o  o          ← 第 2 排跟班
+##   所以跟班全部在旗舰**后方** —— 这既是「跟随」的字面含义，
+##   也保证旗舰永远第一个接敌（它是血最厚的，正该如此）。
+##
+## ── 朝向基准 ─────────────────────────────────────────────────────
+##   `basis_z` = 全队要去的方向（本队集火目标方向）。**不是**旗舰的速度方向 ——
+##   旗舰开局静止、速度为零，用速度当基准会退化（`normalized()` 变 NaN）。
+##   ⚠️ 用集火目标方向还有一个好处：**全队朝同一个方向摆**，
+##      不会出现「各自朝各自的目标、队形散成放射状」。
+##
+## ⚠️ 返回裸坐标（米），⛔ 不保证不重叠 —— 重叠由间距常量避免：
+##    `FORMATION_COL_STEP`(8 km) 远大于两船半径和（最大 440 m）。
+static func formation_slot(flag: EveShip, basis_z: Vector3, index: int,
+		cols: int = FORMATION_COLS) -> Vector3:
+	var fwd := basis_z
+	fwd.y = 0.0
+	if fwd.length_squared() <= 1e-12:
+		# 退化兜底：朝敌方半场（我方 base 在 -z 侧，故 +z 是"往前"）
+		fwd = Vector3(0.0, 0.0, 1.0 if flag.team == 0 else -1.0)
+	fwd = fwd.normalized()
+	# 右向量 = forward × UP（右手系，Y 向上）
+	var right := fwd.cross(Vector3.UP)
+	if right.length_squared() <= 1e-12:
+		right = Vector3.RIGHT
+	right = right.normalized()
+
+	# 槽位序号 → (col, row)：index 0 = 第一排正中，向两侧铺开
+	var col := index % cols
+	var row := index / cols
+	var half := (cols - 1) * 0.5
+	var off_side := (float(col) - half) * FORMATION_COL_STEP
+	var off_back := float(row + 1) * FORMATION_ROW_STEP
+	return flag.body.position - fwd * off_back + right * off_side
 
 
 ## 目标评分 —— 决定「打谁」。
@@ -665,30 +890,268 @@ func _effective_signature(target: EveShip) -> float:
 func _apply_motion(ship: EveShip, dt: float) -> void:
 	var target: EveShip = _ship_by_id.get(ship.target_id)
 	if target == null or not target.alive:
+		# ★ 2026-10-27：没目标时**跟着旗舰走**（而不是原地停）。
+		#   理由：本队集火目标死光的那一瞬，全队会一起僵在原地等下一次点名。
+		#   点名周期只有 5 tick（≈0.17s，很短），但**运动是每 tick 都算的** ——
+		#   不接管就会真真切切地刹一下车。另外脱队太远的船也需要时间归队。
+		if _advance_with_formation(ship, dt):
+			return
 		# 无目标时缓慢停下
 		ship.body.acceleration = -ship.body.velocity * 0.5
 		return
 
-	# --- 交战距离：强制收敛到「双方都够得着」的区间 ---
-	# 传对手射程进去，避免出现「我站在你打不到的地方，你也不追」的僵局
-	var want_range := ship.engagement_range(target.optimal_range)
+	# ★★ 2026-10-27（用户定案）：**强制保持阵型，不许各自接战**。
+	#   ⇒ 除旗舰外全员一律飞自己的槽位；旗舰由 `_flagship_advance` 负责
+	#     把**整队**推到一个「人人够得着」的站位上。
+	#   ⇒ 下面那段 spiral/command（各自扑向目标）**只有无旗舰时才会走到**：
+	#     旗舰阵亡后到下一次指挥刷新的那 5 tick，或本队只剩一艘船。
+	if _advance_with_formation(ship, dt, target):
+		return
 
-	# --- 硬性接近：超出自己的有效射程就用「螺旋接近」顶上去 ---
-	# 自走棋的硬性要求：战斗必须收敛，不能变成马拉松。
-	# 用 spiral 而非直线，是为了在接敌阶段就建立角速度，
-	# 否则追踪机制整段失效（详见 EveDestinyMotion.spiral_thrust 的说明）。
+	# --- 兜底：本队没有旗舰（全队就剩它一艘 / 指挥层还没建起来）---
+	# 这时"阵型"无从谈起，回到改版前的收敛路径（各自扑向主目标）。
+	var want_range := ship.engagement_range(target.optimal_range)
 	var distance := ship.body.position.distance_to(target.body.position)
 	if distance > ship.optimal_range + ship.falloff:
 		var accel_close := EveDestinyMotion.spiral_thrust(
 			ship.body, target.body, want_range, elapsed, dt)
 		ship.body.acceleration = accel_close
 		return
-
 	var accel := EveDestinyMotion.command_to_acceleration(
 		ship.body, target.body, ship.stance, want_range,
 		dt, elapsed
 	)
 	ship.body.acceleration = accel
+
+
+## 阵型跟随：把 `ship` 开向它的位置。返回 `true` = 本 tick 的推力已定稿。
+##
+## ══════════════════════════════════════════════════════════════════
+##  ★★ 强制保持阵型（用户 2026-10-27 定案：「不许各自接战」）
+## ══════════════════════════════════════════════════════════════════
+##
+## ── 语义 ─────────────────────────────────────────────────────────
+##   跟班：**永远**飞自己的槽位（旗舰身后 6~18 km 的网格位），无论打没打到人。
+##   旗舰：由 `_flagship_advance` 负责，把**整队**推到「人人够得着」的站位上，
+##         到位后锚定，全队从各自槽位开火 = EVE 的「战列线 / 锚定舰队」。
+##
+## ── ⚠️⚠️ 为什么必须让旗舰推到位、而不是让跟班自己扑上去 ────────────
+##   「保持阵型」与「人人能开火」在几何上是对立的：槽位在旗舰**身后**
+##   6~18 km ⇒ 如果旗舰只顾自己停在交战距离上，**短射程的跟班永远
+##   够不着**（它的槽位比旗舰更远离敌人）。
+##
+##   这不是假设，是实测：第一版就是「逐舰判本舰够不着就走阵型」，结果
+##   把战斗从 39.1s 拖到 **540.0s（14 倍）**—— 跟班排着队不开火。
+##   第二版改成「全队接敌就解散阵型」（39s→63s，可接受），但**队形只露
+##   3 秒**（真局开局 14 km，多数船一上来就在射程内）。
+##
+##   ⇒ 第三版（本版）：阵型**不解除**，改为**由旗舰把整队推进到
+##      「最吃亏的那艘也够得着」的站位上**（`_fleet_covered` / `_fleet_station`）。
+##      收敛由「旗舰一定持续推进直到覆盖」保证 —— 不依赖任何船脱队。
+##      ⚠️ 代价如实记录：旗舰会**深入敌火**（它要替身后的跟班顶进射程），
+##         旗舰阵亡更早 ⇒ 指挥权按吨位顺位移交（`_elect_flagship` 自动重选）。
+##         这是"保持阵型"这条需求的直接代价，不是 bug。
+func _advance_with_formation(ship: EveShip, dt: float,
+		target: EveShip = null) -> bool:
+	var flag: EveShip = _flagship.get(ship.team)
+	if flag == null or flag.body == null:
+		return false
+	if flag == ship:
+		# 旗舰：开路 / 锚定（见 `_flagship_advance`）
+		if target == null:
+			return false
+		return _flagship_advance(flag, dt, target)
+	# 跟班：一律走槽位（这就是"不许各自接战"）
+	var cols := _formation_cols(ship.team)
+	var slot := formation_slot(flag, _fleet_heading(ship.team),
+			_slot_index(ship, flag), cols)
+	# ⚠️ 用 `goto_thrust`（定速接近 + 到点刹住）而不是 `follow_thrust`：
+	#    `follow_thrust` 的语义是"与某艘船保持距离"（会跟着它绕圈），
+	#    而我们要的是「站在**固定的相对位置**上」—— 那是 `goto_thrust` 的语义。
+	#    ⚠️ 槽位是**每 tick 重算**的（旗舰在动、朝向也在变），所以它不是
+	#       "一次性航点"：船会一路微调航向 —— 这正是"跟随"。
+	ship.body.acceleration = EveDestinyMotion.goto_thrust(ship.body, slot, dt)
+	return true
+
+
+## 旗舰的运动：① 全队还没都能开火 ⇒ 推进到覆盖站位；② 已覆盖 ⇒ 锚定。
+##
+## ⚠️ 本函数是**收敛的唯一保证**：只要还有跟班够不着，旗舰就会继续推。
+##    ⛔ 不要给它加"本舰已够得着就停"的提前退出 —— 那正是 14 倍回归的写法。
+func _flagship_advance(flag: EveShip, dt: float, target: EveShip) -> bool:
+	if target == null or not target.alive:
+		return false
+	if _fleet_covered(flag.team, target):
+		# ★ 全队都能开火 ⇒ 旗舰锚定。整队站桩输出（战列线）。
+		#   锚定的另一个好处：站位稳定 ⇒ 槽位不抖 ⇒ 跟班不来回追。
+		flag.body.acceleration = -flag.body.velocity * 1.5
+		return true
+	# 还没全覆盖 ⇒ 推到「最吃亏的那艘也刚好够得着」的站位上。
+	flag.body.acceleration = EveDestinyMotion.goto_thrust(
+			flag.body, _fleet_station(flag, target), dt)
+	return true
+
+
+## 全队是否**人人都够得着**主目标（用各自的位置/槽位判）。
+##
+## ⚠️ 用**槽位**而不是实际位置判跟班：船在往槽位飞的路上会短暂路过
+##    火力范围，按实际位置判会过早认为"覆盖了" ⇒ 旗舰提前锚定 ⇒
+##    跟班到位后其实够不着 ⇒ 又要重新推进 ⇒ 抖。
+func _fleet_covered(team: int, target: EveShip) -> bool:
+	var flag: EveShip = _flagship.get(team)
+	if flag == null or flag.body == null or target == null or target.body == null:
+		return true
+	var heading := _fleet_heading(team)
+	var cols := _formation_cols(team)
+	for s in ships:
+		if not s.alive or s.team != team:
+			continue
+		var p: Vector3 = s.body.position
+		if s != flag:
+			p = formation_slot(flag, heading, _slot_index(s, flag), cols)
+		if p.distance_to(target.body.position) > s.optimal_range + s.falloff:
+			return false
+	return true
+
+
+## 旗舰应该停在哪 —— 使**最吃亏的那艘**（射程最近 + 站位最深）刚好够得着。
+##
+## 几何：槽位在旗舰身后 `(row+1)*FORMATION_ROW_STEP`。旗舰落点距敌 `S` 时，
+## 深度为 `d` 的跟班距敌 ≈ `S + d`。要它够得着：
+##     S + d ≤ reach  ⇒  S ≤ reach − d
+## 全队取最小 ⇒ 旗舰要**顶到最靠里**的那一个约束上。
+func _fleet_station(flag: EveShip, target: EveShip) -> Vector3:
+	var need := _fleet_station_distance(flag.team, target)
+	var away := flag.body.position - target.body.position
+	away.y = 0.0
+	if away.length_squared() < 1.0:
+		# 旗舰已经贴到目标身上（退化）⇒ 朝本方半场退开
+		away = Vector3(0.0, 0.0, 1.0 if flag.team == 0 else -1.0)
+	return target.body.position + away.normalized() * need
+
+
+## 旗舰站位距敌的**最小允许值**（米）—— 等于 `min(reach_i × margin − depth_i)`。
+##
+## ⚠️ 下限 3 km：极端情况（一堆短射程护卫排在深槽）会算出接近 0 甚至负数，
+##    那等于让旗舰撞进敌阵。宁可让个别跟班够不着（它会一直飞槽位、等旗舰
+##    推进），也不要旗舰自杀式冲脸。
+const FORMATION_MIN_STANDOFF := 3_000.0
+
+## ★★ 射程安全余量 —— 站位要让跟班落在 **reach × 本值** 上，不是正好 `reach`。
+##
+## ⚠️ 为什么必须有它（实测数据，不是保险起见）：
+##    第一版把站位算成「最深的跟班**刚好**够得着」= `station = reach − depth`。
+##    后果：跟班常年停在**射程边界**上，敌人的一点机动就把它甩出射程 ⇒
+##    实测「在射程内比例」只有 **9%~68%**（5 个跟班的局常常只有 9%），
+##    战斗被拖到 151.5s（接近 180s 兜底）。
+##
+##    取 0.72 = 让最深的跟班停在射程的 72% 处 ⇒ 留 28% 的机动空间。
+##    ⚠️ 代价：旗舰要多顶 28% 的射程进去 ⇒ 它挨打更早。
+##       这是「保持阵型」的直接代价，不是 bug（见 `_advance_with_formation` 的说明）。
+##    ⚠️ 不要调到 1.0 以上变成"退后"：旗舰退后会把它自己推出射程。
+const FORMATION_RANGE_MARGIN := 0.72
+
+func _fleet_station_distance(team: int, target: EveShip) -> float:
+	var flag: EveShip = _flagship.get(team)
+	var best := INF
+	var cols := _formation_cols(team)
+	for s in ships:
+		if not s.alive or s.team != team:
+			continue
+		var depth := 0.0
+		if s != flag and flag != null:
+			var idx := _slot_index(s, flag)
+			depth = float(idx / cols + 1) * FORMATION_ROW_STEP
+		best = minf(best, (s.optimal_range + s.falloff) * FORMATION_RANGE_MARGIN - depth)
+	if best == INF:
+		return FORMATION_MIN_STANDOFF
+	return maxf(best, FORMATION_MIN_STANDOFF)
+
+
+## 全队朝向基准 —— 决定阵型**往哪摆**。
+##
+## ── 优先级（顺序有讲究，别调换）──────────────────────────────────
+##   ① 旗舰**正在移动** ⇒ 用旗舰的**速度方向**。
+##      理由：那正是「领头船要往哪去」；而且速度是惯性积分的产物，
+##      天生平滑 ⇒ 槽位不会抖。
+##   ② 旗舰**停着**（开局静止 / 已到位）⇒ 用本队**集火目标方向**。
+##      理由：速度为零时方向退化（`normalized()` 会给 NaN），
+##      而"全队朝敌人摆好"正是开局该有的样子。
+##   ③ 两者都没有 ⇒ 零向量，由 `formation_slot` 自己兜底（朝敌方半场）。
+##
+## ⚠️ 为什么**不能**只用集火目标方向：目标一旦贴到旗舰脸上（点射距离），
+##    这个方向会随两船的微小相对速度乱转 ⇒ 槽位跟着转 ⇒ 全队在原地画圈。
+##    `velocity` 优先就天然避开这种近距离噪声。
+func _fleet_heading(team: int) -> Vector3:
+	var flag: EveShip = _flagship.get(team)
+	if flag == null or flag.body == null:
+		return Vector3.ZERO
+	var v := flag.body.velocity
+	v.y = 0.0
+	if v.length() > flag.body.max_speed * 0.05:
+		return v
+	var focus: EveShip = _focus_target.get(team)
+	if focus == null or not focus.alive or focus.body == null:
+		return Vector3.ZERO
+	var d := focus.body.position - flag.body.position
+	d.y = 0.0
+	return d
+
+
+## 本舰在队形里的槽位序号：按**射程升序 + id 升序**排（射程越短排得越靠前）。
+##
+## ══════════════════════════════════════════════════════════════════
+##  ⚠️ 为什么排序键是**射程**而不是吨位（这是实测逼出来的）
+## ══════════════════════════════════════════════════════════════════
+##  槽位越靠后 = 离敌人越远（`depth = (row+1) × ROW_STEP`）。
+##  如果按吨位排（原来的写法），**护卫舰排在最后排** —— 而护卫的射程最短，
+##  站在 18 km 深处的槽位上它**永远够不着**任何目标。
+##
+##  实测（`probe_formation`，N9 编组 15 艘）：「在射程内比例」只有 **9%**，
+##  也就是说九成的跟班只是排队跟着、全程一枪不开，战斗被拖到 151.5s。
+##
+##  ⇒ 改成**射程短的排前面**（槽位浅、离敌近），射程长的排后面（槽位深、
+##    正好用掉它们的射程优势）。这是 EVE 舰队「近战船压前、远战舰压后」
+##    的同一条几何逻辑，不是审美选择。
+##
+## ⚠️ 排序必须**稳定可复现**：射程相同再按 id 升序，否则同一帧内
+##    两艘同型船的槽位会互换 ⇒ 它们互相撞位 ⇒ 队形抖。
+func _slot_index(ship: EveShip, flag: EveShip) -> int:
+	var mates: Array[EveShip] = []
+	for s in ships:
+		if s.alive and s.team == ship.team and s != flag:
+			mates.append(s)
+	mates.sort_custom(func(a: EveShip, b: EveShip) -> bool:
+		var ra := a.optimal_range + a.falloff
+		var rb := b.optimal_range + b.falloff
+		if not is_equal_approx(ra, rb):
+			return ra < rb
+		return a.id < b.id)
+	return maxi(0, mates.find(ship))
+
+
+## 本队的队形**列数** —— 让排数不超过 3，避免队形被拉得过于纵深。
+##
+## ⚠️ 纵深是**直接吃掉射程**的：`depth = (row+1) × 6 km`。
+##   15 艘按 3 列排 ⇒ 5 排 ⇒ 最深 30 km，连战列舰都够不着自己的目标
+##   （实测 N9/N15 那两个用例就是这种局面）。
+##  ⇒ 列数随人数增长（`ceil(人数/3)`），排数恒 ≤ 3 ⇒ 最大纵深锁在 18 km。
+##
+## ⚠️ 列数上限 8：再多横向铺开会超出战场的取景（`probe_formation` 的布阵
+##    横向跨度已经用到 ±16 km）。超出部分的船就挤在最后一排。
+const FORMATION_MAX_COLS := 8
+const FORMATION_MAX_ROWS := 3
+
+func _formation_cols(team: int) -> int:
+	var mates := 0
+	for s in ships:
+		if s.alive and s.team == team:
+			mates += 1
+	mates = maxi(0, mates - 1)          # 减去旗舰
+	if mates <= FORMATION_COLS * FORMATION_MAX_ROWS:
+		return FORMATION_COLS
+	return clampi(int(ceilf(float(mates) / float(FORMATION_MAX_ROWS))),
+			FORMATION_COLS, FORMATION_MAX_COLS)
 
 
 # ------------------------------------------------------------------ 电容

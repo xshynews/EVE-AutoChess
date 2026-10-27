@@ -240,6 +240,8 @@ func setup(p_ship: EveShip) -> void:
 	_build_labels()
 	# 敌我识别（必须在 _build_labels 之后：要改它刚建好的标签颜色）
 	_build_team_id()
+	# 指挥层标记（2026-10-27）：谁领头 / 谁被集火
+	_build_command_badges()
 
 	# 船体与信息层的缩放。两种态的差异见 BOARD_EXAGGERATION 的说明，
 	# 实现在 _apply_scale() 里（切换布阵态时也要走同一条路径，别抄第二份）。
@@ -305,13 +307,62 @@ func _apply_scale() -> void:
 ##    最紧的是「战巡/战列」⇒ 取 **5%**（留一点余量）。
 ##    ⚠️ 取 10% 会有 3 处重叠（出现「巡洋 > 战巡」「战巡 > 战列」），
 ##       正是用户原先抱怨的那个毛病。
-const CLASS_SCALE_SPREAD := 0.05
+##
+## ⚠️ 2026-10-27：**缩到 2%**。上面那套上限算的是「长度」，而 2026-10-27 起
+##    屏幕最长轴还多乘了一个「体积等效」倍率（见下），最紧的「战巡/战列」
+##    只剩 6% 余量 ⇒ 原来的 ±5% 会把它吃光（探针 ④ 段实测重叠 0.22）。
+##    缩到 ±2% 后四段全部不重叠。「档内微调」本来就是锦上添花，
+##    而「档与档要分得开」才是用户的核心诉求 —— 两害相权取其轻。
+const CLASS_SCALE_SPREAD := 0.02
 
-## 等级 1 / 等级 10 的**目标船长**（世界单位，不含布阵态放大）。
-## 取值 = 「当时因卡萨斯（护卫，0.70）/ 暴君（巡洋，1.35）的实际船长」，
-## 也就是把**上限从巡洋挪给战列**。
-const TIER_ANCHOR_LOW := 2.6 * 1.20 * 0.70      # 2.184
-const TIER_ANCHOR_HIGH := 2.6 * 1.20 * 1.35     # 4.212
+## ══════════════════════════════════════════════════════════════════
+##  ★ 2026-10-27：体型口径从「只钉最长轴」改成「体积等效尺度」
+## ══════════════════════════════════════════════════════════════════
+##
+## ── 用户原话 ─────────────────────────────────────────────────────
+##   「我现在发现巡洋，尤其是暴君等船那是真的大，比战列都大，
+##     把区别改大一点」
+##
+## ── 病根 ─────────────────────────────────────────────────────────
+##   旧口径把**最长轴**钉到档基准长，宽/高照真实比例走
+##   ⇒ 敦实的船白赚体积。实测（跑 `tools/probe_ship_bulk.tscn`）：
+##     暴君级（巡洋）体积指数 21.7 vs 地狱天使级（战列）5.11 —— 差 4.2 倍，
+##     而两者屏幕**长度**只差 1.27 倍。
+##   ⇒ 玩家看到的「大」是**体积**，不是长度 —— 只钉长度治不了。
+##
+## ── 新口径 ───────────────────────────────────────────────────────
+##   定义「体积等效尺度」 E = 长^w × 体积^((1-w)/3)（单位：米），再取
+##      屏幕最长轴 = 档基准 × (真实长 / E)
+##   即「E 相同 ⇒ 屏幕上看着一样大」。
+##
+##   ★ 关键化简（`tools/probe_ship_bulk.tscn` ⑤ 段有推导与实测）：
+##       体积指数 = 档基准³ × c^w ，其中 c = 横梁×高度/长轴²（「紧缩度」）
+##     ⇒ 同档内的体积差**只**由 c 决定；档与档之间**只**由档基准决定。
+##     ⇒ 档序不重叠的充要条件：3·ln(B_hi/B_lo) ≥ w · ln(c_max_lo / c_min_hi)
+##       左＝可调的档差，右＝形状噪声（w 是它的系数）。
+##
+##   ⚠️ **w 是硬上限，不是口味问题**。实测（探针 ⑤ 段「相邻档允许的最大 w」，
+##     当时档差 1.94 倍 / 档内 ±5%）：护卫→驱逐 0.222 · 驱逐→巡洋 0.760 ·
+##     巡洋→战巡 0.163 · **战巡→战列 0.145**。最紧的一段由
+##     「布鲁提克斯级（c=0.41）↔ 鹏鲲级（c=0.039）」决定 —— 紧缩度差 10.5 倍。
+##   ⇒ 档差与档内微调**一起**放大这段噪声：档内 ±5% 等价于给每个档再多
+##     乘一个 1.11 倍的不确定量，于是「战巡→战列」那一步必须再放大 1.24 倍
+##     才压得住，线性档梯根本给不出（要 HIGH/LOW ≈ 8 倍，荒谬）。
+##   ⇒ 最终定案：**w = 0.10 + 档内微调缩到 ±2% + 档梯拉到 2.4 倍**。
+##     探针 ④ 段实测：四段档序**全部不重叠**，且各留 6%~25% 余量。
+##
+##   ⚠️ 有意接受的代价：同档内不同船的**长度**差变大（最长轴只按 0.30 次方
+##      跟随紧缩度）—— 例：战列舰 3.84~8.09，巡洋舰 2.47~5.72。
+##      因为「同档一样大」现在指**体积**一样大，细长的船只能靠更长来凑。
+##      要连长度也压平，只能改成「沿舰轴非均匀缩放（压细横截面）」，
+##      那是另一套实现（要逐艘知道舰轴），暂不做。
+const SIZE_BLEND := 0.10
+
+## 等级 1 / 等级 10 的**目标体积等效尺度**（米，不含 VISUAL_EXAGGERATION）。
+## ⚠️ 2026-10-27 起这两个数**不再等于屏幕长度**（旧口径下是 2.184 / 4.212）：
+##    屏幕最长轴 = 本值 × (真实长 / E)，逐船不同。名字保留是为了少动调用方。
+const TIER_ANCHOR_LOW := 1.25
+const TIER_ANCHOR_HIGH := 3.00
 
 ## 吨位 → 10 级刻度（未登记返回 0 ⇒ 调用方必须显式报错，禁隐式默认）
 static func tier_level(cls: int) -> int:
@@ -324,7 +375,8 @@ static func tier_level(cls: int) -> int:
 		_:                            return 0
 
 
-## 该吨位档的**基准船长**（世界单位，不含 BOARD_EXAGGERATION）
+## 该吨位档的**基准体积等效尺度**（米，不含 BOARD_EXAGGERATION）。
+## ⚠️ 自 2026-10-27 起它**不是**屏幕长度 —— 见 `TIER_ANCHOR_LOW` 的说明。
 static func tier_base_length(cls: int) -> float:
 	var lv := tier_level(cls)
 	if lv <= 0:
@@ -333,12 +385,67 @@ static func tier_base_length(cls: int) -> float:
 			* float(lv - 1) / 9.0
 
 
-## 单艘船的**目标船长** = 档基准 × (1 + SPREAD × (2u − 1))
+## 单艘船的**屏幕最长轴**（世界单位，不含 BOARD_EXAGGERATION）
+##   = 档基准 × (1 + SPREAD × (2u − 1)) × (真实长 / E)
+## 最后那一项就是 2026-10-27 新增的「体积等效」修正 —— 敦实船被压小。
 static func target_hull_length(id: StringName, cls: int) -> float:
 	var base := tier_base_length(cls)
 	if base <= 0.0:
 		return 0.0
-	return base * (1.0 + CLASS_SCALE_SPREAD * (2.0 * tier_slot_u(id, cls) - 1.0))
+	var L := base * (1.0 + CLASS_SCALE_SPREAD * (2.0 * tier_slot_u(id, cls) - 1.0))
+	var e := size_metric(id)
+	if e <= 0.0:
+		return L
+	return L * max_dim_m(id) / e
+
+
+## 「体积等效尺度」E = 长^SIZE_BLEND × 体积^((1−SIZE_BLEND)/3)（米）。
+## 0 表示索引里查不到该船（调用方必须显式退回，别静默给默认值）。
+static var _size_metric_cache: Dictionary = {}
+static func size_metric(id: StringName) -> float:
+	if _size_metric_cache.has(id):
+		return _size_metric_cache[id]
+	var out := 0.0
+	var a := max_dim_m(id)
+	if a > 0.0:
+		var v := volume_m3(id)
+		if v > 0.0:
+			out = pow(a, SIZE_BLEND) * pow(v, (1.0 - SIZE_BLEND) / 3.0)
+	_size_metric_cache[id] = out
+	return out
+
+
+## 真实包围盒体积（m³）＝ 三轴之积。`ShipAsset.dims` 已排序，取最大者当长轴。
+static var _volume_cache: Dictionary = {}
+static func volume_m3(id: StringName) -> float:
+	if _volume_cache.has(id):
+		return _volume_cache[id]
+	var out := 0.0
+	for a in EveShipAssetIndex.all():
+		if a == null:
+			continue
+		if StringName(a.id) != id:
+			continue
+		var b := 0.0
+		var h := 0.0
+		var l := 0.0
+		var k := 0
+		for v in a.dims:
+			match k:
+				0: b = float(v)
+				1: h = float(v)
+				2: l = float(v)
+			k += 1
+		if k >= 3 and b > 0.0 and h > 0.0 and l > 0.0:
+			out = b * h * l
+		break
+	_volume_cache[id] = out
+	return out
+
+
+## 该船的真实最长轴（m）—— 转发 `EveShipModel`，加一层 0 保护。
+static func max_dim_m(id: StringName) -> float:
+	return maxf(0.0, EveShipModel.max_dim_m(id))
 
 
 ## 档内位置 u ∈ [0,1]：0 = 本档真实长轴最短，1 = 最长。
@@ -1459,6 +1566,7 @@ func sync_from_body(body: EveDestinyMotion.Body, alive: bool, delta: float = 1.0
 		return
 
 	_update_bars()
+	_update_command_badges()
 
 
 ## ★ 53 轮：**瞬时**把舰艏摆到 `aim_dir`，不走 slerp 平滑。
@@ -1530,6 +1638,94 @@ func _set_bar(bar: MeshInstance3D, fraction: float) -> void:
 	# 血条基准宽度见 BAR_WIDTH（_make_bar 与这里必须一致）
 	bar.scale.x = f
 	bar.position.x = -(BAR_WIDTH * (1.0 - f)) * 0.5
+
+
+## ══════════════════════════════════════════════════════════════════
+##  指挥层标记（2026-10-27 用户定案：「两个都标」）
+## ══════════════════════════════════════════════════════════════════
+##
+##  ① **旗舰环**（`_flag_badge`）：本队吨位最高的那艘，跟着它走的那一圈。
+##  ② **集火环**（`_focus_badge`）：敌方全队正在集火的目标。
+##
+## ── 为什么用 TorusMesh 而不是 Label3D 字形 ────────────────────────
+##   字形依赖字体：项目只保证 msyh/msyhbd/simsun，几何符号（⌖ ✛ ◎）在
+##   这些字体里**未必存在**，缺字会静默画成豆腐块。环是纯几何，零风险。
+##   ⚠️ 已核实过的只有 U+25B2 / U+25C6（见 `_build_team_id` 的注释），
+##      连它们都靠人工核过 —— 不要再赌第三个字形。
+##
+## ── 两个环怎么区分（否则玩家以为是同一个东西的两态）────────────────
+##   位置 + 大小 + 颜色**三重错开**：
+##     旗舰：**船体上方**（y=2.35）、半径小（0.22）、暖金
+##     集火：**名字上方**（y=2.00）、半径大（0.34）、砖红
+##   三重都不同 ⇒ 即便色觉异常也分得开（不靠单一通道）。
+##
+## ── 与 `EveShip.is_flagship / is_focused` 的关系（红线 40）──────────
+##   本层**只读**那两个字段（每帧 `sync_from_body` 里刷可见性），
+##   ⛔ 不自己判断"谁吨位最高" —— 那必然与模拟器漂移。
+const FLAG_BADGE_COLOR := Color(0.95, 0.78, 0.32)   ## 暖金（指挥）
+const FOCUS_BADGE_COLOR := Color(0.92, 0.36, 0.30)  ## 砖红（被集火）
+const FLAG_BADGE_Y := 2.35
+const FOCUS_BADGE_Y := 2.00
+const FLAG_BADGE_R := 0.22
+const FOCUS_BADGE_R := 0.34
+
+var _flag_badge: MeshInstance3D = null
+var _focus_badge: MeshInstance3D = null
+
+
+func _build_command_badges() -> void:
+	_flag_badge = _make_badge(FLAG_BADGE_COLOR, FLAG_BADGE_R, FLAG_BADGE_Y, "FlagBadge")
+	_focus_badge = _make_badge(FOCUS_BADGE_COLOR, FOCUS_BADGE_R, FOCUS_BADGE_Y, "FocusBadge")
+
+
+## 一个「朝天平躺的细环」——billboard 后正对相机，读作十字准星式的圈。
+##
+## ⚠️ `billboard_mode` 与 `billboard_keep_scale` 必须同时开：
+##    只开 billboard 会让环跟着 `label_root` 的非等比缩放飞尺寸。
+func _make_badge(col: Color, radius: float, y: float, nm: String) -> MeshInstance3D:
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(col.r, col.g, col.b, 0.92)
+	mat.emission_enabled = true
+	mat.emission = col
+	# ⚠️ 压到 0.5：与血条外框同一个理由（`_build_team_id` 里那段）——
+	#    满自发光在暗星空上会变成霓虹灯，用户明确否掉了荧光感。
+	mat.emission_energy_multiplier = 0.5
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	mat.billboard_keep_scale = true
+	mat.disable_fog = true
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+	var tm := TorusMesh.new()
+	tm.inner_radius = radius * 0.78
+	tm.outer_radius = radius
+	# ⚠️ Godot 的 TorusMesh 环体躺在 **XZ 平面**（轴 = +Y）。
+	#    billboard 会把网格的 **+Z** 转向相机 ⇒ 环会**侧对**相机（看成一条线）。
+	#    ⇒ 先绕 X 转 90° 把环立到 XY 平面，billboard 后才是正圆。
+	tm.rings = 12
+	tm.ring_segments = 6
+
+	var mi := MeshInstance3D.new()
+	mi.name = nm
+	mi.mesh = tm
+	mi.material_override = mat
+	mi.position = Vector3(0.0, y, 0.0)
+	mi.rotation.x = PI * 0.5
+	mi.visible = false          # 由 sync_from_body 每帧按 ship 的字段点亮
+	label_root.add_child(mi)
+	return mi
+
+
+## 每帧刷新两个标记的可见性（唯一入口，别在别处直接动 `visible`）。
+##
+## ⚠️ 必须在**存活检查之后**调（船沉了就不该有指挥环）；
+##    调用点在 `sync_from_body` 的 `if not alive: return` 之后。
+func _update_command_badges() -> void:
+	if _flag_badge != null and ship != null:
+		_flag_badge.visible = ship.is_flagship
+	if _focus_badge != null and ship != null:
+		_focus_badge.visible = ship.is_focused
 
 
 ## 外部改姿态时刷新标签

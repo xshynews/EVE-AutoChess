@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cfrmprobe1027"]
+
+[ext_resource type="Script" path="res://tools/probe_formation.gd" id="1_frm"]
+
+[node name="ProbeFormation" type="Node"]
+script = ExtResource("1_frm")

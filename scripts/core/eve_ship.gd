@@ -156,6 +156,18 @@ var lock_total: float = 0.0
 var locked: bool = false
 var alive: bool = true
 
+## ★★ 2026-10-27：指挥层盘面语义（阵型 + 集火用）。
+##
+## ⚠️ 这两个字段是**纯呈现层**的 —— 由 `EveBattleSimulator._refresh_command`
+##    每 5 tick 写一次（真正决定行为的是模拟器里的 `_flagship` / `_focus_target`），
+##    视觉层（`EveShipVisual`）只读它们来画标记。
+##    ⛔ **不要把逻辑判据建在这两个字段上**：它们是"上一条指令的产物"，
+##       比模拟器内部状态晚最多 5 tick；拿它们做判断会引入时序 bug。
+##    放在 `EveShip` 而不是让视觉层反查模拟器，是为了让视觉层**不需要**
+##    持有模拟器引用（现在它只认识 `EveShip`）。
+var is_flagship: bool = false        ## 本舰是当前本队旗舰（吨位最高）
+var is_focused: bool = false         ## 本舰是敌方全队正在集火的目标
+
 # --- 统计 ---
 var damage_dealt: float = 0.0
 var damage_taken: float = 0.0
