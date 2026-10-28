@@ -1,5 +1,9 @@
 extends RefCounted
 
+## 一场战斗彻底收束（含未布阵 / 时限判负两条路径）。
+## 多人对战用它结算掉血：只挂 sim.battle_finished 会漏掉判负路径。
+signal battle_over(winner_team: int, own_alive: int, foe_alive: int)
+
 ## 战斗阶段（BATTLE）—— 状态机三拆之二。
 ##
 ## ══════════════════════════════════════════════════════════════════
@@ -36,6 +40,8 @@ var _resolve = null
 var _get_sim: Callable = Callable()
 var _own_ships_cb: Callable = Callable()
 var _enemy_ships_cb: Callable = Callable()
+## [versus] settle hook handed over by the battle scene.
+var _versus_hook: Callable = Callable()
 ## ★ 2026-10-27：现取「上场下标映射」（fleet 下标 → `run.field` 下标）。
 ##   结算时用它把阵亡的我方舰船翻译成 `field` 下标，交给 `resolve_battle()` 删。
 var _own_field_index_cb: Callable = Callable()
@@ -62,6 +68,11 @@ func setup(p_run: EveRunState, p_hud: EveHudRoot, p_audio: EveAudio,
 
 
 ## 准备阶段每次都把「敌方视觉已生成」的标记清掉（重开 / 新节点都要重新生成）。
+## [versus] the battle scene hands us its settle callable here.
+func set_versus_hook(cb: Callable) -> void:
+	_versus_hook = cb
+
+
 func reset_visuals() -> void:
 	enemy_visuals_spawned = false
 
@@ -130,7 +141,13 @@ func start() -> EveBattleSimulator:
 	# ★ 2026-10-23：敌方思考等级随难度档走（0~3）。只改选目标的打分，不改数值。
 	sim.set_ai_level(int(_run.difficulty_row().get("ai_level", 0)))
 	sim.unit_destroyed.connect(_on_unit_destroyed_cb)
-	sim.battle_finished.connect(finished)
+	# [versus] wrap finished so the match layer also sees the result.
+	# The wrapper runs AFTER the single-player settle (connect order), so
+	# resolve_battle / salvage / result window all behave exactly as before.
+	sim.battle_finished.connect(func(wt: int) -> void:
+		finished(wt)
+		if _versus_hook.is_valid():
+			_versus_hook.call(wt))
 	# ── 阶段 D②③：命中反馈 + 伤害数字 ──
 	# ⚠️ 这一行同样是「少了它一切照跑、只是什么都看不见」的类型。
 	#    verify_run 的 `_step_d_hit` 直接数 arena.battle_fx.active_count()
@@ -375,12 +392,17 @@ func finished(winner_team: int) -> void:
 	_resolve.arm_result(res, bool(res.get("won", false)), beacon_before,
 			destroyed.size(), reason, own_alive == 0 or own.is_empty())
 
+	# ★ 2026-10-27: finished() 的最后一句 —— 三条收束路径都汇到这里，
+	#   所以多人结算挂这个信号（sim.battle_finished 只有模拟器那条有）。
+	battle_over.emit(winner_team, own_alive, enemy_alive)
+
 
 ## 未布阵判负 —— **走和正常战败完全同一条结算路径**。
 ##
 ## ⛔ 不另造一条「直接扣血 / 直接推进」的分支：那会变成第二份真相源 ——
 ##    扣血公式、连胜连败、残骸、经验……每加一条规则都要记得改两处。
 ##    这里只是喂给 `finished(1)`：敌舰一艘没死，它自己会走「未部署」这条结束原因。
+
 func forfeit_no_deploy() -> void:
 	_hud.append_log({"time": 0.0, "category": &"damage",
 			"text": T.t("BATTLE_FORFEIT_NONE",

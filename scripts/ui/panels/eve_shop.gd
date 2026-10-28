@@ -762,40 +762,13 @@ func set_bench(used: int, cap: int) -> void:
 ##
 ## 有官方渲染图就贴图（等比 contain），没有才退回淡色机库剪影。
 ## 立绘资源与取用方式见 EveShipArt —— 文件名 = 舰船 id。
-class _CardArt extends Control:
-	var accent: Color = Color(0.55, 0.78, 0.82)
-	var ship_key: StringName = &""
-	var dimmed: bool = false            ## 未选中时压暗（云顶口径：降亮度而非加灰罩）
-	var _tex: Texture2D = null
-
-	func _ready() -> void:
-		mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-	func set_ship_key(k: StringName) -> void:
-		ship_key = k
-		_tex = EveShipArt.portrait(k)
-		queue_redraw()
-
-	func _draw() -> void:
-		if size.x <= 2.0 or size.y <= 2.0:
-			return
-		if _tex != null:
-			var tint := Color(0.62, 0.66, 0.70) if dimmed else Color.WHITE
-			EveShipArt.draw_ship(self, Rect2(Vector2.ZERO, size), ship_key, tint)
-			return
-		var cx := size.x * 0.5
-		var s := minf(size.x, size.y) * 0.42
-		if s <= 3.0:
-			return
-		# 淡色机库剪影（无立绘时的占位）
-		var col := Color(accent.r, accent.g, accent.b, 0.30)
-		var y := size.y * 0.5
-		var w := s * 1.6
-		draw_line(Vector2(cx - w * 0.5, y + s * 0.42), Vector2(cx + w * 0.5, y + s * 0.42), col, 1.4)
-		draw_line(Vector2(cx - w * 0.35, y + s * 0.42), Vector2(cx - w * 0.35, y - s * 0.10), col, 1.4)
-		draw_line(Vector2(cx - w * 0.35, y - s * 0.10), Vector2(cx, y - s * 0.45), col, 1.4)
-		draw_line(Vector2(cx, y - s * 0.45), Vector2(cx + w * 0.35, y - s * 0.10), col, 1.4)
-		draw_line(Vector2(cx + w * 0.35, y - s * 0.10), Vector2(cx + w * 0.35, y + s * 0.42), col, 1.4)
+##
+## ★ 2026-10-28：实现搬到 `scripts/ui/eve_ship_art_view.gd`（图鉴要复用同一份，
+##   否则"商店一个样、图鉴另一个样"）。这里留空壳 + 原类名，是为了
+##   `_card_widgets` 的 `_CardArt` 类型标注、以及 `art.dimmed = ...` /
+##   `art.accent = ...` / `art.set_ship_key(...)` 这些调用一行都不用改。
+class _CardArt extends EveShipArtView:
+	pass
 
 
 ## 出售区覆盖层

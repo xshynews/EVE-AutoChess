@@ -42,6 +42,32 @@ static var resume_requested := false
 ## 主菜单切场景只能传场景路径，传不了参数 ⇒ 用这个静态槽位把选择带进战场。
 ## 空串 = 没选（战场按「简单」开）。读档恢复时**不用它**（难度跟着存档走）。
 static var pending_difficulty := ""
+## 联机对战的 AI 对手数（0 = 单机）。菜单选「联机对战」时置位，
+## 战场启动时取用，用完清空。
+static var pending_versus_ai := 0
+
+## 真联机（真人）参数。由 versus 大厅写入，战场读取后清空。
+## pending_versus_role: "" = 单机人机；"host" = 我建房；"join" = 我加入
+static var pending_versus_role := ""
+static var pending_versus_addr := "127.0.0.1"
+static var pending_versus_port := 37015
+## 已连上的座位数（含自己），大厅握手时确定
+static var pending_versus_seats := 2
+## 大厅座位表（魔兽3 那种）：每项 = {"kind": "human"|"ai"|"empty", "name": String}
+## 战场按它建局：human 是你，ai 是电脑补位。
+static var pending_versus_slots: Array = []
+## 本机在座位表里的下标（房主恒 0；加入方由房主分配后告知）
+static var pending_versus_my_seat := 0
+## true = 走 EasyTier 隧道（跨网，UDP 27015）；false = 同局域网 TCP
+static var pending_versus_tunnel := false
+## 隧道房间码（两边必须同一个）
+static var pending_versus_code := ""
+## true = 走**自建 UDP 中转**（`scripts/net/eve_udp_relay.gd`）：
+## 两端都主动连一台公网中继，按房间码互转 —— 手机不需要 TUN/VpnService 也能当房主。
+## ★ 2026-10-28：与 EasyTier 隧道互斥，两者只能选一个。
+static var pending_versus_relay := false
+static var pending_versus_relay_host := "127.0.0.1"
+static var pending_versus_relay_port := 27100
 
 
 static func _write_allowed() -> bool:

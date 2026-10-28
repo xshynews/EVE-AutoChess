@@ -165,6 +165,17 @@ const STAR_MULT := 1.8
 const SALVAGE_COST_RATIO := 0.5    ## ★ 我方残骸打捞费 = ⌈费用 × 0.5⌉，下限 1
 const SALVAGE_COST_RATIO_ENEMY := 1.0  ## ★ 敌方残骸打捞费 = ⌈费用 × 1.0⌉，下限 1
 
+## ★ 2026-10-28 事件「打捞折扣」生效期间的定价（比例是**相对船价**，不是相对上面那两档）：
+##   我方 1/4、敌方 1/4 —— 两边**同价**。
+##   用户原话（第二轮）：「我方也砍半的话那就太低了，所以降低敌方的打捞价格」
+##   ⇒ 我方维持 1/4 不动，把敌方从 1/2 也压到 1/4。
+##   ⚠️ 谈不上「敌方更贵」的差：折扣期就是一律 1/4 船价，
+##      3 费及以下的地板价统一是 1 ◆。
+##   ⚠️ 取整口径也换了：事件期间用**向下取整**（用户原话「就低不就高」），
+##      非事件期间仍沿用原来的 `ceil` —— ⛔ 别把两套口径合并成一套。
+const SALVAGE_DISCOUNT_RATIO_SELF := 0.25
+const SALVAGE_DISCOUNT_RATIO_ENEMY := 0.25
+
 ## ★ 一次最多能勾几艘（2026-10-04 用户定案）。
 ## 为什么要有上限：下一节点的商店只有 `SHOP_SLOTS`(5) 个货位，
 ## 打捞品要**顶掉**货位 —— 勾 6 艘就必然有 1 艘无处可放。
@@ -275,6 +286,34 @@ var event_picks: Array[StringName] = []
 ## （见 `free_advanced_roll()` 顶注）。⇒ 登记成计数，等货架定型后统一落地。
 var _pending_advanced_roll: int = 0
 
+## ★ 2026-10-28 事件「打捞折扣」的生效区间（**节点号闭区间**，0 = 未生效）。
+##
+## 为什么不存「还剩几回合」：剩余数要每回合减一，得在 `advance()` 里扎一个钩子，
+## 一旦有别的路径改了节点（重开、读档、跳关）计数就会跟实际节点错位。
+## 存绝对节点区间则**永远对得上** —— 判定只看 `node_index`（见 `salvage_discount_active()`）。
+var salvage_discount_from: int = 0
+var salvage_discount_to: int = 0
+
+## ★ 2026-10-28：「打捞折扣」的计时基准（**联机专用覆盖值**，0 = 跟随 `node_index`）。
+##
+## 为什么要这个：单机是「1 节点 = 1 回合」，`node_index` 天然就是回合号；
+## 联机（`EveMatchState`）是另一套 17 回合表，`node_index` 在联机里不推进
+## （联机不按节点跑，敌方编组来自 `PVE_SOURCE_NODE` 映射）⇒ 用 node_index 计时
+## 会让折扣永远不生效、也永远不过期。
+## ⇒ 联机由战斗场景每回合写一次真实回合号（`set_event_clock(versus.global_round())`），
+##    单机不写、保持 0，行为与改动前**一字不差**。
+var _event_clock_override: int = 0
+
+
+## 当前回合号（折扣计时的唯一口径）。单机 = node_index；联机 = 战斗场景写入的回合号。
+func event_clock() -> int:
+	return _event_clock_override if _event_clock_override > 0 else node_index
+
+
+## 联机写回合号（传 0 取消覆盖，回到跟随 node_index）。
+func set_event_clock(v: int) -> void:
+	_event_clock_override = maxi(0, v)
+
 ## ★★ 2026-10-04 打捞改为**多选列表**（用户定案）。
 ##
 ## 原来这里是**单个** `wreck: Dictionary`（且 `_set_wreck_from()` 只挑「费用最高」
@@ -354,6 +393,25 @@ func difficulty_row() -> Dictionary:
 func set_difficulty(id: String) -> void:
 	difficulty_id = String(EveCampaignTiers.difficulty(id).get("id", "simple"))
 	changed.emit()
+
+
+## 多人对战：**敌方侧**固定按这一档算（强度系数 / 吃羁绊 / 按阵型）。
+##
+## ⚠️ 为什么不直接 `set_difficulty("inferno")`：那一改会把**玩家自己**的
+##    收入 / 利息 / 败亡代价一起换成炼狱口径。多人对局的经济该按玩家在主菜单
+##    选的档走，只有「电脑舰队」这一侧必须统一成炼狱
+##    （`EveMatchState.PVE_DIFFICULTY`，用户 2026-10-28 定案：
+##      多人 PvE 回合一律吃羁绊 + 1.40 系数）。
+##    所以单独开一个**只影响敌方**的覆盖位。空串 = 不覆盖 ⇒ 单机一个字节不变。
+var enemy_tier_override := ""
+
+
+## 敌方侧要用的难度行 —— `enemy_scale()` / 敌方羁绊 / 敌方阵型都读它。
+## ⚠️ 单机（覆盖为空）时逐字段等价于 `difficulty_row()`。
+func enemy_tier_row() -> Dictionary:
+	if enemy_tier_override == "":
+		return difficulty_row()
+	return EveCampaignTiers.difficulty(enemy_tier_override)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -481,6 +539,8 @@ func start_run(p_seed: int = 0) -> void:
 	last_won = true
 	boss_attempts = 0
 	_pending_advanced_roll = 0
+	salvage_discount_from = 0
+	salvage_discount_to = 0
 	bench.clear()
 	field.clear()
 	offers.clear()
@@ -548,6 +608,9 @@ func to_dict() -> Dictionary:
 		"shop_locked": shop_locked,
 		"last_won": last_won, "boss_attempts": boss_attempts,
 		"pending_advanced_roll": _pending_advanced_roll,
+		"salvage_discount_from": salvage_discount_from,
+		"salvage_discount_to": salvage_discount_to,
+		"event_clock_override": _event_clock_override,
 		"event_picks": _plain(event_picks),
 		"bench": _plain(bench),
 		"field": _plain(field),
@@ -590,6 +653,9 @@ func from_dict(d: Dictionary) -> bool:
 	last_won = bool(d.get("last_won", true))
 	boss_attempts = maxi(0, int(d.get("boss_attempts", 0)))
 	_pending_advanced_roll = maxi(0, int(d.get("pending_advanced_roll", 0)))
+	salvage_discount_from = maxi(0, int(d.get("salvage_discount_from", 0)))
+	salvage_discount_to = maxi(0, int(d.get("salvage_discount_to", 0)))
+	_event_clock_override = maxi(0, int(d.get("event_clock_override", 0)))
 
 	event_picks.clear()
 	for id in _as_array(d.get("event_picks", [])):
@@ -689,7 +755,8 @@ func _roll_one() -> Dictionary:
 		pool = _pools.get(1, [])
 	if pool.is_empty():
 		return {}
-	return pool[rng.randi_range(0, pool.size() - 1)]
+	# ★ 2026-10-29：走 `pick_from_pool`（加强型战列权重 0.35，其余等价）。
+	return EveShipDatabase.pick_from_pool(pool, rng)
 
 
 ## 买第 index 个槽位。返回 {"ok": bool, "reason": String, "data": Dictionary}
@@ -854,10 +921,23 @@ func set_shop_locked(on: bool) -> void:
 #  残骸怎么走：战斗结算时出现 → 准备阶段可下单 → 下个节点顶掉 1 个货位 → 买走。
 #  为什么这样设计、为什么不能「下单立刻给」，见 SALVAGE_COST_RATIO 上方那段。
 
+## ★ 事件「打捞折扣」当前是否生效（按 `node_index` 落在闭区间里判）。
+## ⚠️ 区间由 `apply_event` 写入：起点 = 事件节点的**下一个**节点，终点 = 起点 + N − 1。
+func salvage_discount_active() -> bool:
+	if salvage_discount_from <= 0:
+		return false
+	var c := event_clock()
+	return c >= salvage_discount_from and c <= salvage_discount_to
+
+
 ## ★★ 某一艘残骸的打捞费（2026-10-04 多选后**按艘**算）。
 ##
 ## 定价**看阵营**（用户定案的两档博弈）：
 ##   我方（team 0）→ ×0.5   敌方（team 1）→ ×1.0
+##
+## ★ 2026-10-28 事件「打捞折扣」期间改成：**双方都 ×0.25**
+##   （我方原 1/2、敌方原全价 ⇒ 各减半），
+##   且**向下取整**（用户：「四舍五入，就低不就高」⇒ 一律就低），最低 1。
 ##
 ## ⚠️ 参数是**下标**不是 Dictionary —— 定价必须从 `wrecks[i]["team"]` 取，
 ##    不能让调用方自己传 team（两处判阵营必然分叉）。
@@ -867,8 +947,11 @@ func salvage_cost_of(idx: int) -> int:
 		return 0
 	var w: Dictionary = wrecks[idx]
 	var c := int(w.get("cost", 1))
-	var ratio := SALVAGE_COST_RATIO if int(w.get("team", 0)) == 0 \
-			else SALVAGE_COST_RATIO_ENEMY
+	var own := int(w.get("team", 0)) == 0
+	if salvage_discount_active():
+		var dr := SALVAGE_DISCOUNT_RATIO_SELF if own else SALVAGE_DISCOUNT_RATIO_ENEMY
+		return maxi(1, int(floor(float(c) * dr)))
+	var ratio := SALVAGE_COST_RATIO if own else SALVAGE_COST_RATIO_ENEMY
 	return maxi(1, int(ceil(float(c) * ratio)))
 
 
@@ -1589,9 +1672,18 @@ func sell_value(entry: Dictionary) -> int:
 	return cost * int(pow(3.0, float(maxi(0, int(entry.get("star", 1)) - 1))))
 
 
+## 可以出售的阶段：准备 **和** 结算（打捞期）。
+##
+## ★ 2026-10-28（用户：「打捞的时候如果钱不够，应该允许玩家卖掉船换星币」）：
+##   原来只放行 `PREP` ⇒ 玩家在结算页看中一艘残骸、差几块星币时只能干瞪眼。
+##   ⚠️ **战斗期不放行**：那时场上的船正在打，卖掉会让战报与实际编制对不上。
+func can_sell() -> bool:
+	return phase == Phase.PREP or phase == Phase.RESOLVE
+
+
 func sell_from_bench(bench_index: int) -> Dictionary:
-	if phase != Phase.PREP:
-		return _deny("只有准备阶段能出售")
+	if not can_sell():
+		return _deny("只有准备阶段和打捞结算时能出售")
 	if bench_index < 0 or bench_index >= bench.size():
 		return _deny("这一格是空的")
 	var e: Dictionary = bench[bench_index]
@@ -1599,8 +1691,8 @@ func sell_from_bench(bench_index: int) -> Dictionary:
 
 
 func sell_from_field(field_index: int) -> Dictionary:
-	if phase != Phase.PREP:
-		return _deny("只有准备阶段能出售")
+	if not can_sell():
+		return _deny("只有准备阶段和打捞结算时能出售")
 	if field_index < 0 or field_index >= field.size():
 		return _deny("这一格是空的")
 	var e: Dictionary = field[field_index]
@@ -1927,6 +2019,15 @@ func apply_event(id: StringName, target: Dictionary = {}) -> Dictionary:
 	if bool(opt.get("free_advanced_roll", false)):
 		free_advanced_roll()
 		parts.append("免费高级刷新（保底 1 艘 cost ≥ 3）")
+	# ★ 2026-10-28 事件「打捞折扣」：从**下一节点**起算 N 个节点。
+	#   ⚠️ 事件选完会立刻 `advance()`（node_index +1）⇒ 若这里写成「当前节点起算」，
+	#      实际生效区间就会整体早一格，"未来三个回合"变成"包含本回合"。
+	var dr := int(opt.get("salvage_discount_rounds", 0))
+	if dr > 0:
+		var base := event_clock()
+		salvage_discount_from = base + 1
+		salvage_discount_to = base + dr
+		parts.append("未来 %d 回合打捞费：我方与敌方均 1/4 船价" % dr)
 	if bool(opt.get("pick_ship", false)) and not target.is_empty():
 		parts.append("%s 永久强化" % _entry_name(target))
 
@@ -2042,7 +2143,7 @@ func _apply_advanced_roll_guarantee() -> bool:
 	if cand.is_empty():
 		push_warning("[事件] 黑市保底找不到 cost ≥ 3 的船（船表为空？）")
 		return false
-	offers[target] = cand[rng.randi_range(0, cand.size() - 1)]
+	offers[target] = EveShipDatabase.pick_from_pool(cand, rng)
 	log_event.emit("黑市情报：高级刷新落地（保底 1 艘 cost ≥ 3）", &"economy")
 	return true
 
@@ -2110,9 +2211,14 @@ func stage_label() -> String:
 
 
 ## 本节点的战斗时限（秒）。事件节点返回 0。
+##
+## ★ 2026-10-28：兜底值 45 → `EveNodeTable.BATTLE_SECONDS`（60）。
+##   联机模式下 `node_index` 不推进（见 `eve_battle_scene.gd` 的注释），
+##   一旦索引越界就会走兜底 —— 硬编码 45 会让人误以为「联机还是 45 秒」。
 func battle_seconds() -> float:
 	var n := current_node()
-	return float(n.get("time", 45.0)) if not n.is_empty() else 45.0
+	return float(n.get("time", EveNodeTable.BATTLE_SECONDS)) if not n.is_empty() \
+			else EveNodeTable.BATTLE_SECONDS
 
 
 ## 本节点的编组 id。
@@ -2201,7 +2307,7 @@ func enemy_comp_size() -> int:
 func enemy_scale() -> float:
 	var n := current_node()
 	var base := float(n.get("scale", 1.0)) if not n.is_empty() else 1.0
-	return base * float(difficulty_row().get("scale", 1.0))
+	return base * float(enemy_tier_row().get("scale", 1.0))
 
 
 ## 本节点的进场词（唯一真源 = EveNodeTable.ROWS[].line）。

@@ -12,10 +12,23 @@ class_name EveNodeTable
 ##    本来就有，只是写在等号右边），没有做任何取舍或合并。
 ##
 ## ── 四种节点类型（交接文档 §5.2）──────────────────────────────
-##    battle 遭遇战  45s   常规
-##    elite  精英    55s   心跳节点
+##    battle 遭遇战  60s   常规
+##    elite  精英    60s   心跳节点
 ##    event  事件    无战斗  四选一（阶段 C 实装；本阶段表里保留类型与进场词）
-##    boss   BOSS    70s   通关战
+##    boss   BOSS    **70s**  通关战（最长，唯一不走 60s 的一档）
+##
+## ★★ 2026-10-28（用户定案）：**原本不足 60s 的战斗节点一律抬到 60s**。
+##    用户原话：「延长所有模式（包括任务关卡+联机对战）的对战时间到 1 分钟
+##    （60S）」→ 追加澄清：「BOSS 战还是维持原来的时间，原来不够 60S 的才延长到 60S」。
+##    ⇒ 门槛是「< 60 抬到 60」，**不是**「一律 60」：
+##         battle 45 → 60（延长）· elite 55 → 60（延长）
+##         boss   70 → **70（不动）** —— 它本来就超 60，不该被压低
+##    事件节点仍是 0（无战斗）。
+##    ⚠️ 联机对战也吃这张表：`EveRunState.battle_seconds()` 读本表，
+##       而联机整回合时钟 `EveMatchState.ROUND_TIME = 120`
+##       = 准备 30 + **常规战斗 60** + 打捞 30 —— 60 正好把这式子配平。
+##       联机不打 BOSS，所以 70 那档不影响它；但改**常规**时限时必须同步 ROUND_TIME。
+##    ⛔ 改时限时**两处都要改**：本文件 + `data/source_csv/04_节点表_遥望边境.csv`。
 ##
 ## ── 节点 2 是「全表最聪明的一手」（交接文档 §7 原文）────────────
 ##    同一张脸 + scale 1.25，不用任何文字就完成了「你该升级了」的教学。
@@ -23,37 +36,50 @@ class_name EveNodeTable
 
 const TOTAL := 15
 
+## **常规**对战时限（秒）—— battle / elite 两档共用。BOSS 另算（表里写 70）。
+##
+## 存在的理由：`EveRunState.battle_seconds()` 在拿不到节点行时要有兜底值，
+## 而兜底值必须与表里的值一致 —— 否则联机（`node_index` 不推进）会和单机
+## 走出两个时限。表里 battle/elite 共 11 行写的 60.0 就是这个数。
+##
+## ⚠️ 联机整回合时钟 `EveMatchState.ROUND_TIME` 的配平基准是**这个数**
+##    （联机不打 BOSS）：120 = 准备 30 + 60 + 打捞 30。改它必须同步 ROUND_TIME。
+const BATTLE_SECONDS := 60.0
+
 ## 全表。键名与 CSV 列一一对应（type/comp/scale/time/line）。
 const ROWS: Array = [
-	{"index": 1, "type": &"battle", "comp": "pirate_scout", "scale": 1.00, "time": 45.0,
+	{"index": 1, "type": &"battle", "comp": "pirate_scout", "scale": 1.00, "time": 60.0,
 		"line": "前方发现两艘散兵级。信号识别为游荡掠夺者。"},
-	{"index": 2, "type": &"battle", "comp": "pirate_scout", "scale": 1.25, "time": 45.0,
+	{"index": 2, "type": &"battle", "comp": "pirate_scout", "scale": 1.25, "time": 60.0,
 		"line": "同一批掠夺者又回来了 —— 这次它们装填得更足。"},
-	{"index": 3, "type": &"battle", "comp": "pirate_raider", "scale": 1.00, "time": 45.0,
+	{"index": 3, "type": &"battle", "comp": "pirate_raider", "scale": 1.00, "time": 60.0,
 		"line": "三艘舰船呈散兵线展开。这次不是一个方向来的。"},
 	{"index": 4, "type": &"event", "comp": "", "scale": 1.0, "time": 0.0,
 		"line": "边境信标闪了一下。附近有个废弃中继站。"},
-	{"index": 5, "type": &"elite", "comp": "elite_vanguard", "scale": 1.00, "time": 55.0,
+	{"index": 5, "type": &"elite", "comp": "elite_vanguard", "scale": 1.00, "time": 60.0,
 		"line": "旗舰信号 —— 精锐先锋，装甲厚得不像海盗。"},
-	{"index": 6, "type": &"battle", "comp": "pirate_raider", "scale": 1.30, "time": 45.0,
+	{"index": 6, "type": &"battle", "comp": "pirate_raider", "scale": 1.30, "time": 60.0,
 		"line": "劫掠小队的主力来了。同一套编组，火力更足。"},
-	{"index": 7, "type": &"battle", "comp": "pirate_wing", "scale": 1.00, "time": 45.0,
+	{"index": 7, "type": &"battle", "comp": "pirate_wing", "scale": 1.00, "time": 60.0,
 		"line": "四艘舰船压上隔离带 —— 掠袭联队。"},
-	{"index": 8, "type": &"battle", "comp": "pirate_pack", "scale": 1.00, "time": 45.0,
+	{"index": 8, "type": &"battle", "comp": "pirate_pack", "scale": 1.00, "time": 60.0,
 		"line": "全部米玛塔尔船体。它们比你快。"},
-	{"index": 9, "type": &"elite", "comp": "elite_sniper", "scale": 1.00, "time": 55.0,
+	{"index": 9, "type": &"elite", "comp": "elite_sniper", "scale": 1.00, "time": 60.0,
 		"line": "敌方停在远处，一动不动。它们在等你先进射程。"},
 	{"index": 10, "type": &"event", "comp": "", "scale": 1.0, "time": 0.0,
 		"line": "信标扫描到一处可回收的补给残骸带。"},
-	{"index": 11, "type": &"battle", "comp": "pirate_convoy", "scale": 1.00, "time": 45.0,
+	{"index": 11, "type": &"battle", "comp": "pirate_convoy", "scale": 1.00, "time": 60.0,
 		"line": "护航编队。注意最后排那艘 —— 它在给全队回血。"},
-	{"index": 12, "type": &"battle", "comp": "pirate_battlegroup", "scale": 1.00, "time": 45.0,
+	{"index": 12, "type": &"battle", "comp": "pirate_battlegroup", "scale": 1.00, "time": 60.0,
 		"line": "四艘巡洋级，四个势力，四种武器。海盗战群。"},
-	{"index": 13, "type": &"battle", "comp": "elite_phalanx", "scale": 1.10, "time": 45.0,
+	{"index": 13, "type": &"battle", "comp": "elite_phalanx", "scale": 1.10, "time": 60.0,
 		"line": "六艘盖伦特方阵，装甲叠加，全队持续回血。"},
 	{"index": 14, "type": &"event", "comp": "", "scale": 1.0, "time": 0.0,
 		"line": "最后一次补给窗口。前方就是海盗王的旗舰信号。"},
 	{"index": 15, "type": &"boss", "comp": "boss_pirate_lord", "scale": 1.00, "time": 70.0,
+		# ★ 2026-10-28（用户定案）：BOSS **维持 70s**，不并进 60s 那批。
+		#   原话：「BOSS 战还是维持原来的时间，原来不够 60S 的才延长到 60S」。
+		#   ⇒ 门槛是「< 60 的抬到 60」，不是「一律 60」。⛔ 别顺手统一成 60。
 		# ★ 2026-10-27（用户指定改词）：原是「地狱天使级。边境海盗王本人。」
 		#   —— 那句把 BOSS 钉死成艾玛船，而新配方（`EveEnemyPlans._n15`）的
 		#   战列在四族「加强型」里随机，还可能配上加达里 / 米玛塔尔 / 盖伦特。

@@ -34,6 +34,23 @@ const TOTAL_STAGES := 3
 ## 总回合数（供 HUD / 结算展示）
 const TOTAL_ROUNDS := STAGE1_ROUNDS + ROUNDS_PER_STAGE * (TOTAL_STAGES - 1)
 
+## Unified time limit per PvP / PvE round (seconds).
+##
+## 2026-10-27: everyone waits the same amount; if no winner by then
+## the round is a loss. Without it a fast thinker effectively
+## fast-forwards the game for everyone else.
+## Event / carousel rounds have no limit (they are not fights).
+##
+## ★★ 2026-10-28：90 → **120**。
+##   这条时钟**贯穿整回合**：准备 → 战斗 → 结算打捞。
+##   而准备是 30s（`EveBattleScene.PREP_SECONDS`）、战斗最长 60s，
+##   90 = 30 + 60 ⇒ **打捞时间正好是 0**，跟「打完剩多少就多少时间打捞」
+##   的设计完全冲突。120 给最坏情况留 30s 打捞窗。
+##   ⚠️ 下限见 `EveBattleScene._versus_check_round_time()`（低于会告警）。
+const ROUND_TIME := 120.0
+## Seconds burned in the current round (accumulated by the caller).
+var round_elapsed := 0.0
+
 ## ── PvE 回合的编组来源（2026-10-27 用户逐回合指定）────────────────
 ##
 ## 用户原话的配置：
@@ -58,6 +75,23 @@ const PVE_SOURCE_NODE := {
 const PVE_DIFFICULTY := "inferno"
 
 
+## 本回合人类玩家的对手下标；轮空 / 不在 PvP 回合返回 -1
+func human_opponent() -> int:
+	for p in players:
+		if p == null or p.is_ai:
+			continue
+		var me := players.find(p)
+		if me < 0:
+			continue
+		for pair in make_pairings():
+			if pair[0] == me:
+				return pair[1]
+			if pair[1] == me:
+				return pair[0]
+		return -1
+	return -1
+
+
 ## 本回合的 PvE 编组来源节点；不是 PvE 回合返回 0
 func pve_source_node() -> int:
 	if round_kind() != RoundKind.PVE and round_kind() != RoundKind.BOSS:
@@ -75,13 +109,16 @@ var round := 1
 var finished := false
 var seed := 0
 
-var _rng := RandomNumberGenerator.new()
+## 本回合的配对（**冻结**）。
+## ⚠️ 2026-10-27 真 bug：`make_pairings()` 原来每次调用都重新算，
+##    于是「HUD 显示的对手 / 建队用的对手 / 结算用的对手」可能不是同一个人。
+##    单机看不出来，联机 PvP 是致命的（你不知道自己在打谁）。
+var _pairs: Array = []
 
 
 func _init(p_players: Array = [], p_seed := 0) -> void:
 	players = p_players
 	seed = p_seed
-	_rng.seed = p_seed if p_seed != 0 else randi()
 
 
 ## 本阶段总共有几回合
@@ -130,6 +167,16 @@ func round_label() -> String:
 	return "%d-%d" % [stage, round]
 
 
+## Has this round run out of time?
+##
+## Event / carousel rounds are exempt: there is no fight to time out.
+func round_timed_out() -> bool:
+	var k := round_kind()
+	if k == RoundKind.CAROUSEL:
+		return false
+	return round_elapsed >= ROUND_TIME
+
+
 func alive_players() -> Array:
 	var out: Array = []
 	for p in players:
@@ -145,20 +192,36 @@ func damage_weight() -> float:
 	return 1.0 + float(total) * 0.25
 
 
-## 给 PvP 回合配对：每名存活玩家随机抽一名**不同的存活玩家**。
-## ⚠️ 人数为奇数时有一人轮空（云顶同口径：轮空不掉血也不打）。
+## 清掉冻结的配对 ⇒ 下一次 `make_pairings()` 按**新的血量表**重排。
+## ⚠️ 回合推进时必须调（`_next_round()` 已经调了）：不调的话下一回合还在用
+##    上一回合的配对，血量变化完全体现不出来。
+func reroll_pairings() -> void:
+	_pairs = []
+
+
+## 给 PvP 回合配对：**按信标血量从高到低排成一条表，相邻两人对战**。
+##
+## ★ 2026-10-28 用户定案：「按 1 到 N 的顺序排，优先排信标血量和自己接近的玩家」。
+##   ⇒ 排序键 = 信标血量（高→低），同血按座位号；相邻配对
+##     ⇒ 每个人遇到的都是「当前血量最接近自己」的对手。
+##
+## ⚠️ 为什么不再随机洗牌：随机既配不出「势均力敌」，还得靠同一个 RNG 种子
+##    在两台机器上复现（种子一旦不同步，两边就在打不同的对手）。
+##    HP 排序天然确定，联机不需要同步随机数。
+## ⚠️ 人数为奇数时，**最后一位（血量最低）轮空**（云顶同口径：轮空不掉血也不打）。
 func make_pairings() -> Array:
-	var alive := alive_players()
+	if not _pairs.is_empty():
+		return _pairs
 	var idxs: Array = []
 	for i in players.size():
 		if players[i] != null and players[i].is_alive():
 			idxs.append(i)
-	# 洗牌
-	for i in range(idxs.size() - 1, 0, -1):
-		var j := _rng.randi_range(0, i)
-		var tmp = idxs[i]
-		idxs[i] = idxs[j]
-		idxs[j] = tmp
+	idxs.sort_custom(func(a, b):
+		var ha := int(players[a].hp)
+		var hb := int(players[b].hp)
+		if ha != hb:
+			return ha > hb
+		return a < b)
 	var pairs: Array = []
 	var k := 0
 	while k + 1 < idxs.size():
@@ -166,6 +229,7 @@ func make_pairings() -> Array:
 		k += 2
 	if k < idxs.size():
 		pairs.append([idxs[k], -1])     ## 轮空
+	_pairs = pairs
 	return pairs
 
 
@@ -242,6 +306,7 @@ func apply_outcome(outcome: Dictionary) -> void:
 
 
 func _next_round() -> void:
+	reroll_pairings()
 	round += 1
 	if round > rounds_in_stage():
 		round = 1

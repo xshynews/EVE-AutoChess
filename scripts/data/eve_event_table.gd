@@ -21,6 +21,7 @@ class_name EveEventTable
 ##   `ship_apply`     选了船之后加在**那一艘**上的永久增益（键同 `_apply_synergy`）
 ##   `beacon_heal`    信标结构值 +N（夹在上限内）
 ##   `free_advanced_roll` true = 免费高级刷新，保底 1 艘 cost ≥ 3
+##   `salvage_discount_rounds` N = 未来 N 个回合打捞费降价（我方 / 敌方均 1/4 船价，向下取整，最低 1）
 ##
 ## ⛔ **不要再加回「给星币」的选项**（2026-10-01 用户裁决）：
 ##    「主要是回合给的星币太多了，而且给星币不合适。」
@@ -88,6 +89,19 @@ const OPTIONS: Array = [
 		"desc": "免费高级刷新\n5 个槽位至少 1 艘 cost ≥ 3",
 		"effect": "免费高级刷新（保底 1 艘 cost ≥ 3）",
 		"free_advanced_roll": true,
+	},
+	{
+		# ★ 2026-10-28 用户新增：「未来三个回合，打捞费用减半」——
+		#   我方 / 敌方都按船价的 1/4（我方原 1/2、敌方原全价 ⇒ 各减半），
+		#   向下取整（就低不就高），最低 1。
+		#   ⚠️ 事件节点本身不占回合（选完直接 advance）⇒ 从**下一节点**起算 3 个。
+		"id": &"salvage_discount",
+		"name": "打捞折扣",
+		"tag": &"经济",
+		"icon": &"coin",
+		"desc": "未来 3 个回合\n双方打捞费均 1/4 船价\n（向下取整，最低 1）",
+		"effect": "未来 3 回合打捞费：我方与敌方均 1/4 船价",
+		"salvage_discount_rounds": 3,
 	},
 ]
 

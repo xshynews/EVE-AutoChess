@@ -159,6 +159,8 @@ static func settings_rect(d: Vector2) -> Rect2:
 const BENCH_SLOTS := 8
 
 var command_bar: EveWindow            ## 顶条
+## 联机准备阶段最后 10 秒的中央倒计时（非窗口；压在所有窗之下、鼠标穿透）
+var round_countdown: Control = null
 var synergy_window: EveWindow         ## 左上：舰队构成
 var equipment_window: EveWindow       ## 左下：装备栏位
 var augments_window: EveWindow        ## 左中：事件增益（阶段 C；无增益时隐藏）
@@ -248,6 +250,7 @@ signal stance_changed(ship: EveShip, stance: int)
 signal range_rings_toggled(enabled: bool)
 
 const COMMAND_BAR_SCRIPT := preload("res://scripts/ui/panels/eve_command_bar.gd")
+const COUNTDOWN_SCRIPT := preload("res://scripts/ui/eve_round_countdown.gd")
 const SYNERGY_SCRIPT := preload("res://scripts/ui/panels/eve_fleet_synergy.gd")
 const EQUIPMENT_SCRIPT := preload("res://scripts/ui/panels/eve_equipment.gd")
 const DOSSIER_SCRIPT := preload("res://scripts/ui/panels/eve_ship_dossier.gd")
@@ -303,6 +306,13 @@ func _build_layout() -> void:
 	command_bar.start_battle_requested.connect(func(): start_battle_requested.emit())
 	command_bar.settings_requested.connect(func(): settings_requested.emit())
 	command_bar.timer_expired.connect(func(): stage_timer_expired.emit())
+
+	# ②b 联机中央倒计时 —— 必须**在窗之前**加：它要压在战场之上、所有功能窗之下。
+	#    ⚠️ 它只读顶条的 `time_left` / `phase`（唯一真相源），自己不存时间。
+	round_countdown = COUNTDOWN_SCRIPT.new()
+	round_countdown.name = "RoundCountdown"
+	add_child(round_countdown)
+	round_countdown.call("bind", command_bar)
 
 	# ③ 左上：舰队构成
 	synergy_window = SYNERGY_SCRIPT.new()
@@ -1517,6 +1527,24 @@ func set_phase(p: int) -> void:
 func set_start_button(text: String, enabled: bool = true) -> void:
 	if command_bar and command_bar.has_method("set_start_button"):
 		command_bar.set_start_button(text, enabled)
+
+
+## 联机对战专用：整个撤掉开战按钮（一切以倒计时为准）。
+func set_start_visible(on: bool) -> void:
+	if command_bar and command_bar.has_method("set_start_visible"):
+		command_bar.set_start_visible(on)
+
+
+## 联机对战专用：开/关最后 10 秒的中央倒计时。单机恒关（那边仍靠开战键）。
+func set_round_countdown_active(on: bool) -> void:
+	if round_countdown != null and round_countdown.has_method("set_active"):
+		round_countdown.call("set_active", on)
+
+
+## 倒计时归零、真正开打的一瞬间：中央闪一下「开战」。
+func play_countdown_flash() -> void:
+	if round_countdown != null and round_countdown.has_method("flash"):
+		round_countdown.call("flash")
 
 
 ## 同步商店的「锁定加速列表」按钮状态（锁定真正的语义在 EveRunState）

@@ -38,8 +38,16 @@ const BATTLE_SCRIPT := preload("res://scripts/eve_battle_scene.gd")
 ## 阶段 D：开战镜头的常量在 arena 脚本里，用它读（而不是从实例上 get）——
 ## 常量属于**脚本**，从实例 get 靠的是 Godot 的实现细节，脚本 preload 才是正规口径。
 const ARENA_SCRIPT := preload("res://scripts/scene/eve_battle_arena.gd")
+## ★ 2026-10-28：舰船档案窗（验「缩放按钮 + 换船不还原」）
+const DOSSIER_SCRIPT := preload("res://scripts/ui/panels/eve_ship_dossier.gd")
 const ORBIT_CAM_SCRIPT := preload("res://scripts/scene/eve_orbit_camera.gd")
 const SETTINGS_SCRIPT := preload("res://scripts/ui/panels/eve_settings.gd")
+## ★ 2026-10-28：星级 ⇄ 后勤修量的验收要**真的走**建造链（`build_from_entries`）
+const FLEET_FACTORY := preload("res://scripts/scene/eve_fleet_factory.gd")
+## ★ 2026-10-28：战斗日志窗（验「敌方 / 我方」区分）
+const LOG_SCRIPT := preload("res://scripts/ui/panels/eve_combat_log.gd")
+## ★ 2026-10-28：结算期出售（`resolve_hint` 的 can_place 参数）
+const DEPLOY_SCRIPT := preload("res://scripts/scene/eve_deploy_controller.gd")
 ## 浮窗布局存档（`user://window_layout.cfg`）—— 验收要能**隔离**玩家存下来的窗布局。
 const WINDOW_STORE := preload("res://scripts/ui/eve_window_store.gd")
 ## 打击特效层：开火线的几何验收要读它的 `METERS_PER_UNIT`（米↔世界单位）
@@ -241,9 +249,13 @@ func _unit_tests() -> void:
 	_t_field_cap()       # B2 上场上限是硬的
 	_t_synergy()         # B3 羁绊真算进数值
 	_t_drag_api()        # B5 部署 / 换位 / 撤回 / 出售
+	_t_sell_in_resolve() # ★★ 2026-10-28 打捞期也能卖船换星币
+	_t_battleship_rework() # ★★ 2026-10-29 战列舰四类血量 + 穿盾率 + 抗性归零
+	_t_shop_rarity()      # ★★ 2026-10-29 加强型战列刷新权重 0.35（同费不等概率）
 	# ── 阶段 C ──
 	_t_event_table()     # C1 事件选项表自检（3 个事件节点共用一套）
 	_t_event_apply()     # C2 事件效果落地（星币 / 经验 / 信标 / 每节点 / 漏怪减免）
+	_t_salvage_discount() # C2b ★ 2026-10-28 事件「打捞折扣」（区间 + 定价）
 	_t_salvage()         # C3 打捞（残骸来源 / 下单 / 延迟到账占货位 / 刷新刷不掉 / 买走解锁）
 	_t_salvage_tier()    # C4 ★ 残骸星级反解 + 打捞框「数字残留」修复（2026-10-01）
 	await _t_salvage_scope()   # C5 ★★ 打捞范围 = 敌我双方（2026-10-01 用户定案）
@@ -252,7 +264,11 @@ func _unit_tests() -> void:
 	_t_ship_yaw()        # D1 舰船朝向修正表（用户逐艘目视标定的落盘）
 	_t_render_interp()   # D2 ★★ 渲染插值（30Hz 仿真 ⇒ 渲染帧不再"静止后跳变"，2026-10-27）
 	_t_formation_focus() # D3 ★★ 阵型 + 集火（旗舰=吨位最高 · 全队同目标 · 敌我双方，2026-10-27）
+	_t_label_declutter() # D4 ★★ 血条/名牌堆叠 = 屏幕空间避让（2026-10-27 用户）
+	_t_label_follow()    # D4b ★★ 标签层跟船 + 接受偏移（top_level 的同步没漏）
 	_t_logistics()       # E1 ★ 后勤舰（攻击压制 + 真修友军 + 修层按防御类型，2026-10-01）
+	_t_logi_star_repair() # ★★ E3 星级放大后勤修量（2026-10-28 用户：「2星后勤肯定要多修」）
+	_t_log_side()        # ★★ E4 战斗日志标注敌我（2026-10-28 用户）
 
 
 ## 节点表与敌方编组
@@ -305,6 +321,28 @@ func _t_node_table() -> void:
 			"节点 2 = 同一张脸 + scale 1.25（全表最聪明的一手）")
 	_expect(EveEnemyComps.validate().is_empty(),
 			"敌人编组表自检：%s" % str(EveEnemyComps.validate()))
+	# ★ 2026-10-28（用户定案）：原本不足 60s 的战斗节点抬到 60s，**BOSS 维持 70**。
+	#
+	# ⚠️ 这条盯四件事：
+	#   ① battle / elite 都是 60（不是只改了第一行）；
+	#   ② BOSS 仍是 70 —— 用户明确「维持原来的时间」，⛔ 别顺手统一成 60；
+	#   ③ 事件节点仍是 0（否则事件回合会开始读秒）；
+	#   ④ 兜底常量 `BATTLE_SECONDS` = 60（联机越界时走的就是它）。
+	var time_ok := true
+	for r in EveNodeTable.ROWS:
+		var want := 0.0
+		match StringName(r["type"]):
+			&"battle", &"elite":
+				want = 60.0
+			&"boss":
+				want = 70.0
+		if not is_equal_approx(float(r["time"]), want):
+			time_ok = false
+			print("  [TIME] 节点 %d（%s）时限 = %.0f（应为 %.0f）"
+					% [int(r["index"]), String(r["type"]), float(r["time"]), want])
+	_expect(time_ok, "battle/elite = 60s · BOSS = 70s · 事件 = 0")
+	_expect(is_equal_approx(EveNodeTable.BATTLE_SECONDS, 60.0),
+			"兜底常量 BATTLE_SECONDS = 60（实际 %.0f）" % EveNodeTable.BATTLE_SECONDS)
 	# 顶条的 BOSS 描边下标必须与节点表一致（两处口径不能漂移）
 	var boss_ok := true
 	for i in EveNodeTable.BOSS_INDEXES:
@@ -811,6 +849,7 @@ func _t_trait_table() -> void:
 	if logi.size() >= 4:
 		var lg := EveShipDatabase.instantiate_by_id(logi[0], 0, 9201)
 		var rep0 := lg.logistics_repair
+		var sec0 := lg.logistics_repair_secondary
 		var cyc0 := lg.logistics_cycle
 		var lg_run := _new_run(60)
 		lg_run.level = 8
@@ -822,6 +861,10 @@ func _t_trait_table() -> void:
 				"后勤 4 艘 → 维修量 ×1.75（%.1f → %.1f）" % [rep0, lg.logistics_repair])
 		_expect(is_equal_approx(lg.logistics_cycle, cyc0 * 0.8),
 				"后勤 4 艘 → 间隔 ×0.8（%.2f → %.2f）" % [cyc0, lg.logistics_cycle])
+		# ★ 2026-10-28：衍生那笔同乘 —— 只强化主修会让 3:7 的比例被悄悄改掉
+		_expect(is_equal_approx(lg.logistics_repair_secondary, sec0 * 1.75),
+				"★ 衍生维修量同乘 ×1.75（%.1f → %.1f）"
+				% [sec0, lg.logistics_repair_secondary])
 		lg_run.queue_free()
 
 
@@ -1020,6 +1063,252 @@ func _t_drag_api() -> void:
 	st.queue_free()
 
 
+## ★★ 2026-10-28（用户：「打捞的时候钱不够，应该允许玩家卖掉船换星币」）
+##
+## 结算（打捞）期放行出售，但**只放行出售** —— 布阵 / 撤回仍是准备期专属，
+## 否则「打捞时顺手改编制、下回合开打却没提示」这种鬼状态没人能查。
+func _t_sell_in_resolve() -> void:
+	var keys := EveShipDatabase.by_cost(1)
+	var st := _new_run(47)
+	st.field.clear()
+	st.bench.clear()
+	st.bench.append({"ship_key": keys[0]["ship_key"], "star": 1, "cell": Vector2i(-1, -1)})
+	st.field.append({"ship_key": keys[1]["ship_key"], "star": 1, "cell": Vector2i(8, 5)})
+	st.coin = 3
+	st.set_phase(EveRunState.Phase.RESOLVE)
+
+	_expect(st.can_sell(), "★★ 结算（打捞）阶段允许出售")
+	var back := st.sell_value(st.bench[0])
+	var r := st.sell_from_bench(0)
+	_expect(bool(r.get("ok", false)) and st.coin == 3 + back,
+			"★★ 卖掉备战席一艘换星币：3 → %d（返还 %d）"
+			% [st.coin, back])
+	# 场上那艘也能卖：打捞差几块时这是最后一张牌
+	var back2 := st.sell_value(st.field[0])
+	r = st.sell_from_field(0)
+	_expect(bool(r.get("ok", false)) and st.field.is_empty()
+			and st.coin == 3 + back + back2,
+			"★★ 场上的一艘也能卖（累计 ◆%d）" % st.coin)
+	# 但布阵 / 撤回仍然只归准备期 —— 打捞期改编制会被下回合开场打脸
+	_expect(not bool(st.recall_to_bench(0).get("ok", true)), "★ 结算期撤回仍被拒")
+
+	# 提示与判定同源：结算期拖到棋盘，必须直接说「只能出售」
+	var h := DEPLOY_SCRIPT.resolve_hint(&"bench", false, true, {"ok": true},
+			false, true, 0, EveRunState.BENCH_SLOTS, Vector2i(8, 5), 5, false)
+	_expect(not bool(h.get("ok", true)) and String(h.get("hint", "")).contains("出售"),
+			"★★ 结算期拖到棋盘：提示只说出售（%s）" % String(h.get("hint", "")))
+	# 拖到商店仍是正经出售（可见性反证：别把整个拖放一起关掉）
+	var h2 := DEPLOY_SCRIPT.resolve_hint(&"bench", true, false, {}, false, true,
+			0, EveRunState.BENCH_SLOTS, Vector2i(-1, -1), 5, false)
+	_expect(bool(h2.get("ok", false)), "★★ 结算期拖到商店：算出售（%s）" % String(h2.get("hint", "")))
+
+	# 战斗期照旧全锁（回归防线）
+	st.set_phase(EveRunState.Phase.BATTLE)
+	_expect(not st.can_sell(), "★ 战斗期仍不许出售")
+	st.queue_free()
+
+
+## ★★ 2026-10-29（用户定案）：12 艘战列舰按「普通/加强 × 盾抗/甲抗」重排，
+## 武器换成「单通道 + 概率穿盾」（Sins 相位导弹式）。
+##
+## 三条硬约束，一条都不能松：
+##   ① **DPS 一个点都不许漂** —— 用户原话「DPS 不变」；
+##   ② 四类血量按 `BATTLESHIP_HP` 写死，且普通型已抬过一档；
+##   ③ 抗性全 0（用户：「EVE 的抗性要靠换弹种，我们焊死武器，所以没用」）。
+func _t_battleship_rework() -> void:
+	# ── ① 四类归属 + 三层血量 + 穿盾率 ──
+	var want := {
+		# 攻击型 ×1.00（底子原值）
+		&"raven": [220.0, 320.0, 190.0], &"tempest": [220.0, 320.0, 190.0],
+		&"megathron": [110.0, 420.0, 190.0], &"apocalypse": [110.0, 420.0, 190.0],
+		# 防御型（`BATTLESHIP_HP_TANK`）：普通盾 250/370/220 · 普通甲 125/485/220
+		&"scorpion": [250.0, 370.0, 220.0], &"typhoon": [250.0, 370.0, 220.0],
+		&"dominix": [125.0, 485.0, 220.0], &"armageddon": [125.0, 485.0, 220.0],
+		# 加强型（全是防御型）：盾 290/400/230 · 甲 175/520/230
+		&"rokh": [290.0, 400.0, 230.0], &"maelstrom": [290.0, 400.0, 230.0],
+		&"hyperion": [175.0, 520.0, 230.0], &"abaddon": [175.0, 520.0, 230.0],
+	}
+	var bad := PackedStringArray()
+	for key in want:
+		var s: Dictionary = EveShipDatabase.by_id(String(key))
+		var hp: Array = want[key]
+		if not is_equal_approx(float(s["shield"]), float(hp[0])) \
+				or not is_equal_approx(float(s["armor"]), float(hp[1])) \
+				or not is_equal_approx(float(s["hull"]), float(hp[2])):
+			bad.append("%s(%s/%s/%s)" % [key, s["shield"], s["armor"], s["hull"]])
+	_expect(bad.is_empty(), "★★ 12 艘战列三层血量按四类写死（不符：%s）"
+			% ("无" if bad.is_empty() else ", ".join(bad)))
+
+	# ── ①a 定位真的分开了：防御型「血厚炮轻」、攻击型「血薄炮重」──
+	#   ⚠️ 这一条是 2026-10-29 用户那句「防御型和攻击型的区别没了」的回归哨：
+	#   重做后四类的血量一模一样时，防御型会变成「同样的肉、更少的炮」的纯废物。
+	var ehp := func(k: String) -> float:
+		var d: Dictionary = EveShipDatabase.by_id(k)
+		return float(d["shield"]) + float(d["armor"]) + float(d["hull"])
+	var dps := func(k: String) -> float:
+		var d: Dictionary = EveShipDatabase.by_id(k)
+		return float(d["weapon_damage"]) / maxf(0.01, float(d["weapon_cycle"]))
+	var atk_ehp: float = ehp.call("raven")
+	var def_ehp: float = ehp.call("scorpion")
+	var atk_dps: float = dps.call("raven")
+	var def_dps: float = dps.call("scorpion")
+	_expect(def_ehp > atk_ehp and def_dps < atk_dps,
+			"★★ 同四类：防御型更厚更慢（%.0f 血 / %.0f DPS）· 攻击型更薄更快（%.0f 血 / %.0f DPS）"
+			% [def_ehp, def_dps, atk_ehp, atk_dps])
+	# 战力等值：EHP × DPS 相差 < 5%（否则有一档是废的）
+	var atk_power := atk_ehp * atk_dps
+	var def_power := def_ehp * def_dps
+	var gap := absf(atk_power - def_power) / maxf(1.0, maxf(atk_power, def_power))
+	_expect(gap < 0.05, "★★ 攻击型 / 防御型 战力等值（差距 %.1f%%：%.0f vs %.0f）"
+			% [gap * 100.0, atk_power, def_power])
+
+	# ── ①b 权威表的两列合并值必须 = 三层真值之和 ──
+	#   `eve_ship_table.gd` 只有两列（shield / armor_struct），装不下 370/220 这种
+	#   不对称拆分 ⇒ 逐层数字在 database 的 `BATTLESHIP_HP` / `_TANK`，两处是**两份**数据。
+	#   ⛔ 这条就是防止它们悄悄漂：商店卡面 / 图鉴 / AI 打分读的是表列，
+	#   战斗读的是三层 ⇒ 一旦表列没跟上，界面上写 490 而实际 730 血。
+	#   ⚠️ 比的是**派生值**（`by_id`），不是 `want` —— 拿两份手写常量对账会一起错。
+	var sum_bad := PackedStringArray()
+	for row in EveShipDatabase.all_ships():
+		var key := String(row.get("id", &""))
+		if not want.has(StringName(key)):
+			continue
+		var d: Dictionary = EveShipDatabase.by_id(key)
+		var d_sh := float(d["shield"])
+		var d_as := float(d["armor"]) + float(d["hull"])
+		if not is_equal_approx(float(row["shield"]), d_sh) \
+				or not is_equal_approx(float(row["armor_struct"]), d_as):
+			sum_bad.append("%s(表 %s/%s 实际 %d/%d)" % [key, row["shield"],
+					row["armor_struct"], int(d_sh), int(d_as)])
+	_expect(sum_bad.is_empty(), "★★ 船表两列合并值 = 派生三层（不符：%s）"
+			% ("无" if sum_bad.is_empty() else ", ".join(sum_bad)))
+
+	# 穿盾率：只有战列舰有，且甲抗 > 盾抗、加强 > 普通
+	var raven: Dictionary = EveShipDatabase.by_id("raven")
+	var mega: Dictionary = EveShipDatabase.by_id("megathron")
+	_expect(float(mega["shield_pierce"]) > float(raven["shield_pierce"]),
+			"★★ 甲抗战列穿盾率 > 盾抗战列（%.2f > %.2f）"
+			% [float(mega["shield_pierce"]), float(raven["shield_pierce"])])
+	_expect(float(raven["shield_pierce"]) > 0.0,
+			"★★ 战列舰带穿盾率 %.2f" % float(raven["shield_pierce"]))
+	_expect(is_zero_approx(float(EveShipDatabase.by_id("incursus")["shield_pierce"])),
+			"★★ 非战列舰穿盾率为 0（行为不变）")
+
+	# ── ② DPS 精确不变：weapon_damage 必须 = attack × cycle ──
+	var drift := 0.0
+	for row in EveShipDatabase.all_ships():
+		# 后勤船的火力走 `logi_atk`（自卫火力口径），不参与这一条
+		if bool(row["is_logistics"]):
+			continue
+		var expect_dmg := float(row["attack"]) * float(row["weapon_cycle"])
+		drift = maxf(drift, absf(float(row["weapon_damage"]) - expect_dmg))
+	_expect(drift < 1e-4, "★★ 全表 weapon_damage = attack × cycle（最大偏差 %.6f）" % drift)
+	_expect(is_equal_approx(float(raven["weapon_damage"]),
+			float(raven["attack"]) * float(raven["weapon_cycle"])),
+			"★★ 盾抗战列每发 %.1f 点（attack %.0f × %.1fs）"
+			% [float(raven["weapon_damage"]), float(raven["attack"]),
+				float(raven["weapon_cycle"])])
+
+	# ── ③ 抗性全 0 ──
+	var res_sum := 0.0
+	for arr in [EveShipDatabase.SHIELD_TANK_SHIELD_RESISTS,
+			EveShipDatabase.SHIELD_TANK_ARMOR_RESISTS,
+			EveShipDatabase.ARMOR_TANK_SHIELD_RESISTS,
+			EveShipDatabase.ARMOR_TANK_ARMOR_RESISTS]:
+		for v in arr:
+			res_sum += absf(float(v))
+	_expect(res_sum == 0.0, "★★ 四类抗性全归 0（残值合计 %.3f）" % res_sum)
+
+	# ── ④ 穿盾真的生效：满盾时也能啃到装甲 ──
+	var hp_full := {&"shield": 1000.0, &"armor": 1000.0, &"hull": 1000.0}
+	var res_zero := {&"shield": PackedFloat32Array([0, 0, 0, 0]),
+			&"armor": PackedFloat32Array([0, 0, 0, 0]),
+			&"hull": PackedFloat32Array([0, 0, 0, 0])}
+	var prof := PackedFloat32Array([0.0, 0.0, 0.0, 1.0])
+	var no_pierce := EveCombatCore.apply_damage(hp_full, res_zero, 100.0, prof, false, 0.0, 0.0)
+	_expect(float(no_pierce["applied"]) == 100.0 and float(hp_full[&"shield"]) == 900.0,
+			"★★ 不穿盾：100 点全落护盾")
+	hp_full = {&"shield": 1000.0, &"armor": 1000.0, &"hull": 1000.0}
+	var pierce := EveCombatCore.apply_damage(hp_full, res_zero, 100.0, prof, false, 0.0, 1.0)
+	_expect(is_equal_approx(float(hp_full[&"shield"]), 1000.0)
+			and is_equal_approx(float(hp_full[&"armor"]), 900.0),
+			"★★ 穿盾：100 点直接落装甲，护盾仍是 1000（%s / %s）"
+			% [hp_full[&"shield"], hp_full[&"armor"]])
+	_expect(float(pierce["applied"]) == 100.0, "★★ 穿盾后伤害不蒸发（%.0f）" % float(pierce["applied"]))
+	# 装甲/结构都空了还要能落回护盾（重排而非跳过的意义）
+	hp_full = {&"shield": 1000.0, &"armor": 0.0, &"hull": 0.0}
+	EveCombatCore.apply_damage(hp_full, res_zero, 100.0, prof, false, 0.0, 1.0)
+	_expect(is_equal_approx(float(hp_full[&"shield"]), 900.0),
+			"★★ 穿盾但甲/结构已空：伤害回落到护盾（%.0f）" % float(hp_full[&"shield"]))
+
+
+## ★★ 2026-10-29（用户：「加强型单独加一个出现概率减少，不能和普通的战列
+## 一个出现概率」→ 口径「普通 10% 的话加强型至少 7% 左右」）：权重 0.7。
+##
+## 验三件事：
+##  ① 权重表本身：4 艘加强型 0.7，普通战列 / 非战列 = 1.0；
+##  ② 真的抽得出来差异：5 费池跑 6000 次加权抽取，
+##     每艘加强型的次数必须低于**任何**一艘普通战列；
+##  ③ 单艘均值比贴近 0.7（绝对份额 9.3% / 6.5%，12 艘必须合计 100%）。
+func _t_shop_rarity() -> void:
+	var plus_keys := [&"rokh", &"maelstrom", &"hyperion", &"abaddon"]
+	var common_keys := [&"raven", &"scorpion", &"typhoon", &"tempest",
+			&"megathron", &"dominix", &"armageddon", &"apocalypse"]
+	var bad_w := PackedStringArray()
+	for k in plus_keys:
+		if not is_equal_approx(EveShipDatabase.shop_weight(k), 0.7):
+			bad_w.append("%s=%s" % [k, EveShipDatabase.shop_weight(k)])
+	for k in common_keys + [&"condor", &"omen"]:
+		if not is_equal_approx(EveShipDatabase.shop_weight(k), 1.0):
+			bad_w.append("%s=%s（应为 1.0）" % [k, EveShipDatabase.shop_weight(k)])
+	_expect(bad_w.is_empty(), "★★ 加强型战列权重 0.7 · 其余 1.0（不符：%s）"
+			% ("无" if bad_w.is_empty() else ", ".join(bad_w)))
+
+	# 分布：6000 次抽取（固定种子 ⇒ 可复现，不靠运气）
+	var pool: Array = EveShipDatabase.by_cost(5)
+	_expect(pool.size() == 12, "★★ 5 费池仍 12 艘（实际 %d）" % pool.size())
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20261029
+	var counts: Dictionary = {}
+	var draws := 6000
+	for i in draws:
+		var row := EveShipDatabase.pick_from_pool(pool, rng)
+		var key: StringName = StringName(row.get("ship_key", &""))
+		counts[key] = int(counts.get(key, 0)) + 1
+	var min_common := draws
+	var max_common := 0
+	var sum_common := 0
+	for k in common_keys:
+		min_common = mini(min_common, int(counts.get(k, 0)))
+		max_common = maxi(max_common, int(counts.get(k, 0)))
+		sum_common += int(counts.get(k, 0))
+	var min_plus := draws
+	var max_plus := 0
+	var sum_plus := 0
+	for k in plus_keys:
+		min_plus = mini(min_plus, int(counts.get(k, 0)))
+		max_plus = maxi(max_plus, int(counts.get(k, 0)))
+		sum_plus += int(counts.get(k, 0))
+	_expect(max_plus < min_common,
+			"★★ 加强型（最多 %d 次）比普通战列（最少 %d 次）更稀有"
+			% [max_plus, min_common])
+	# 单艘均值比 ≈ 0.7（容差 ±0.06；6000 次抽样够稳）
+	var avg_common := float(sum_common) / float(common_keys.size())
+	var avg_plus := float(sum_plus) / float(plus_keys.size())
+	var ratio := avg_plus / maxf(1.0, avg_common)
+	_expect(absf(ratio - 0.7) < 0.06,
+			"★★ 加强型单艘 = 普通战列的 %.0f%%（%d 次 : %d 次）"
+			% [ratio * 100.0, int(avg_plus), int(avg_common)])
+	# 份额核对：普通 9.3% / 加强 6.5%（合计必须 100%）
+	var share_common := avg_common / float(draws) * 100.0
+	var share_plus := avg_plus / float(draws) * 100.0
+	var share_total := share_common * float(common_keys.size()) \
+			+ share_plus * float(plus_keys.size())
+	_expect(absf(share_common - 9.26) < 0.4 and absf(share_plus - 6.48) < 0.4,
+			"★★ 5 费池份额：普通每艘 %.1f%% · 加强型每艘 %.1f%%（合计 %.0f%%）"
+			% [share_common, share_plus, share_total])
+
+
 # ══════════════════════════════════════════════════════════════════
 #  第一段（续）：阶段 C 的数值口径
 # ══════════════════════════════════════════════════════════════════
@@ -1038,7 +1327,7 @@ func _t_event_table() -> void:
 			"事件节点 = 节点 4 / 10 / 14（实际 %s）" % str(idx))
 
 	var opts := EveEventTable.all()
-	_expect(opts.size() == 4, "事件选项 4 条（实际 %d）" % opts.size())
+	_expect(opts.size() == 5, "事件选项 5 条（实际 %d）" % opts.size())
 
 	# ① id 唯一
 	var ids := {}
@@ -1076,6 +1365,9 @@ func _t_event_table() -> void:
 		var has_effect := not ap.is_empty() or not sap.is_empty()
 		if bool(o.get("pick_ship", false)) or bool(o.get("free_advanced_roll", false)):
 			has_effect = true
+		# ★ 2026-10-28「打捞折扣」是**定时**增益，靠这个字段生效
+		if int(o.get("salvage_discount_rounds", 0)) > 0:
+			has_effect = true
 		# ⛔ leak_reduce 已随「漏网」机制删除（2026-10-01）
 		for k in ["coin", "coin_per_node", "xp", "beacon_heal", "beacon_max"]:
 			if int(o.get(k, 0)) != 0:
@@ -1089,11 +1381,12 @@ func _t_event_table() -> void:
 	_expect(missing == "", "每条都有 name/tag/icon/desc/effect（缺项：%s）" % missing)
 	_expect(empty_effect == "", "每条至少有一个效果字段（空牌：%s）" % empty_effect)
 	_expect(bad_color == "", "每个 tag 都有配色（无配色：%s）" % bad_color)
-	# 四条必须覆盖四个不同分类 —— 否则 4 选 3 的取舍会退化成「三条同类 + 一条陪跑」
+	# 必须覆盖四个不同分类 —— 否则 4 选 3 的取舍会退化成「三条同类 + 一条陪跑」
+	# （★ 2026-10-28 起是 5 条，但仍是这四个分类 ⇒ 只断言「至少 4 类」）
 	var tags := {}
 	for o in opts:
 		tags[StringName(o.get("tag", &""))] = true
-	_expect(tags.size() == 4, "四个分类互不相同（实际 %s）" % str(tags.keys()))
+	_expect(tags.size() >= 4, "至少覆盖四个分类（实际 %s）" % str(tags.keys()))
 
 	# ★★ 反向注入：**四条事件一条都不许给星币**（2026-10-01 用户裁决）
 	#
@@ -1104,11 +1397,12 @@ func _t_event_table() -> void:
 	for o in opts:
 		if int(o.get("coin", 0)) != 0 or int(o.get("coin_per_node", 0)) != 0:
 			payer = String(o.get("id", ""))
-	_expect(payer == "", "★ 反向注入：四条事件都不给星币（违规项：%s）" % payer)
-	_expect(EveEventTable.count() == 4, "仍然是四选一（实际 %d）" % EveEventTable.count())
+	_expect(payer == "", "★ 反向注入：所有事件都不给星币（违规项：%s）" % payer)
+	_expect(EveEventTable.count() == 5, "五选一（实际 %d）" % EveEventTable.count())
 	_expect(EveEventTable.has_id(&"weapon_tune") and EveEventTable.has_id(&"armor_plate")
-			and EveEventTable.has_id(&"beacon_repair") and EveEventTable.has_id(&"black_market"),
-			"四条 id 与交接文档 §7.2 一致（weapon_tune / armor_plate / beacon_repair / black_market）")
+			and EveEventTable.has_id(&"beacon_repair") and EveEventTable.has_id(&"black_market")
+			and EveEventTable.has_id(&"salvage_discount"),
+			"id 齐全（weapon_tune / armor_plate / beacon_repair / black_market / salvage_discount）")
 
 
 ## C2：事件效果真的落到状态机上（2026-10-01 按交接文档 §7.2 的四条重写）
@@ -1213,13 +1507,78 @@ func _t_event_apply() -> void:
 #  第一段（续）：阶段 C 的打捞（残骸 → 下单 → 延迟到账 → 占货位）
 # ══════════════════════════════════════════════════════════════════
 
-## C3：打捞整条链的数值口径
+## C2b：★ 2026-10-28 事件「打捞折扣」
 ##
-## 四个「必须成立」的东西，缺一个这条链就是假的：
-##   ① 残骸只能从**战斗击毁**来（不能凭空发）；
-##   ② 下单当场扣钱，但东西**不在本节点给**；
-##   ③ 到账后占住货位，**付费刷新也刷不掉**；
-##   ④ 买走要**解锁**（不解锁那个格子永远刷不动）、没买走要**过期**（不然白占一辈子）。
+## 用户口径：「未来三个回合，打捞费用减半（敌人的价格降低到一半，我方的价格
+## 降低到四分之一，最低为 1，四舍五入，就低不就高）」。
+##   · 事件节点本身**不占回合**（选完就 advance）⇒ 区间从下一节点起算 3 个
+##   · 我方 = floor(船价 × 0.25)、敌方 = floor(船价 × 0.5)，两者下限 1
+func _t_salvage_discount() -> void:
+	var st := _new_run(83)
+	st.node_index = 4
+	st.wrecks.clear()
+	# 0:我方1费  1:我方3费  2:我方4费  3:敌方3费  4:敌方5费
+	for spec in [["A", 1, 0], ["B", 3, 0], ["C", 4, 0], ["D", 3, 1], ["E", 5, 1]]:
+		st.wrecks.append({"name": String(spec[0]), "cost": int(spec[1]),
+				"team": int(spec[2]), "star": 1})
+
+	# ① 非事件期：沿用原来的口径（我方 ⌈×0.5⌉、敌方全价）
+	_expect(st.salvage_cost_of(1) == 2, "平时：我方 3 费船打捞 2 ◆（实际 %d）" % st.salvage_cost_of(1))
+	_expect(st.salvage_cost_of(3) == 3, "平时：敌方 3 费船打捞 3 ◆（实际 %d）" % st.salvage_cost_of(3))
+	_expect(st.salvage_cost_of(4) == 5, "平时：敌方 5 费船打捞 5 ◆（实际 %d）" % st.salvage_cost_of(4))
+
+	# ② 选完事件：当拍**不生效**，从下一节点起算 3 个
+	var opt := st.apply_event(&"salvage_discount")
+	_expect(not opt.is_empty(), "打捞折扣落地")
+	_expect(st.salvage_discount_from == 5 and st.salvage_discount_to == 7,
+			"区间 = 节点 5~7（实际 %d~%d）" % [st.salvage_discount_from, st.salvage_discount_to])
+	_expect(not st.salvage_discount_active(), "★ 事件当拍不生效（node_index = 4）")
+
+	st.node_index = 5
+	_expect(st.salvage_discount_active(), "节点 5 生效（第 1 回合）")
+	# 我方：floor(cost×0.25)，下限 1 ⇒ 3 费 → 0 → 1；4 费 → 1
+	_expect(st.salvage_cost_of(1) == 1, "折扣：我方 3 费船 1 ◆（实际 %d）" % st.salvage_cost_of(1))
+	_expect(st.salvage_cost_of(2) == 1, "折扣：我方 4 费船 1 ◆（实际 %d）" % st.salvage_cost_of(2))
+	_expect(st.salvage_cost_of(0) == 1, "折扣：我方 1 费船仍 1 ◆（下限 1）")
+	# 敌方：floor(cost×0.25)（★ 2026-10-28 二改：与上边我方同价），下限 1
+	#   ⇒ 3 费 → 0 → 1；5 费 → 1（原来是 2，用户要求把敌方也压到 1/4）
+	_expect(st.salvage_cost_of(3) == 1, "折扣：敌方 3 费船 1 ◆（实际 %d）" % st.salvage_cost_of(3))
+	_expect(st.salvage_cost_of(4) == 1, "★ 折扣：敌方 5 费船 1 ◆（与我方同价，实际 %d）"
+			% st.salvage_cost_of(4))
+
+	st.node_index = 7
+	_expect(st.salvage_discount_active(), "节点 7 仍生效（第 3 回合）")
+	st.node_index = 8
+	_expect(not st.salvage_discount_active(), "★ 节点 8 已过期（只有 3 个回合）")
+	_expect(st.salvage_cost_of(1) == 2, "过期后回到平时价 2 ◆（实际 %d）" % st.salvage_cost_of(1))
+
+	# ③ 联机口径：联机不按节点跑（17 回合表），计时改由战斗场景写回合号。
+	#    ⚠️ 这条不测就会漏：联机里 node_index 恒为 1 ⇒ 用节点计时的话
+	#      折扣永远 not active（区间起点永远 > 1），选了等于白选。
+	var vs := _new_run(85)
+	vs.node_index = 1
+	vs.set_event_clock(6)                       # 联机第 6 回合选的事件
+	vs.wrecks.clear()
+	vs.wrecks.append({"name": "F", "cost": 4, "team": 0, "star": 1})
+	vs.apply_event(&"salvage_discount")
+	_expect(vs.salvage_discount_from == 7 and vs.salvage_discount_to == 9,
+			"联机：按回合号起算 7~9（实际 %d~%d）"
+			% [vs.salvage_discount_from, vs.salvage_discount_to])
+	_expect(not vs.salvage_discount_active(), "联机：第 6 回合当拍不生效")
+	vs.set_event_clock(8)
+	_expect(vs.salvage_discount_active(), "联机：第 8 回合生效")
+	_expect(vs.salvage_cost_of(0) == 1, "联机：4 费我方船 1 ◆（实际 %d）" % vs.salvage_cost_of(0))
+	vs.set_event_clock(10)
+	_expect(not vs.salvage_discount_active(), "联机：第 10 回合已过期")
+
+	# ④ 存档往返：区间与计时基准都要能存住（续档后折扣不能凭空失效/复活）
+	var st_b := _new_run(86)
+	st_b.from_dict(st.to_dict())
+	_expect(st_b.salvage_discount_from == 5 and st_b.salvage_discount_to == 7,
+			"存档往返：区间仍是 5~7（实际 %d~%d）"
+			% [st_b.salvage_discount_from, st_b.salvage_discount_to])
+
+
 ## C3：打捞整条链的数值口径（★ 2026-10-04 全面重写为多选版）
 ##
 ## ## 口径变更对照（旧 → 新）
@@ -1944,6 +2303,113 @@ func _place_two_rows(fleet: Array[EveShip], side: int) -> void:
 
 
 ## ══════════════════════════════════════════════════════════════════
+##  ★ D4 血条/名牌堆叠 = 屏幕空间避让（2026-10-27 用户：「血条堆叠」）
+## ══════════════════════════════════════════════════════════════════
+##
+## 用户原话：「血条堆叠，看看怎么解决」，并选定「两者都做」+
+## 「常驻只保留舰船名字」（⇒ 血条只给关键船 / 受伤船）。
+##
+## 验收口径：只测**纯函数** `declutter_offsets`（无头没有真实投影，
+## 测不到「屏幕上到底长什么样」）。五条：
+##   ① 完全重叠 ⇒ 排成 0 / step / 2·step 的阶梯
+##   ② 优先级高的留在原位（被集火 / 旗舰不能被普通船挤走）
+##   ③ 互不重叠 ⇒ 一律不动（不许无缘无故整体上移）
+##   ④ 超过层数上限 ⇒ 压暗（继续上推会顶出画面）
+##   ⑤ 输出与输入**同序**（串了下标就是「甲的名字挂到乙头上」）
+func _t_label_declutter() -> void:
+	var A := ARENA_SCRIPT
+	var step: float = A.LABEL_DECLUTTER_STEP_PX
+	var r := Rect2(Vector2(100, 100), Vector2(60, 14))
+
+	# ── ① 三块完全重叠 ──
+	var res: Array = A.declutter_offsets([r, r, r], [0, 0, 0])
+	_expect(res.size() == 3, "★ 避让：输出条数与输入一致")
+	_expect(is_equal_approx(res[0].shift, 0.0)
+			and is_equal_approx(res[1].shift, step)
+			and is_equal_approx(res[2].shift, step * 2.0),
+			"★★ 避让：三块完全重叠必须排成 0 / %.0f / %.0f px 阶梯（实际 %.0f / %.0f / %.0f）"
+			% [step, step * 2.0, res[0].shift, res[1].shift, res[2].shift])
+	_expect(is_equal_approx(res[0].dim, 1.0) and is_equal_approx(res[2].dim, 1.0),
+			"★ 避让：排在层数内的标签**不许**压暗")
+
+	# ── ② 优先级：第 3 块是被集火目标 ──
+	var res2: Array = A.declutter_offsets([r, r, r], [0, 0, 4])
+	_expect(is_equal_approx(res2[2].shift, 0.0),
+			"★★ 避让：高优先级（被集火/旗舰）必须留在原位（实际 shift=%.0f）"
+			% res2[2].shift)
+	_expect(res2[0].shift > 0.0 and res2[1].shift > 0.0,
+			"★★ 避让：低优先级必须让位（实际 %.0f / %.0f）"
+			% [res2[0].shift, res2[1].shift])
+
+	# ── ③ 互不重叠 ──
+	var apart: Array = [Rect2(0, 0, 40, 12), Rect2(200, 0, 40, 12), Rect2(400, 0, 40, 12)]
+	var res3: Array = A.declutter_offsets(apart, [0, 0, 0])
+	var clean := true
+	for d in res3:
+		if not is_equal_approx(float(d.shift), 0.0):
+			clean = false
+	_expect(clean, "★★ 避让：互不重叠时一律 shift=0（不许无缘无故整体上移）")
+
+	# ── ④ 层数上限 ──
+	var many: Array = []
+	var pm: Array = []
+	for i in range(9):
+		many.append(r)
+		pm.append(0)
+	var res4: Array = A.declutter_offsets(many, pm)
+	var dimmed := 0
+	for d in res4:
+		if float(d.dim) < 1.0:
+			dimmed += 1
+	_expect(dimmed >= 9 - int(A.LABEL_DECLUTTER_MAX_LAYERS),
+			"★ 避让：超过 %d 层的标签必须压暗（实际压暗 %d / 9）"
+			% [int(A.LABEL_DECLUTTER_MAX_LAYERS), dimmed])
+
+	# ── ⑤ 同序 ──
+	# 输入顺序是「下、中、上」（三块互相重叠），最上面那块（下标 2）应留在原位。
+	# ⚠️ y 必须挑得足够近（100/105/110 + 高 14 才是两两重叠）；
+	#    早期取 100/110/120，首尾两块其实差 20px > 14 ⇒ 本来就不重叠，
+	#    断言自然失败（这是测试数据的问题，不是避让算法的问题）。
+	var rev: Array = [Rect2(100, 110, 60, 14), Rect2(100, 105, 60, 14),
+			Rect2(100, 100, 60, 14)]
+	var res5: Array = A.declutter_offsets(rev, [0, 0, 0])
+	_expect(is_equal_approx(res5[2].shift, 0.0) and res5[0].shift > 0.0,
+			"★★ 避让：输出必须与输入**同序**（最上面那块应留在原位，实际 %.0f）"
+			% res5[2].shift)
+
+	print("[标签避让] 重叠推开 ✓ · 优先级保位 ✓ · 无重叠不动 ✓ · 超层压暗 ✓ · 同序 ✓")
+
+
+## 标签层（`label_root`）的行为级自检：跟船 + 接受世界 Y 偏移。
+##
+## 为什么要单列一条：为了让避让的「上移」不跟着船体俯仰一起歪，标签层被设成
+## `top_level = true`（不再继承船体 transform）⇒ 它的位置必须自己同步。
+## 同步漏一处，表现是「名字留在原地、船飞走了」——这种 bug 在无头下抓不到，
+## 只能靠这条断言。
+func _t_label_follow() -> void:
+	var ship := EveShipDatabase.instantiate_by_id("punisher", 0, 9501)
+	ship.body.position = Vector3(12_000.0, 0.0, 4_000.0)
+	ship.body.previous_position = ship.body.position
+	var vis := EveShipVisual.new()
+	add_child(vis)
+	vis.setup(ship)
+	vis.sync_from_body(ship.body, true, 1.0 / 60.0, 1.0)
+	var want := vis.global_position
+	_expect(vis.label_root.global_position.distance_to(want) < 1e-3,
+			"★★ 标签层必须跟着船走（期望 %s，实际 %s）"
+			% [str(want), str(vis.label_root.global_position)])
+	vis.set_label_offset_world(0.5)
+	for i in range(20):
+		vis.sync_from_body(ship.body, true, 1.0 / 60.0, 1.0)
+	_expect(absf(vis.label_root.global_position.y - (want.y + 0.5)) < 0.02,
+			"★★ 避让偏移必须真的抬高标签层（期望 y≈%.3f，实际 %.3f）"
+			% [want.y + 0.5, vis.label_root.global_position.y])
+	_expect(is_equal_approx(vis.label_root.global_rotation.length(), 0.0),
+			"★★ 标签层旋转必须被清零（否则避让的上移会跟着船体歪）")
+	vis.free()
+
+
+## ══════════════════════════════════════════════════════════════════
 ##  ★ E1 后勤舰（2026-10-01 用户定案：「攻击要低、后勤要真」）
 ## ══════════════════════════════════════════════════════════════════
 ##
@@ -2018,6 +2484,23 @@ func _t_logistics() -> void:
 				"护盾" if cases[id] == &"shield" else "装甲"])
 		_expect(float(d.get("logistics_repair", 0.0)) > 0.0,
 				"%s 的修量 > 0" % String(d.get("name", id)))
+		# ★★ 2026-10-28 用户定案：后勤**同时修两层**。
+		#   衍生层 = 主修层的对面（护盾 ↔ 装甲），量 = floor(主修 × 3/7)。
+		#   用户举例：矮脚鸡 修盾 12/2s ⇒ 衍生修甲 5（12×3/7=5.14，就低不就高）。
+		var prim := float(d.get("logistics_repair", 0.0))
+		var sec_layer := StringName(d.get("logistics_layer_secondary", &""))
+		var sec_val := float(d.get("logistics_repair_secondary", 0.0))
+		var want_layer: StringName = &"armor" if cases[id] == &"shield" else &"shield"
+		_expect(sec_layer == want_layer,
+				"%s 衍生层 = 对面层（%s）" % [String(d.get("name", id)), String(sec_layer)])
+		_expect(is_equal_approx(sec_val, floor(prim * 3.0 / 7.0)),
+				"%s 衍生量 = floor(主修 %.0f × 3/7) = %.0f（实际 %.0f）"
+				% [String(d.get("name", id)), prim, floor(prim * 3.0 / 7.0), sec_val])
+		# 绝对值也要钉死：护卫 12 → 5、巡洋 56 → 24（吨位只有这两档）
+		var want_val := 5.0 if prim < 20.0 else 24.0
+		_expect(is_equal_approx(sec_val, want_val),
+				"%s 衍生量绝对值 %.0f（实际 %.0f）"
+				% [String(d.get("name", id)), want_val, sec_val])
 	# ★ 非后勤船**不许**带修层 —— 否则是「半生效状态」（踩过：防御型显示修护盾）
 	var dirty: Array[String] = []
 	for s in EveShipDatabase.all_ships():
@@ -2109,11 +2592,128 @@ func _t_logistics() -> void:
 	m2.repair_ally(t2)
 	_expect(is_equal_approx(float(t2.hp[&"shield"]), shield_b)
 			and float(t2.hp[&"armor"]) > armor_b,
-			"★ 甲抗后勤（奥格诺级）修装甲、**不碰护盾**")
+			"★ 甲抗后勤的主修笔只修装甲、**不碰护盾**")
+	# ★ 2026-10-28：但**衍生笔**专门修护盾（塔的两支维修器各管一层）
+	var sec_gain := m2.repair_ally_secondary(t2)
+	_expect(sec_gain > 0.0 and float(t2.hp[&"shield"]) > shield_b,
+			"★ 衍生笔（3/7）修到护盾 +%.1f（%.1f → %.1f）"
+			% [sec_gain, shield_b, float(t2.hp[&"shield"])])
+
+	# ── ⑤ 双层同时修：一个修理周期里主修 + 衍生**都落地** ──
+	#    ⚠️ 这条不能省：只改 `repair_ally()` 而不改模拟器循环的话，
+	#      数值表全对、单测单笔全对，实战里却永远只有主修那一笔（静默失效）。
+	var m3 := EveShipDatabase.instantiate_by_id("bantam", 0, 7008)   # 盾系：盾 12 / 甲 5
+	var t3 := EveShipDatabase.instantiate_by_id("condor", 0, 7009)   # 盾系友军，两层都掉
+	var foe3 := EveShipDatabase.instantiate_by_id("rifter", 1, 7010)
+	var sim2 := EveBattleSimulator.new()
+	sim2.setup([m3, t3], [foe3])
+	sim2.set_time_limit(45.0)
+	t3.hp[&"shield"] = float(t3.max_hp[&"shield"]) * 0.2
+	t3.hp[&"armor"] = float(t3.max_hp[&"armor"]) * 0.3
+	var sh0 := float(t3.hp[&"shield"])
+	var ar0 := float(t3.hp[&"armor"])
+	for _i in steps:
+		sim2.step(EveBattleSimulator.FIXED_STEP)
+		if sim2.finished:
+			break
+	_expect(float(t3.hp[&"shield"]) > sh0,
+			"★ 主修笔：护盾涨了（%.1f → %.1f）" % [sh0, float(t3.hp[&"shield"])])
+	_expect(float(t3.hp[&"armor"]) > ar0,
+			"★ 衍生笔：装甲也涨了（%.1f → %.1f）—— 同一次循环两笔都落地"
+			% [ar0, float(t3.hp[&"armor"])])
 
 	print("[后勤舰] 火力 3/10（攻击型的 ~1/4）· 8 艘修层全对 · 修友军生效 · 三条边界成立")
 
 	_t_logi_self_repair_forward()   # ★★ E2 反向注入（2026-10-01）
+	_t_dossier_zoom()               # ★★ 2026-10-28 档案窗缩放按钮
+	# ⚠️ `_t_motion_no_runaway()` **不在**这里跑 —— 它要跑满 120 秒仿真，
+	#    而仿真内部用的是**全局 RNG**（`randf()`），会把后面场景步骤
+	#    （`_step_b_drag` 的随机买船）的随机序列整条推走 ⇒ 建队断言假失败。
+	#    ⇒ 它挂在 `_finish()` 开头（所有场景步骤都已跑完之后）。
+
+
+## ══════════════════════════════════════════════════════════════════
+##  ★★ 2026-10-28（用户报「护卫运动着运动着就跑到边缘去了」）
+## ══════════════════════════════════════════════════════════════════
+##
+##  站位公式原先是「**敌人位置** + 我方半场方向 × need」，而两队都在推进
+##  ⇒ 正反馈：我冲过去、你冲过来，各自追着**对方**的站位跑，一路把战场拖到
+##     对方半场甚至屏幕外。实测（全护卫 8v8）60 秒内旗舰从 z=+40 km 冲到 −15 km，
+##     两队反复穿阵；残局还会因为「跟班全灭 ⇒ 覆盖判定恒真 ⇒ 就地锚定」
+##     把自己锁死在 −14.5 km。
+##
+##  修法（三条，缺一条都还会跑）：
+##    ① `_fleet_station` 的 z **不许越过中线**（team0 z≥0 / team1 z≤0）
+##    ② 横向走慢速低通（4 s）+ 夹在 ±16 km（否则变成横着互相追）
+##    ③ 锚定判据只看「离站位够近」，不再看 `_fleet_covered()`（残局锁死）
+##
+##  ⚠️ 这条断言的分母是**世界坐标**，与镜头无关 —— 换相机/缩放都不会误报。
+func _t_motion_no_runaway() -> void:
+	# ★ 2026-10-28：**固定随机种子**，否则这条断言会飘 ——
+	#   仿真里的命中判定走全局 `randf()`，实测同一份代码两次跑出
+	#   3.1 s / 6.4 s（后者越线判红）。bug 版本是整段 30 s+，固定种子照样抓得住。
+	#   ⚠️ 本函数只在 `_finish()` 里跑（所有场景步骤之后），改种子不会污染别处。
+	seed(20261028)
+	var own: Array[EveShip] = []
+	var foe: Array[EveShip] = []
+	# 8v8 全护卫：最快、最容易被拖跑的一档（战列慢，压不出这个 bug）
+	for i in 8:
+		own.append(EveShipDatabase.instantiate_by_id("kestrel", 0, 8100 + i))
+		foe.append(EveShipDatabase.instantiate_by_id("punisher", 1, 8200 + i))
+	# 布置成实战尺度：两军各在己方半场，中轴 z=±6 km 处起阵
+	#  ⚠️ 用 6 km 而不是探针里的 40 km —— 这里要复现的是「相遇之后的漂移」，
+	#     不是「开局 80 km 对冲要多久」。间距小才能让 120 s 里跑到稳态。
+	for i in 8:
+		own[i].body.position = Vector3(float(i % 4 - 1.5) * 8_000.0, 0.0, 6_000.0)
+		own[i].body.aim_dir = Vector3(0, 0, -1)
+		foe[i].body.position = Vector3(float(i % 4 - 1.5) * 8_000.0, 0.0, -6_000.0)
+		foe[i].body.aim_dir = Vector3(0, 0, 1)
+
+	var sim := EveBattleSimulator.new()
+	sim.setup(own, foe)
+	sim.set_time_limit(120.0)
+	var worst_own := 0.0
+	var worst_foe := 0.0
+	var cross_streak := 0
+	var cross_max_streak := 0
+	var cross_total := 0
+	var tick_count := int(120.0 / EveBattleSimulator.FIXED_STEP)
+	for i in tick_count:
+		sim.step(EveBattleSimulator.FIXED_STEP)
+		# 统计「旗舰离本方起始边」的纵深（起始 6 km，向敌方推进时变小）
+		var of = sim._flagship.get(0)
+		var ff = sim._flagship.get(1)
+		if of == null or ff == null:
+			break
+		worst_own = maxf(worst_own, absf(of.body.position.z))
+		worst_foe = maxf(worst_foe, absf(ff.body.position.z))
+		# 穿阵：两军旗舰跑到对方半场（z 符号与本方相反）
+		# ⚠️ 只统计**持续**穿阵：惯性超调会让旗舰短暂越过中线几百米，
+		#    那不是"跑到对面去了"，不该判失败。**连续** 6 s 才算。
+		#    ★ 2026-10-28 修正判据实现：原来把命中帧**累加**（`crossed_ticks += 1`），
+		#      与上面「连续」二字不符 ⇒ 几十次 0.2 s 的擦线超调会被凑成 7.6 s 假红。
+		#      ⇒ 改成记**最长连续段**。bug 版本是整段 30 s+ 都在对面，照样抓得住。
+		if of.body.position.z < -1_000.0 and ff.body.position.z > 1_000.0:
+			cross_streak += 1
+			cross_total += 1
+			cross_max_streak = maxi(cross_max_streak, cross_streak)
+		else:
+			cross_streak = 0
+	var cross_dt := EveBattleSimulator.FIXED_STEP
+	var crossed := cross_max_streak * cross_dt > 6.0
+
+	# 阈值 30 km：起始 |z|=6 km，修好后全程最大约 15 km（实测），
+	# 给到 30 km 是留出全场机动余量；bug 版本会冲到 40 km 以上。
+	_expect(worst_own <= 30_000.0,
+			"★ 我方旗舰没跑到边缘（最大 |z|=%.1f km ≤ 30）" % (worst_own / 1000.0))
+	_expect(worst_foe <= 30_000.0,
+			"★ 敌方旗舰没跑到边缘（最大 |z|=%.1f km ≤ 30）" % (worst_foe / 1000.0))
+	_expect(not crossed,
+			"★ 两军没有持续穿阵（最长连续 %.1f s ≤ 6，累计 %.1f s）"
+			% [cross_max_streak * cross_dt, cross_total * cross_dt])
+	print("[运动] 全护卫 8v8 跑 120 s · 旗舰最大纵深 我 %.1f km / 敌 %.1f km · 对穿 最长 %.1f s / 累计 %.1f s"
+			% [worst_own / 1000.0, worst_foe / 1000.0,
+				cross_max_streak * cross_dt, cross_total * cross_dt])
 
 
 ## ══════════════════════════════════════════════════════════════════
@@ -2135,6 +2735,237 @@ func _t_logistics() -> void:
 ## ⛔ 绝不能只断「A > 0」：B 组同样是 0 时它也会通过，
 ##    分不清「修好了」和「两组都坏」。必须断 **A 显著优于 B**。
 ##
+## ★★ 2026-10-28（用户）：「左上角舰船档案需要添加一个缩放按钮，让它能够缩放。
+##   然后如果我拖放它放大了，点击下一艘船的档案时，这个舰船档案窗口应该维持
+##   拉大后的样式，不应该还原。」
+##
+## 两条断言对应他这句话的两半：
+##   ① 标题栏里真的有按钮、点得动、宽和高**一起**变大
+##      （只变高是最容易犯的错：基类的 `set_window_height()` 宽度另走一条口径）
+##   ② 换一艘船之后尺寸**原样保持**（这是"不还原"的硬判据，不是看外观）
+func _t_dossier_zoom() -> void:
+	var w: Control = DOSSIER_SCRIPT.new()
+	add_child(w)
+	w.call("set_window_rect", 1500.0, 40.0, 172.0, 376.0)
+	var a: EveShip = EveShipDatabase.instantiate_by_id("kestrel", 0, 9301)
+	var b: EveShip = EveShipDatabase.instantiate_by_id("raven", 0, 9302)
+	w.call("set_ship", a)
+	var base := w.size
+	_expect(base.y > 300.0, "档案展开后是完整高度（%.0f）" % base.y)
+
+	var zb: Control = w.get("_zoom_btn")
+	_expect(zb != null and zb.visible, "★ 缩放按钮存在，且展开态可见")
+	_expect(zb != null and zb.get_parent() == w.get("header"),
+			"★ 缩放按钮挂在标题栏里（不是浮在窗外）")
+	_expect(not bool(w.call("is_zoomed")), "初始不是放大态")
+
+	w.call("toggle_zoom")            # = 点一下按钮
+	var big := w.size
+	_expect(big.y > base.y + 1.0 and big.x > base.x + 1.0,
+			"★ 点缩放 ⇒ 宽高**同时**变大（%.0f×%.0f → %.0f×%.0f）"
+			% [base.x, base.y, big.x, big.y])
+	_expect(bool(w.call("is_zoomed")), "点完进入放大态")
+
+	# ★★ 用户的硬要求：换下一艘船，尺寸必须维持
+	w.call("set_ship", b)
+	_expect(is_equal_approx(w.size.x, big.x) and is_equal_approx(w.size.y, big.y),
+			"★★ 换一艘船后**维持放大尺寸**（%.0f×%.0f，期望 %.0f×%.0f）"
+			% [w.size.x, w.size.y, big.x, big.y])
+
+	w.call("toggle_zoom")
+	_expect(is_equal_approx(w.size.x, base.x) and is_equal_approx(w.size.y, base.y),
+			"★ 再点一次 ⇒ 还原到原尺寸（%.0f×%.0f，期望 %.0f×%.0f）"
+			% [w.size.x, w.size.y, base.x, base.y])
+	_expect(not bool(w.call("is_zoomed")), "还原后退出放大态")
+
+	# ★★ 2026-10-28 用户复测：「我放大之后，再到下一局，没法缩小了」。
+	#
+	#   根因：放大尺寸进了布局存档，但「处于放大态」没进 ⇒ 新一局
+	#   `_zoomed=false` 却拿着 258×564，点按钮只会以放大尺寸为基准再 ×1.5，
+	#   **永远回不到 172×376**。修法见 `EveShipDossier._layout_extra()`。
+	#   这里模拟一次跨局：把存档喂给一个**新实例**，它必须一进来就是放大态，
+	#   并且点一次就能缩回基准尺寸。
+	w.call("toggle_zoom")           # 重新进入放大态
+	var extra: Dictionary = w.call("_layout_extra")
+	_expect(bool(extra.get("zoom", false)),
+			"★ 放大态的布局存档里带 zoom 标记（否则下一局缩不回去）")
+	var w2: Control = DOSSIER_SCRIPT.new()
+	w2.name = "DossierNextRun"
+	add_child(w2)
+	w2.call("set_window_rect", 900.0, 40.0, big.x, big.y)
+	# ⚠️ 必须先把窗展开（set_ship 会走到 _set_expanded(true)）：收起态的高度被
+	#    压在 128，_apply_zoom() 的高度会被它盖掉 —— 断言会读到一个 258×128，
+	#    看起来像宽度没还原，其实只是测试少了一步。
+	w2.call("set_ship", b)
+	w2.call("_apply_layout_extra", extra)
+	_expect(bool(w2.call("is_zoomed")), "★ 下一局读档 ⇒ 认出自己处于放大态")
+	w2.call("toggle_zoom")
+	_expect(not bool(w2.call("is_zoomed"))
+			and is_equal_approx(w2.size.x, base.x) and is_equal_approx(w2.size.y, base.y),
+			"★★ 下一局点一次就能缩回原尺寸（%.0f×%.0f，期望 %.0f×%.0f）"
+			% [w2.size.x, w2.size.y, base.x, base.y])
+	remove_child(w2)
+	w2.queue_free()
+	w.call("toggle_zoom")           # 收拾状态，别影响后面的拖拽断言
+
+	# ★★ 2026-10-28 用户复测：「在简单档里点了别的船，档案还是会还原」。
+	#   真因在**另一条路**：右下角把手拖拽。基类 `_on_grip_input` 的松手分支
+	#   被它自己前面的 `_resizing = event.pressed` 挡死（永远进不去）⇒
+	#   手拉的尺寸从没记进 `_user_rect`，换船时按设计稿还原。
+	#   ⚠️ 无头环境没有真实鼠标位移，所以中间那步直接改 `size`（等价于拖动结果）。
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	w.call("_on_grip_input", press)
+	w.size = Vector2(240, 500)          # = 拖动到这么大
+	var release := InputEventMouseButton.new()
+	release.button_index = MOUSE_BUTTON_LEFT
+	release.pressed = false
+	w.call("_on_grip_input", release)
+	w.call("set_ship", b)
+	_expect(is_equal_approx(w.size.x, 240.0) and is_equal_approx(w.size.y, 500.0),
+			"★★ 用手拉大（右下角把手）后换船也维持（%.0f×%.0f，期望 240×500）"
+			% [w.size.x, w.size.y])
+
+	# 收起态没有内容可放大 ⇒ 按钮要隐掉（不然点了没反应像坏了）
+	w.call("set_ship", null)
+	_expect(zb != null and not zb.visible, "★ 收起态缩放按钮隐藏")
+
+	remove_child(w)
+	w.queue_free()
+
+
+## ★★ 2026-10-28（用户：「2星后勤肯定要涨维修量啊，所以也按比例涨」）
+##
+## 星级放大**两层**后勤修量，倍率与攻击 / 血量同源（`STAR_MULT^(star-1)`），
+## 两层各自乘完**向下取整**（就低不就高）。
+##
+## ⚠️ 走的是**生产建造链** `build_from_entries()`，不是手搓 EveShip ——
+##    否则验的是测试自己的算式，把 `_star_scale_repair` 改坏了也照样绿。
+## ⚠️ `with_traits = false`：羁绊的 `repair_scale()` 会再乘一次且**不取整**，
+##    开着它数字就不是这里要钉的那一组了。
+func _t_logi_star_repair() -> void:
+	var f = FLEET_FACTORY.new()
+	# 护卫（盾修 / 甲衍生）与巡洋（甲修 / 盾衍生）各一艘，覆盖两个方向
+	var b1 := _logi_at_star(f, "bantam", 1)
+	var b2 := _logi_at_star(f, "bantam", 2)
+	var b3 := _logi_at_star(f, "bantam", 3)
+	var e1 := _logi_at_star(f, "exequror", 1)
+	var e2 := _logi_at_star(f, "exequror", 2)
+	if b1 == null or b2 == null or b3 == null or e1 == null or e2 == null:
+		_expect(false, "★ 建造链能造出矮脚鸡 / 送葬者级（星级 1~3）")
+		return
+
+	_expect(is_equal_approx(b1.logistics_repair, 12.0)
+			and is_equal_approx(b1.logistics_repair_secondary, 5.0),
+			"基线：矮脚鸡 1★ = 盾 12 · 甲 5（实际 %.0f / %.0f）"
+			% [b1.logistics_repair, b1.logistics_repair_secondary])
+	_expect(is_equal_approx(b2.logistics_repair, 21.0)
+			and is_equal_approx(b2.logistics_repair_secondary, 9.0),
+			"★★ 矮脚鸡 2★ = 盾 21 · 甲 9（×1.8 向下取整，实际 %.0f / %.0f）"
+			% [b2.logistics_repair, b2.logistics_repair_secondary])
+	_expect(is_equal_approx(b3.logistics_repair, 38.0)
+			and is_equal_approx(b3.logistics_repair_secondary, 16.0),
+			"★★ 矮脚鸡 3★ = 盾 38 · 甲 16（×3.24 向下取整，实际 %.0f / %.0f）"
+			% [b3.logistics_repair, b3.logistics_repair_secondary])
+	_expect(is_equal_approx(e1.logistics_repair, 56.0)
+			and is_equal_approx(e2.logistics_repair, 100.0)
+			and is_equal_approx(e2.logistics_repair_secondary, 43.0),
+			"★★ 送葬者级（甲修）：1★ 甲 56 → 2★ 甲 100 / 盾 43（实际 %.0f / %.0f / %.0f）"
+			% [e1.logistics_repair, e2.logistics_repair, e2.logistics_repair_secondary])
+	# 反向注入：星级**不能**顺手改周期（修得更勤 ≠ 修得更多，两条口径分开）
+	_expect(is_equal_approx(b2.logistics_cycle, b1.logistics_cycle),
+			"★ 星级只放大修量，**不改**目标选择周期（%.1f s）" % b2.logistics_cycle)
+	# 非后勤船 `star > 1` 时不能被误伤成「修 0 点但层还在」的半状态
+	var atk := _logi_at_star(f, "incursus", 2)
+	_expect(atk != null and atk.logistics_repair <= 0.0,
+			"★ 2★ 攻击型（无后勤）修量仍为 0 —— 没留半生效状态")
+
+
+## 用生产建造链造一艘指定星级的船（`_t_logi_star_repair` 专用）
+func _logi_at_star(f, key: String, star: int) -> EveShip:
+	var arr: Array = f.build_from_entries(
+			[{"ship_key": StringName(key), "star": star}], 0, false)
+	if arr.is_empty():
+		return null
+	return arr[0] as EveShip
+
+
+## ★★ 2026-10-28（用户：「战斗日志应该标注敌方我方的船发生的变化，要做个区分」）
+##
+## 判据**不能**从文案里推（两边船名会重名：我方也可能买了茶隼级），
+## 所以阵营由写入侧带上来。这里钉三件事：
+##   ① 模拟器：破层 / 摧毁 / 后勤三类船变化日志都带 0 或 1
+##   ② 我方与敌方都真的出现过（只带一侧 ⇒ 等于没区分）
+##   ③ 日志窗：同分类、不同阵营的两行，渲染出的阵营字与竖条色确实不同
+func _t_log_side() -> void:
+	var own: Array[EveShip] = []
+	var foe: Array[EveShip] = []
+	for i in 4:
+		own.append(EveShipDatabase.instantiate_by_id("kestrel", 0, 9100 + i))
+		foe.append(EveShipDatabase.instantiate_by_id("incursus", 1, 9200 + i))
+	for i in 4:
+		own[i].body.position = Vector3(float(i - 1) * 4_000.0, 0.0, 6_000.0)
+		own[i].body.aim_dir = Vector3(0, 0, -1)
+		foe[i].body.position = Vector3(float(i - 1) * 4_000.0, 0.0, -6_000.0)
+		foe[i].body.aim_dir = Vector3(0, 0, 1)
+	var sim := EveBattleSimulator.new()
+	sim.setup(own, foe)
+	sim.set_time_limit(120.0)
+	while not sim.finished:
+		sim.step(EveBattleSimulator.FIXED_STEP)
+
+	var own_n := 0
+	var foe_n := 0
+	var missing := 0
+	var sys_bad := 0
+	for e in sim.log_entries:
+		if e.category == &"damage" or e.category == &"break" or e.category == &"repair":
+			if e.team == 0:
+				own_n += 1
+			elif e.team == 1:
+				foe_n += 1
+			else:
+				missing += 1
+		elif e.category == &"system" and String(e.text).begins_with("战斗开始"):
+			if e.team != -1:
+				sys_bad += 1
+	_expect(missing == 0, "★★ 每条船变化日志都带阵营（缺阵营 %d 条）" % missing)
+	_expect(own_n > 0 and foe_n > 0,
+			"★★ 我方 / 敌方都标出来了（我方 %d 条 · 敌方 %d 条）" % [own_n, foe_n])
+	_expect(sys_bad == 0, "★ 不分阵营的系统行仍是 -1（越界 %d 条）" % sys_bad)
+
+	# ── 日志窗渲染：两行同分类、只差阵营 ──
+	var w = LOG_SCRIPT.new()
+	add_child(w)
+	w.call("append_entry", {"time": 1.0, "category": &"damage", "text": "茶隼级 已被摧毁", "team": 0})
+	w.call("append_entry", {"time": 2.0, "category": &"damage", "text": "因卡萨斯级 已被摧毁", "team": 1})
+	w.call("append_entry", {"time": 3.0, "category": &"system", "text": "战斗开始：4 v 4"})
+	var list: Node = w.get("_list")
+	var rows: Array = list.get_children() if list != null else []
+	if rows.size() != 3:
+		_expect(false, "★ 日志窗写入了 3 行（实际 %d）" % rows.size())
+		remove_child(w)
+		w.queue_free()
+		return
+	var l0: Label = rows[0].get_child(2)
+	var l1: Label = rows[1].get_child(2)
+	var l2: Label = rows[2].get_child(2)
+	var bar0: ColorRect = rows[0].get_child(0)
+	var bar1: ColorRect = rows[1].get_child(0)
+	var bar2: ColorRect = rows[2].get_child(0)
+	_expect(l0.text != "" and l1.text != "" and l0.text != l1.text,
+			"★★ 日志窗：我方 / 敌方阵营字不同（%s / %s）" % [l0.text, l1.text])
+	_expect(bar0.color != bar1.color and bar0.color.a > 0.5 and bar1.color.a > 0.5,
+			"★★ 日志窗：阵营色不同且都可见（%s / %s）" % [bar0.color, bar1.color])
+	_expect(l2.text == "" and bar2.color.a < 0.01,
+			"★ 日志窗：不分阵营的行不标敌我（字=%s 条透明=%s）"
+			% [l2.text, str(bar2.color.a < 0.01)])
+
+	remove_child(w)
+	w.queue_free()
+
+
 ## ⚠️ 为什么用影子选择器而不是给生产代码加开关：
 ##    加开关等于让验收代码反向污染实现（红线：探针禁读中间变量）。
 ##    影子选择器只用公开的 `hp / max_hp` 复算，实现零改动。
@@ -4764,6 +5595,10 @@ func _step_timer_forfeit() -> void:
 	print("[时限归零] 判负启动 · phase→RESOLVE · 模拟器停转 · 信标 %d → %d"
 			% [beacon_before, st.beacon])
 func _finish() -> void:
+	# ★ 2026-10-28「护卫跑到边缘」：放在收尾跑 —— 它内部的仿真消耗全局 RNG，
+	#   必须晚于所有依赖随机序列的场景步骤（理由见 `_unit_tests` 末尾的注释）。
+	_t_motion_no_runaway()
+
 	# ★ 步骤守卫：任何一步漏跑都点名。
 	#   这一步比任何单项断言都重要 —— 漏跑意味着"这条链根本没验"，
 	#   而它此前**完全不报错**（见 REQUIRED_STEPS 的说明）。

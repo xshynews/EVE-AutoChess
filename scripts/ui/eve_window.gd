@@ -552,21 +552,30 @@ func _on_header_input(event: InputEvent) -> void:
 
 func _on_grip_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		_resizing = event.pressed
-		if _resizing:
+		if event.pressed:
+			_resizing = true
 			move_to_front()
 			_resize_start = get_global_mouse_position()
 			_resize_from = size
+		elif _resizing:
+			# ★★ 2026-10-28（用户：「拖放它放大了，点下一艘船的档案又还原」）
+			#   ⛔ 原来这里把 `_resizing` 统一写成 `event.pressed`（松手即 false），
+			#      而「松手记账」那条分支又以 `_resizing` 为条件 ⇒ **永远进不去**
+			#      ⇒ 玩家用手拉出来的尺寸从来没记进 `_user_rect`，
+			#      下一次 `set_window_height()`（档案窗换船）就按设计稿还原。
+			#      ⇒ 松手分支必须**先**于 `_resizing` 置假执行。
+			_resizing = false
+			_note_user_rect()
+			# 高度归控件自己的窗（档案窗）重铺时读 `_base_rect.size.y`
+			# ⇒ 手动拉的尺寸要同步进去，否则下一次 HUD 刷新会把高度改回设计稿。
+			if _height_owned:
+				_base_rect.size = _user_rect.size
+			_save_layout()
 	elif event is InputEventMouseMotion and _resizing:
 		var want := _resize_from + (get_global_mouse_position() - _resize_start)
 		var min_h := HEADER_H if _collapsed else custom_minimum_size.y
 		size = Vector2(maxf(custom_minimum_size.x, want.x), maxf(min_h, want.y))
 		_clamp_into_viewport()
-	if event is InputEventMouseButton and not event.pressed \
-			and event.button_index == MOUSE_BUTTON_LEFT and _resizing:
-		_resizing = false
-		_note_user_rect()
-		_save_layout()
 
 
 ## 把窗口拉回视口内。
@@ -774,11 +783,30 @@ func _save_layout() -> void:
 		r = _base_rect
 	if r.size.x <= 1.0 or r.size.y <= 1.0:
 		return
-	LAYOUT_STORE.save_window(_layout_key(), {
+	var d := {
 		"x": position.x, "y": position.y,
 		"w": r.size.x, "h": r.size.y,
 		"collapsed": _collapsed,
-	})
+	}
+	# ★ 2026-10-28：子类可以带上自己的**态**（不是尺寸）。
+	#   ⛔ 触发这个钩子的原因：舰船档案「放大」后尺寸被存进布局，但"处于放大态"
+	#      没存 —— 下一局 `_zoomed=false` 却拿着放大尺寸，点按钮只会继续变大，
+	#      **再也缩不回去**（用户实测）。尺寸和态必须一起存。
+	d.merge(_layout_extra(), true)
+	LAYOUT_STORE.save_window(_layout_key(), d)
+
+
+## 子类可覆写：往布局存档里追加自己的状态位（默认无）。
+##
+## ⚠️ 只放**状态**（如"放大中"），尺寸仍由 `x/y/w/h` 负责 ——
+##    两者必须能互相推导，否则存档一读回来就对不上。
+func _layout_extra() -> Dictionary:
+	return {}
+
+
+## 子类可覆写：读回 `_layout_extra()` 写下的状态位（默认忽略）。
+func _apply_layout_extra(_d: Dictionary) -> void:
+	pass
 
 
 func _load_layout() -> void:
@@ -797,6 +825,8 @@ func _load_layout() -> void:
 				float(d.get("y", position.y)), w, h)
 	_collapsed = bool(d.get("collapsed", false))
 	_refresh_collapsed()
+	# ★ 2026-10-28：让子类把状态位读回去（见 `_layout_extra` 的注释）。
+	_apply_layout_extra(d)
 
 
 ## 忘掉这扇窗的布局（恢复设计稿位置）

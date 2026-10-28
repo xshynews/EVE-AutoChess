@@ -58,6 +58,7 @@ func build_own(run: EveRunState, team: int = 0) -> Array[EveShip]:
 			var m := pow(EveRunState.STAR_MULT, float(star - 1))
 			ship.warhead_scale(m)
 			ship.armor_scale(m)
+			_star_scale_repair(ship, m)
 		apply_doctrine(ship)
 		out.append(ship)
 		idx_map.append(i)
@@ -69,6 +70,35 @@ func build_own(run: EveRunState, team: int = 0) -> Array[EveShip]:
 	run.apply_events_to(out)
 	# 逐艘的**永久**增益（武器调校 / 结构加固）—— 走 idx_map，不能用 out[i]↔field[i]
 	run.apply_field_buffs_to(out, idx_map)
+	return out
+
+
+## 按**外部名单**建一支舰队（真联机用：对手的编制是网络送来的）。
+##
+## `entries[i]` = {"ship_key": String, "star": int}
+## ⚠️ 走的是和 `build_own` 同一条实例化/星级缩放链，只是数据源换成外部；
+##    羁绊用 `apply_fleet_traits` 近似（对手自己的 run 不在这台机器上）。
+func build_from_entries(entries: Array, team: int, with_traits: bool = true) -> Array[EveShip]:
+	var out: Array[EveShip] = []
+	for e in entries:
+		var d: Dictionary = e
+		var key := String(d.get("ship_key", ""))
+		var star := int(d.get("star", 1))
+		var ship := EveShipDatabase.instantiate_by_id(key, team, next_id)
+		if ship == null:
+			continue
+		next_id += 1
+		ship.star = star
+		if star > 1:
+			var m := pow(EveRunState.STAR_MULT, float(star - 1))
+			ship.warhead_scale(m)
+			ship.armor_scale(m)
+			_star_scale_repair(ship, m)
+		apply_doctrine(ship)
+		out.append(ship)
+	if with_traits and not out.is_empty():
+		EveRunState.apply_fleet_traits(out)
+	last_idx_map = []
 	return out
 
 
@@ -89,7 +119,7 @@ func build_enemy(run: EveRunState) -> Array[EveShip]:
 	# ★ 2026-10-23：困难 / 炼狱档，敌方也吃自己的羁绊。
 	# ⚠️ 统计口径是「这一支敌方编组本身」，不是玩家的 run.field ——
 	#    所以海盗王的 6 艘同派系船会吃到满档，而不是白板。
-	if bool(run.difficulty_row().get("enemy_traits", false)):
+	if bool(run.enemy_tier_row().get("enemy_traits", false)):
 		EveRunState.apply_fleet_traits(out)
 	# ★ 2026-10-26：电子战羁绊（全表唯一一条「削敌方」的）—— 落点必须在这一侧。
 	#   `cycle_scale(1+pct)` = 开火更慢；敌方输出按 1/(1+pct) 衰减（15% ⇒ −13% DPS）。
@@ -106,6 +136,23 @@ func build_enemy(run: EveRunState) -> Array[EveShip]:
 		for s in out:
 			s.incoming_mult = barrier
 	return out
+
+
+## ★★ 2026-10-28（用户：「2星后勤肯定要涨维修量啊，所以也按比例涨」）：
+##    星级放大**两层后勤修量**，倍率与攻击 / 血量同源（`STAR_MULT^(star-1)`）。
+##
+##    口径：两层**各自**乘倍率后**向下取整**（就低不就高，与 `LOGISTICS_REPAIR`
+##    和衍生层 `floor(主修×3/7)` 是同一条规矩）：
+##      矮脚鸡（cost 1）1★ 盾 12 · 甲 5 → 2★ 盾 21 · 甲 9 → 3★ 盾 38 · 甲 16
+##      巡洋（cost 3）  1★ 盾 56 · 甲 24 → 2★ 盾 100 · 甲 43 → 3★ 盾 181 · 甲 77
+##
+##    ⛔ 别改走 `EveShip.repair_scale()`：那是**不取整**的通道（羁绊 / 事件用），
+##       星级若也从那儿过，面板上会出现 21.6 这种半血点，且 3:7 的读数会被打断。
+static func _star_scale_repair(ship: EveShip, m: float) -> void:
+	if ship.logistics_repair <= 0.0 or ship.logistics_layer.is_empty():
+		return
+	ship.logistics_repair = floor(ship.logistics_repair * m)
+	ship.logistics_repair_secondary = floor(ship.logistics_repair_secondary * m)
 
 
 ## 战术二次校正

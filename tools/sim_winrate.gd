@@ -39,6 +39,21 @@ const BOSS_PROBE := false
 ## 炼狱 BOSS「钥匙是否凑齐」逐局打印（排查用，默认关闭）
 const KEY_DEBUG := false
 
+## ⚠️ 临时诊断开关（2026-10-29）：TTK 体检。
+##    true = 只跑 `_ttk_experiment()`：抗性归零 + 战列舰重做之后，
+##    一场战斗究竟几秒打完，用来判断「60 秒战斗窗」是不是变太长了。
+##    ⛔ 它不改任何生产数值（`old_resists` 那一列只是把抗性临时回填 0.45 做对照）。
+##
+## ── 实测结论（2026-10-29，96 局 · 12 种子 × 8 档）────────────────
+##    平均 38.8s / 中位 41.4s / 90% 分位 45.1s / 超时限 1 局
+##    单机 N1 37.7 · N5 44.7 · N8 41.3 · N12 21.6（碾压局）· BOSS 37.3
+##    联机 6v6 43.1 · 战列对轰 42.7 · 战列 vs 护卫 41.7
+##    抗性回填 0.45 对照：N8 48.3 · 6v6 55.0（4/12 超时）· 战列对轰 50.7 · 战列vs护卫 53.8
+##    ⇒ 抗性归零把 TTK 缩短约 20~30%，**但 60 秒上限仍只有 1% 的对局会顶到**。
+##    ★ 2026-10-29 防御型战列 +血 15% 之后再测：合计仍是 38.7s / 90% 分位 45.1s，
+##      战列对轰 42.7s、BOSS 37.1s —— 因为探针阵容里的战列全是攻击型，血量没动。
+const TTK_PROBE := false
+
 ## ⚠️ 临时诊断开关（2026-10-26）：新羁绊「电子战 / 后勤」的加成值多少胜率。
 ##    true = 只跑 `_trait_ab_experiment()`：把**倍率**从编队成本里剥出来单独量化 ——
 ##      电子战：同一支 6 船队，敌方开火间隔 ×1.00 / 1.05 / 1.10 / 1.15
@@ -71,6 +86,10 @@ func _ready() -> void:
 	print("=".repeat(84))
 	print("EVE 自走棋 · 难度体检（守卫边境 15 节点）")
 	print("=".repeat(84))
+	if TTK_PROBE:
+		_ttk_experiment()
+		get_tree().quit()
+		return
 	if BOSS_PROBE:
 		_boss_experiment()
 		get_tree().quit()
@@ -864,6 +883,206 @@ func _boss_case(own_keys: Array, own_stars: Array, foe_keys: Array, scale: float
 	sim.set_time_limit(90.0)
 	_run_sim(sim, 90.0)
 	return {"winner": sim.winner_team}
+
+
+# ══════════════════════════════════════════════════════════════
+#  ④ TTK 体检（2026-10-29）
+# ══════════════════════════════════════════════════════════════
+##
+## 回答的问题：抗性全归 0 + 战列舰重做之后，**一场战斗实际打多久**？
+## 60 秒战斗窗是不是变成了「20 秒打完、40 秒干等」？
+##
+## 口径：
+##   · 我方走 `build_own`（真实编制链，吃星级倍率），敌方走节点表编组 + `apply_enemy_scaling`。
+##   · 每格 12 个固定种子；打印 平均 / 中位 / 区间，以及
+##     「时限内结束」「火力渐增(时限 60%)之前就结束」两档占比。
+##   · `old_resists` 那一列把双方抗性临时回填 0.45（改前的量级），只作对照。
+func _ttk_experiment() -> void:
+	print("\n" + "=".repeat(84))
+	print("④ TTK 体检：一场战斗几秒打完（抗性归零 + 战列舰重做之后）")
+	print("=".repeat(84))
+	print("  每格 12 局固定种子；「渐增前」= 在时限 60% 处（伤害开始放大）之前就打完")
+	var seeds := 12
+	var cruisers := ["omen", "caracal", "drake", "punisher", "rifter", "condor"]
+	var cases: Array = [
+		{"name": "单机 N1  开局 3 护卫 1★", "node": 1, "limit": 60.0,
+			"own": ["punisher", "condor", "rifter"], "stars": [1, 1, 1]},
+		{"name": "单机 N5  首个精英 · 5 艘 1★", "node": 5, "limit": 60.0,
+			"own": ["punisher", "rifter", "omen", "caracal", "condor"],
+			"stars": [1, 1, 1, 1, 1]},
+		{"name": "单机 N8  中期 · 6 艘 2★", "node": 8, "limit": 60.0,
+			"own": cruisers, "stars": [2, 2, 2, 2, 2, 2], "contrast": true},
+		{"name": "单机 N12 后期 · 7 艘含 1 战列 2★", "node": 12, "limit": 60.0,
+			"own": ["raven"] + cruisers, "stars": [2, 2, 2, 2, 2, 2, 2],
+			"contrast": true},
+		{"name": "单机 N15 BOSS · 双战列 2★", "node": 15, "limit": 70.0,
+			"own": ["raven", "megathron", "omen", "caracal", "drake", "rifter"],
+			"stars": [2, 2, 2, 2, 2, 2]},
+		{"name": "联机 6v6 巡洋队 2★ 镜像", "limit": 60.0,
+			"own": cruisers, "stars": [2, 2, 2, 2, 2, 2],
+			"foe": cruisers, "foe_star": 2, "mirror": true, "contrast": true},
+		{"name": "联机 3 战列 2★ 对轰（各带 3 巡洋）", "limit": 60.0,
+			"own": ["raven", "megathron", "apocalypse", "omen", "caracal", "drake"],
+			"stars": [2, 2, 2, 2, 2, 2],
+			"foe": ["raven", "megathron", "apocalypse", "omen", "caracal", "drake"],
+			"foe_star": 2, "mirror": true, "contrast": true},
+		{"name": "联机 3 战列 2★ vs 6 护卫 2★", "limit": 60.0,
+			"own": ["raven", "megathron", "apocalypse", "omen", "caracal", "drake"],
+			"stars": [2, 2, 2, 2, 2, 2],
+			"foe": ["punisher", "condor", "rifter", "omen", "caracal", "drake"],
+			"foe_star": 2, "mirror": true, "contrast": true},
+	]
+	var all_times: Array[float] = []
+	var all_over := 0
+	for spec in cases:
+		var p := _ttk_report(spec, seeds, false)
+		all_times.append_array(p["times"])
+		all_over += int(p["over"])
+		if bool(spec.get("contrast", false)):
+			print("      └ 对照：抗性回填 0.45 时 —— %s" % _ttk_line(_ttk_report(spec, seeds, true)))
+		print("")
+	var over_pct := 100.0 * float(all_over) / maxf(1.0, float(all_times.size()))
+	all_times.sort()
+	print("─".repeat(84))
+	print("合计 %d 局：平均 %.1fs · 中位 %.1fs · 90%% 分位 %.1fs · 超过时限 %d 局（%.0f%%）"
+			% [all_times.size(), _mean(all_times), _median(all_times),
+				_pct(all_times, 0.9), all_over, over_pct])
+	print("说明：时限内结束 ⇒ 战斗不拖时间；超过时限的那几局是火力渐增在收尾，不是站桩。")
+
+
+## 跑一档 TTK 并打印一行摘要，返回原始耗时（供合计用）。
+func _ttk_report(spec: Dictionary, seeds: int, old_resists: bool) -> Dictionary:
+	var times: Array[float] = []
+	var mults := 0.0
+	var own_wins := 0
+	var foe_wins := 0
+	var over := 0
+	var before_sd := 0
+	var limit := float(spec.get("limit", 60.0))
+	for k in seeds:
+		var r := _ttk_case(spec, 4100 + k * 977, old_resists)
+		var t := float(r["elapsed"])
+		times.append(t)
+		mults += float(r["mult"])
+		if int(r["winner"]) == 0:
+			own_wins += 1
+		elif int(r["winner"]) == 1:
+			foe_wins += 1
+		if t > limit:
+			over += 1
+		if t <= limit * 0.60:
+			before_sd += 1
+	var sorted := times.duplicate()
+	sorted.sort()
+	var payload := {"times": times, "mults": mults, "over": over,
+			"before_sd": before_sd, "own_wins": own_wins, "foe_wins": foe_wins,
+			"n": seeds, "limit": limit}
+	if not old_resists:
+		print("\n【%s】时限 %.0fs" % [String(spec["name"]), limit])
+		print("   %s" % _ttk_line(payload))
+	return payload
+
+
+func _ttk_line(p: Dictionary) -> String:
+	var times: Array = p["times"]
+	var sorted := times.duplicate()
+	sorted.sort()
+	var n := maxf(1.0, float(p.get("n", times.size())))
+	return "平均 %.1fs · 中位 %.1fs · %.1f~%.1fs · 时限内 %d/%d · 渐增前 %d/%d · 收尾倍率 平均 ×%.2f · 我胜 %d / 敌胜 %d" % [
+		_mean(sorted), _median(sorted), float(sorted[0]),
+		float(sorted[sorted.size() - 1]), int(p["n"]) - int(p["over"]), int(p["n"]),
+		int(p["before_sd"]), int(p["n"]), float(p["mults"]) / n,
+		int(p["own_wins"]), int(p["foe_wins"])]
+
+
+func _mean(arr: Array) -> float:
+	if arr.is_empty():
+		return 0.0
+	var s := 0.0
+	for v in arr:
+		s += float(v)
+	return s / float(arr.size())
+
+
+func _median(arr: Array) -> float:
+	if arr.is_empty():
+		return 0.0
+	var a := arr.duplicate()
+	a.sort()
+	var mid := a.size() / 2
+	if a.size() % 2 == 1:
+		return float(a[mid])
+	return (float(a[mid - 1]) + float(a[mid])) * 0.5
+
+
+func _pct(arr: Array, q: float) -> float:
+	if arr.is_empty():
+		return 0.0
+	var a := arr.duplicate()
+	a.sort()
+	var i := int(roundf(clampf(q, 0.0, 1.0) * float(a.size() - 1)))
+	return float(a[i])
+
+
+## 单局：我方 = 真实编制链，敌方 = 节点表编组（或显式给出）。
+## `old_resists` = 把双方三层抗性临时回填 0.45，只用于「改前」对照。
+func _ttk_case(spec: Dictionary, seed_v: int, old_resists: bool) -> Dictionary:
+	var run: Node = RUN.new()
+	run.set_difficulty("simple")
+	run.start_run(seed_v)
+	run.field.clear()
+	var keys: Array = spec["own"]
+	var stars: Array = spec["stars"]
+	for i in keys.size():
+		run.field.append({"ship_key": StringName(keys[i]),
+				"star": int(stars[i]) if i < stars.size() else 1,
+				"cell": Vector2i(7, i)})
+	var fac := FACTORY.new()
+	var own: Array = fac.build_own(run)
+	var foe_keys: Array = []
+	var scale := 1.0
+	if spec.has("node"):
+		var row: Dictionary = NODE.by_index(int(spec["node"]))
+		foe_keys = COMPS.ship_ids(String(row.get("comp", "")))
+		scale = float(row.get("scale", 1.0))
+	else:
+		foe_keys = spec["foe"]
+	var foe_star := int(spec.get("foe_star", 1))
+	var enemy: Array = []
+	var id := 900
+	for key in foe_keys:
+		var e = DB.instantiate_by_id(String(key), 1, id)
+		id += 1
+		if e == null:
+			continue
+		RUN.apply_enemy_scaling(e, foe_star, scale)
+		fac.apply_doctrine(e)
+		enemy.append(e)
+	if old_resists:
+		for s in own + enemy:
+			for layer in [&"shield", &"armor", &"hull"]:
+				s.resists[layer] = PackedFloat32Array([0.45, 0.45, 0.45, 0.45])
+	var dz := _deploy_z(own, enemy)
+	_place_own(own, dz[0], own.size())
+	# `mirror` = 敌方按我方站位**镜像**摆（联机对局两边都是玩家编制，
+	# 不镜像的话「我方前排 + 敌方默认 4 列网格」会造出与数值无关的先手优势）。
+	if bool(spec.get("mirror", false)) and own.size() > 0:
+		for i in mini(enemy.size(), own.size()):
+			var p: Vector3 = own[i].body.position
+			enemy[i].body.position = Vector3(p.x, 0.0, -p.z)
+			enemy[i].body.previous_position = enemy[i].body.position
+			enemy[i].body.aim_dir = Vector3(0, 0, 1)
+			enemy[i].body.velocity = Vector3(0, 0, 1) * enemy[i].body.max_speed * 0.15
+	else:
+		_place_enemy(enemy, dz[1])
+	var sim = SIM.new()
+	sim.setup(_typed(own), _typed(enemy))
+	sim.set_seed(seed_v)
+	var limit := float(spec.get("limit", 60.0))
+	sim.set_time_limit(limit)
+	_run_sim(sim, limit)
+	return {"elapsed": sim.elapsed, "winner": sim.winner_team,
+			"mult": sim.damage_multiplier()}
 
 
 # ══════════════════════════════════════════════════════════════

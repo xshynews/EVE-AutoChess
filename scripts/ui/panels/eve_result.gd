@@ -47,6 +47,11 @@ var _kill_row: HBoxContainer
 var _alive_row: HBoxContainer
 var _xp_row: HBoxContainer
 var _loot_row: HBoxContainer
+## 联机对战模式：结算页**只留打捞**，推进完全交给回合倒计时。
+var _versus_mode := false
+## 联机名次表（单机时不可见）
+var _rank_box: VBoxContainer
+var _rank_rows: VBoxContainer
 var _next_btn: Button
 var _end_btn: Button
 ## ★ 打捞区（2026-10-04 改版）。挂在结算页 content 末尾，默认隐藏。
@@ -201,6 +206,17 @@ func _build_contents() -> void:
 	flow.add_child(_beacon_delta)
 
 	content.add_child(make_divider())
+	# ── ②b 联机名次表（单机不可见）──
+	_rank_box = VBoxContainer.new()
+	_rank_box.add_theme_constant_override("separation", 4)
+	_rank_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_rank_box.visible = false
+	content.add_child(_rank_box)
+
+	_rank_rows = VBoxContainer.new()
+	_rank_rows.add_theme_constant_override("separation", 3)
+	_rank_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_rank_box.add_child(_rank_rows)
 
 	# ── ③ 战果（★ 二改：两行**并成一行**，省下 23px）──
 	# ⛔ 2026-10-01：这里原来还有一行「漏网 N 艘」—— 整行删掉了。
@@ -662,6 +678,62 @@ func _num_label(fs: int, col: Color) -> Label:
 ##
 ## ⚠️ `beacon_before` 必须由主控传：`resolve_battle()` 已经就地改过 `beacon`，
 ##    返回值里的 `beacon` 是**结算后**的值，光凭它算不出差额。
+## 联机名次结算。
+##
+## rows = [{name, hp, is_ai, alive}]，已按名次排好。
+## 单机那套信标/残骸/打捞区全部隐藏 —— 多人局里它们没有意义。
+func show_versus_ranking(rows: Array, round_label: String) -> void:
+	visible = true
+	_title.text = T.t("VERSUS_OVER", "联机对战结束")
+	_title.add_theme_color_override("font_color", C_ACCENT)
+	_subtitle.text = "第 %s 回合收束 · 最后存活者胜" % round_label
+	# 隐藏单机内容
+	var stats := _title.get_parent()
+	if stats != null:
+		for ch in stats.get_children():
+			if ch == _title or ch == _subtitle or ch == _rank_box:
+				continue
+			if ch is Control:
+				(ch as Control).visible = false
+	# 名次表
+	for ch in _rank_rows.get_children():
+		ch.queue_free()
+	_rank_box.visible = true
+	for i in rows.size():
+		var r = rows[i]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var no := Label.new()
+		no.text = "%d." % (i + 1)
+		no.custom_minimum_size = Vector2(26, 0)
+		FONT.fs(no, 13)
+		var alive := bool(r.get("alive", false))
+		no.add_theme_color_override("font_color", C_ACCENT if alive else C_TEXT_FAINT)
+		row.add_child(no)
+		var nm := Label.new()
+		var tg := "[AI] " if bool(r.get("is_ai", false)) else ""
+		nm.text = tg + String(r.get("name", "?"))
+		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		FONT.fs(nm, 13)
+		nm.add_theme_color_override("font_color", C_TEXT if alive else C_TEXT_FAINT)
+		row.add_child(nm)
+		var hp := Label.new()
+		hp.text = ("存活 %d" if alive else "淘汰 %d") % int(r.get("hp", 0))
+		hp.custom_minimum_size = Vector2(78, 0)
+		hp.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		FONT.fs(hp, 13)
+		hp.add_theme_color_override("font_color", C_OK if alive else C_HULL)
+		row.add_child(hp)
+		_rank_rows.add_child(row)
+	# 按钮：联机只有「再来一局」
+	_next_btn.text = T.t("VERSUS_AGAIN", "再来一局")
+	_next_btn.disabled = false
+	if _end_btn != null:
+		_end_btn.visible = false
+
+
 func show_result(res: Dictionary) -> void:
 	_data = res.duplicate(true)
 	var won := bool(res.get("won", false))
@@ -719,6 +791,23 @@ func show_result(res: Dictionary) -> void:
 				C_OK if ending == "cleared" else C_HULL)
 		_next_btn.text = T.t("RESULT_AGAIN", "↻ 再来一局")
 		_end_btn.visible = false
+
+	# ★★ 2026-10-27 联机对战：结算页**只有打捞**，没有任何推进按钮。
+	#    推进由回合倒计时决定 —— 「打完时倒计时也结束了，就没时间选打捞了」，
+	#    这是设计上的心理博弈，不是遗漏。
+	#    ⛔ 单机 ⛔ 不要动，只在 versus 里生效。
+	if _versus_mode:
+		_next_btn.visible = false
+		if _end_btn != null:
+			_end_btn.visible = false
+		_subtitle.text = T.t("RESULT_VERSUS_WAIT",
+				"联机对战 · 倒计时结束自动进入下一回合（只可打捞）")
+
+
+## 联机对战开关：结算页只留打捞，推进交给回合倒计时。
+## ⚠️ 只在 versus 模式调；单机一律保持 false。
+func set_versus_mode(on: bool) -> void:
+	_versus_mode = on
 
 
 ## 改右侧数值标签（make_stat_row 的第 2 个子节点）

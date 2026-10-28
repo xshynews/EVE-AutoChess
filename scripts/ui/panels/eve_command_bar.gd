@@ -42,6 +42,24 @@ const T := preload("res://scripts/core/eve_text.gd")
 
 const BOSS_NODES: Array[int] = [8, 11, 14]
 
+## ★ 2026-10-28：联机信标排独立成条，与上方菜单拉开距离（用户：「和原来的顶端菜单做个隔断」）。
+##   实测「贴在一起」的根因：`content` 的 separation 是 0，且信标排直接挂在 content 上
+##   ⇒ 视觉上和顶条同一块底。改成 **8px 空档 + 独立实底面板**。
+const VERSUS_STRIP_GAP := 8.0
+const VERSUS_STRIP_H_DESKTOP := 44.0
+const VERSUS_STRIP_H_MOBILE := 52.0
+## 信标排每一格的血条段数（电容式分段条）。
+##
+## ★ 2026-10-28：连续填充条在「四人并排」时只能看个大概，
+##   分段条的读数是**突变**的 —— 掉一格就少一段，一眼数得出来。
+const VERSUS_SEGMENTS := 10
+## 灭掉的段（比底再暗一点，仍能看出「这里有几格」）
+const C_SEG_OFF := Color(0.13, 0.19, 0.22, 0.9)
+## 裸条的设计稿高度（= HUD `RECT_TOP` 的 40；撑高时以它为基准，⛔ 别累加）
+const BAR_BASE_H := 40.0
+## 平台判据走工程唯一真源（⛔ 别在这里写 `OS.has_feature`）
+const UI_SCALE := preload("res://scripts/ui/eve_ui_scale.gd")
+
 var node_index: int = 1
 var stage_label: String = T.t("BAR_STAGE_DEFAULT", "遭遇战")
 var time_left: float = 24.0
@@ -57,6 +75,17 @@ var _stage_phase: Label
 var _stage_tag: Label
 var _beacon_value: Label
 var _beacon_icon: EveIcon
+## 联机对战信息区（单机时 invisible，不占地方）
+var _versus_box: HBoxContainer
+var _versus_round: Label
+var _versus_kind: Label
+var _versus_hp: Label
+## 参战人员信标血量排（联机时显示在顶条下方单独一排）
+var _versus_row: HBoxContainer
+## 信标排的外壳（独立底 + 边框）与它和菜单之间的空档
+var _versus_strip: PanelContainer
+var _versus_gap: Control
+var _versus_clock: Label
 var _ring: Control
 var _phase_label: Label
 var _time_label: Label
@@ -86,6 +115,37 @@ func _build_contents() -> void:
 	bar.add_theme_constant_override("separation", 0)
 	bar.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	content.add_child(bar)
+	# ── 参战人员信标血量（联机专属，单独一排）──
+	# ⚠️ 为什么单独一排而不是塞进上面那行：顶条第一排已经装了
+	#    阶段/信标/计时/进度点/操作五组，再挤一排人名血量会让每一项
+	#    都窄到读不出来。联机是「多人信息刚需」，值得占独立一行。
+	#
+	# ★ 2026-10-28：再包一层独立面板 + 8px 空档 —— 之前它直接挂在 content 上，
+	#   而 content 的 separation 是 0 ⇒ 和菜单同底同边，像一行没排完的字。
+	_versus_gap = Control.new()
+	_versus_gap.custom_minimum_size = Vector2(0.0, VERSUS_STRIP_GAP)
+	_versus_gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_versus_gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_versus_gap.visible = false
+	content.add_child(_versus_gap)
+
+	_versus_strip = PanelContainer.new()
+	_versus_strip.custom_minimum_size = Vector2(0.0,
+			VERSUS_STRIP_H_MOBILE if UI_SCALE.is_mobile() else VERSUS_STRIP_H_DESKTOP)
+	_versus_strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_versus_strip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_versus_strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_versus_strip.add_theme_stylebox_override("panel", _versus_strip_box())
+	_versus_strip.visible = false
+	content.add_child(_versus_strip)
+
+	_versus_row = HBoxContainer.new()
+	# 8 + 1px 竖线 + 8 = 格间 17px（竖线本身算隔断，别把 separation 又调回 14）
+	_versus_row.add_theme_constant_override("separation", 8)
+	_versus_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_versus_row.visible = false
+	_versus_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_versus_strip.add_child(_versus_row)
 
 	# ── ① 阶段 ──
 	var stage := HBoxContainer.new()
@@ -132,6 +192,39 @@ func _build_contents() -> void:
 	FONT.fs(beacon_unit, 9)
 	beacon_unit.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	beacon_box.add_child(beacon_unit)
+
+	bar.add_child(_vline())
+
+	# ── ②b 联机对战信息（单机时不建，占屏比为 0）──
+	_versus_box = HBoxContainer.new()
+	_versus_box.add_theme_constant_override("separation", 5)
+	_versus_box.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_versus_box.visible = false
+	bar.add_child(_versus_box)
+
+	_versus_round = Label.new()
+	_versus_round.text = "1-1"
+	_versus_round.add_theme_color_override("font_color", C_ACCENT)
+	FONT.fs(_versus_round, 12)
+	_versus_round.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_versus_box.add_child(_versus_round)
+
+	_versus_kind = Label.new()
+	_versus_kind.text = "打怪"
+	_versus_kind.add_theme_color_override("font_color", C_TEXT_DIM)
+	FONT.fs(_versus_kind, 9)
+	_versus_kind.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_versus_kind.add_theme_stylebox_override("normal", _tag_box())
+	_versus_box.add_child(_versus_kind)
+
+	_versus_hp = Label.new()
+	_versus_hp.text = "你100"
+	# ⛔ 这里曾经是 C_HULL（结构红）—— 「4 人」是参战人数、不是损伤，
+	#    红色会读成警报。降一档到 C_TEXT_DIM，让红色只留给真正的危险。
+	_versus_hp.add_theme_color_override("font_color", C_TEXT_DIM)
+	FONT.fs(_versus_hp, 11)
+	_versus_hp.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_versus_box.add_child(_versus_hp)
 
 	bar.add_child(_vline())
 
@@ -347,6 +440,207 @@ func _refresh_beacon() -> void:
 		_beacon_icon.set_color(col)
 
 
+## 刷新联机对战信息条。
+##
+## `rows` = [{name, hp, is_ai, alive}]，`round` = "2-3"，`kind` = "打怪"/"PvP"/"事件"
+##
+## ⚠️ 单机模式下根本不调它，_versus_box 保持 invisible ⇒ 占屏比一个像素不变。
+## 刷新联机信息：第一排放回合与类型，第二排放全员信标血量。
+##
+## rows = [{name, hp, is_ai, alive}]，已按名次排好。
+## Round clock. expired = time is up (the round is a loss).
+func set_versus_clock(text: String, expired: bool) -> void:
+	if _versus_clock == null:
+		return
+	_versus_clock.text = text
+	_versus_clock.add_theme_color_override("font_color", C_HULL if expired else C_TEXT)
+	_versus_clock.tooltip_text = "回合时限：到点没分出胜负就判负" if not expired else "已超时"
+
+
+## 信标排的外壳。
+##
+## ★ 2026-10-28 第二轮（用户：「不够美观」）：⛔ 去掉四周 1px 边框 ——
+##   上一版把 2px 顶边 + 四周 1px 一起画，44px 高的窄条被框成了一块
+##   「第二排菜单」。现在只留顶部 **1px 弱青线**：它就是「隔断」的视觉落点，
+##   其余三边交给更暗的底色自己收口。读起来是「嵌在主菜单下方的一条仪表带」。
+func _versus_strip_box() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.035, 0.048, 0.056, 0.93)
+	sb.border_width_top = 1
+	sb.border_color = Color(0.55, 0.78, 0.82, 0.22)
+	sb.set_corner_radius_all(0)
+	sb.content_margin_left = 10.0
+	sb.content_margin_right = 10.0
+	sb.content_margin_top = 5.0
+	sb.content_margin_bottom = 5.0
+	return sb
+
+
+## 信标排显形后把裸条**撑高**。
+##
+## ⛔ 必须撑：`EveWindow` 的内容宿主是 `clip_contents = true`，而顶条高度由 HUD 的
+##    `RECT_TOP` 定死 40 ⇒ 第二排会被直接裁掉（实测：strip.visible=true，画面上没有）。
+## ⚠️ 用 `set_window_height()`（把 `_height_owned` 置真）而不是自己改 `size`：
+##    否则 HUD 下一次 `set_window_rect()` 会把高度按设计稿 40 改回去。
+func _fit_versus_height() -> void:
+	var add := VERSUS_STRIP_GAP
+	add += VERSUS_STRIP_H_MOBILE if UI_SCALE.is_mobile() else VERSUS_STRIP_H_DESKTOP
+	var target := BAR_BASE_H + add
+	if absf(target - _base_rect.size.y) > 0.5:
+		set_window_height(target)
+
+
+## 格间 1px 竖线（上下各缩 9px，不顶满条高）。
+##
+## ⚠️ 顶满的竖线会把窄条切成一张「表格」；缩进之后才像仪表的分栏。
+func _strip_div() -> Control:
+	var v := ColorRect.new()
+	v.color = Color(0.42, 0.55, 0.60, 0.24)
+	v.custom_minimum_size = Vector2(1, 0)
+	v.size_flags_vertical = Control.SIZE_FILL
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var wrap := MarginContainer.new()
+	wrap.add_theme_constant_override("margin_top", 9)
+	wrap.add_theme_constant_override("margin_bottom", 9)
+	wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wrap.add_child(v)
+	return wrap
+
+
+## 十段电容式血条：`lit` 段亮、其余段暗。
+##
+## 为什么不用连续填充条：四人并排时连续条只能看个大概，
+## 「掉了 1 格」在分段条上是**突变**、一眼数得出来；
+## 也避免和顶条的信标连续条撞形（同一屏两种血条长得一样会读错对象）。
+func _seg_bar(ratio: float, color: Color, h: float) -> HBoxContainer:
+	var bar := HBoxContainer.new()
+	bar.add_theme_constant_override("separation", 2)
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var lit := int(round(clampf(ratio, 0.0, 1.0) * float(VERSUS_SEGMENTS)))
+	for i in VERSUS_SEGMENTS:
+		var seg := ColorRect.new()
+		seg.custom_minimum_size = Vector2(2.0, h)
+		seg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		seg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		seg.color = color if i < lit else C_SEG_OFF
+		bar.add_child(seg)
+	return bar
+
+
+## 一格席位：`▍01 名字 AI ▮▮▮▮▮▮▮▮▯▯ 100`
+##
+## ★ 2026-10-28 第二轮改版要点（用户：「不够美观，弄个符合我们 UI 特性又美观点的」）：
+##   ① 名字不再带 `[AI] ` 前缀 —— 前缀把名字挤成两截；AI 改成右侧**固定 16px 角标**，
+##      人类那一格留空（都留同宽，四格才等宽）；
+##   ② 名次 `%02d` 定宽 + 微字号：是「榜单」的读法，不是「序号」；
+##   ③ 自己那格左侧 2px 青色竖条：四人同色时唯一能一眼定位「我在哪」的标记；
+##   ④ 淘汰格显示 `—` 而不是 `X`（`X` 像未加载的占位符）。
+func _seat_cell(idx: int, r: Variant, pip_h: float) -> HBoxContainer:
+	var cell := HBoxContainer.new()
+	cell.add_theme_constant_override("separation", 5)
+	cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cell.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var alive := bool(r.get("alive", true))
+	var mine := not bool(r.get("is_ai", false))
+	var hp := int(r.get("hp", 0))
+	var ratio := clampf(float(hp) / 100.0, 0.0, 1.0)
+	# 三段色带与顶条信标读数同一口径：>60 正常绿 / >30 警告橙 / 其余结构红
+	var band := C_HULL
+	if ratio > 0.6:
+		band = C_OK
+	elif ratio > 0.3:
+		band = C_WARN
+	# 淘汰：整格压暗，但仍可读（玩家要能看见「谁出局了」）
+	cell.modulate.a = 1.0 if alive else 0.45
+
+	if mine:
+		var mark := ColorRect.new()
+		mark.color = Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.85)
+		mark.custom_minimum_size = Vector2(2.0, pip_h + 4.0)
+		mark.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cell.add_child(mark)
+
+	var rk := Label.new()
+	rk.text = "%02d" % (idx + 1)
+	rk.custom_minimum_size = Vector2(16, 0)
+	rk.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	rk.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	FONT.fs(rk, 10)
+	rk.add_theme_color_override("font_color", C_ACCENT if mine else C_TEXT_FAINT)
+	cell.add_child(rk)
+
+	var nm := Label.new()
+	nm.text = String(r.get("name", "?"))
+	nm.custom_minimum_size = Vector2(40, 0)
+	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	nm.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	FONT.fs(nm, 13)
+	var nc := C_TEXT if alive else C_TEXT_FAINT
+	if mine and alive:
+		nc = C_ACCENT
+	nm.add_theme_color_override("font_color", nc)
+	cell.add_child(nm)
+
+	var tag := Label.new()
+	tag.text = "AI" if bool(r.get("is_ai", false)) else ""
+	tag.custom_minimum_size = Vector2(16, 0)
+	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tag.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	FONT.fs(tag, 9)
+	tag.add_theme_color_override("font_color", C_TEXT_FAINT)
+	cell.add_child(tag)
+
+	cell.add_child(_seg_bar(ratio if alive else 0.0, band, pip_h))
+
+	var hv := Label.new()
+	hv.text = str(hp) if alive else "—"
+	hv.custom_minimum_size = Vector2(30, 0)
+	hv.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	hv.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	FONT.fs(hv, 14)
+	hv.add_theme_color_override("font_color", band if alive else C_TEXT_FAINT)
+	cell.add_child(hv)
+	return cell
+
+
+func set_versus(round: String, kind: String, rows: Array) -> void:
+	if _versus_box == null or _versus_row == null:
+		return
+	_versus_box.visible = true
+	_versus_row.visible = true
+	# ★ 2026-10-28：外壳与空档一起显形（单机两者恒隐 ⇒ 占屏不变）
+	if _versus_gap != null:
+		_versus_gap.visible = true
+	if _versus_strip != null:
+		_versus_strip.visible = true
+	_fit_versus_height()
+	_versus_round.text = round
+	_versus_kind.text = kind
+	_versus_hp.text = "%d 人" % rows.size()
+	if _versus_clock == null:
+		_versus_clock = Label.new()
+		_versus_clock.custom_minimum_size = Vector2(44, 0)
+		_versus_clock.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		FONT.fs(_versus_clock, 12)
+		_versus_box.add_child(_versus_clock)
+	# 第二排：每人一格（格与格之间由 `_strip_div()` 的 1px 竖线分开）。
+	# ★ 2026-10-28 第二轮：渲染细节全部搬进 `_seat_cell()`，
+	#   这里只负责「清空 → 按名次铺格 → 插竖线」。
+	for ch in _versus_row.get_children():
+		_versus_row.remove_child(ch)
+		ch.queue_free()
+	var pip_h := 12.0 if not UI_SCALE.is_mobile() else 13.0
+	for idx in rows.size():
+		if idx > 0:
+			_versus_row.add_child(_strip_div())
+		_versus_row.add_child(_seat_cell(idx, rows[idx], pip_h))
+
+
 func set_stage(index: int, label: String, total_time: float) -> void:
 	node_index = clampi(index, 1, NODE_TOTAL)
 	stage_label = label
@@ -379,6 +673,19 @@ func set_start_button(text: String, enabled: bool = true) -> void:
 	_start_btn.text = text
 	_start_btn.disabled = not enabled
 	_start_btn.modulate = Color(1, 1, 1, 1.0 if enabled else 0.45)
+
+
+## 联机对战：**把开战按钮整个撤掉**。
+##
+## 2026-10-27 用户定案：「一切都以倒计时为最终判断」。
+## 理由：手动开战等于给「想得快的人」一个快进开关 —— 他提前点开打，
+## 别人还在凑羁绊，节奏就被拖走了。统一时钟才是公平的裁判。
+## ⚠️ 只改 visible，不改 disabled：`set_start_button` 每回合都会重写
+##    text/disabled/modulate，但**不碰 visible** ⇒ 藏一次就一直是藏的。
+func set_start_visible(on: bool) -> void:
+	if _start_btn == null:
+		return
+	_start_btn.visible = on
 
 
 ## 推进倒计时。归零后**停在 0 并广播一次** `timer_expired`，

@@ -452,6 +452,27 @@ func build_battle_snapshot(sc: Node) -> Dictionary:
 	var sim = sc.get("sim")
 	var d := {}
 	d["scene"] = "battle"
+	# [versus] expose the room so an external observer can see opponents
+	if sc != null and sc.get("versus") != null:
+		var vs = sc.versus
+		var ps: Array = []
+		for q in vs.players:
+			if q == null:
+				continue
+			ps.append({
+				"name": q.display_name, "is_ai": q.is_ai,
+				"hp": q.hp, "alive": q.is_alive(),
+				"field": (q.run.field.size() if q.run != null else 0),
+				"coin": (q.run.coin if q.run != null else 0),
+				"level": (q.run.level if q.run != null else 0),
+				"traits": (q.run.active_synergies().size() if q.run != null else 0),
+			})
+		d["versus"] = {
+			"progress": vs.progress(),
+			"label": vs.round_label(),
+			"pve_source": vs.pve_source_node(),
+			"players": ps,
+		}
 	# 实际生效的难度（别再被菜单选中态骗了）
 	d["difficulty_id"] = String(run.difficulty_id)
 	d["difficulty_name"] = String(run.difficulty_row().get("name", "?"))

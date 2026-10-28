@@ -33,6 +33,10 @@ var pending_event: StringName = &""
 var ship_pick_cache: Array = []
 ## 正在重建舰队 / 装载面板 —— 这期间 `_refresh_run_ui` 不要再来一次重建。
 var busy := false
+## ★ 2026-10-28 联机事件回合（`versus.round_kind() == CAROUSEL`）：
+##   面板逻辑完全复用，只是选完**不推进节点**（联机没有节点推进）。
+##   ⇒ 由 `EveBattleScene.begin_prep()` 每次进入回合时设值；单机恒 false。
+var versus_event := false
 
 var _run: EveRunState = null
 var _hud: EveHudRoot = null
@@ -78,7 +82,12 @@ func enter_event_node() -> void:
 	_clear_field_cb.call()
 
 	_refresh_ui_cb.call()
-	_hud.set_stage(_run.node_index,
+	# ★ 2026-10-28 联机事件回合：编号口径换成**回合号**。
+	#   `event_clock()` 单机 == node_index（一字不变），联机 = 战斗场景写入的真实回合号。
+	#   联机没有 4/10/14 这套节点位，所以「哪些节点能选」那句提示要换掉，
+	#   否则玩家会看到一串不对应本局的节点号。
+	var ref := _run.event_clock()
+	_hud.set_stage(ref,
 			T.t("PREP_AUG_STAGE", "%s · 选择增益") % _run.stage_label(), 0.0)
 	_hud.set_loss_cost(0)
 	_hud.set_start_button(T.t("PREP_AUG_BTN", "选择增益"), false)
@@ -86,20 +95,24 @@ func enter_event_node() -> void:
 	_hud.append_log({
 		"time": 0.0, "category": &"system",
 		"text": T.t("PREP_NODE_LINE", "节点 %d／%d · %s · %s") % [
-			_run.node_index, EveNodeTable.TOTAL, _run.stage_label(),
+			ref, EveNodeTable.TOTAL, _run.stage_label(),
 			_run.entry_line(),
+		] if not versus_event else T.t("PREP_ROUND_LINE", "第 %d 回合 · %s · %s") % [
+			ref, _run.stage_label(), _run.entry_line(),
 		],
 	})
+	var hint := T.t("PREP_AUG_HINT",
+			"增益里选一条 —— 节点 %s 共用这一套，已获取的不能再选") % _event_idx_text()
+	if versus_event:
+		hint = T.t("PREP_AUG_HINT_ROUND", "增益里选一条 —— 已获取的不能再选")
 	_hud.append_log({
 		"time": 0.0, "category": &"hint",
-		"text": T.t("PREP_AUG_HINT",
-					"四条增益里选一条 —— 节点 %s 共用这一套，已获取的不能再选")
-					% _event_idx_text(),
+		"text": hint,
 	})
-	_hud.show_event(_run.event_options(),
-			_run.entry_line(),
-			T.t("PREP_PICK_ONE", "节点 %d · %d 选 1")
-					% [_run.node_index, EveEventTable.count()])
+	var sub := T.t("PREP_PICK_ONE", "节点 %d · %d 选 1") % [ref, EveEventTable.count()]
+	if versus_event:
+		sub = T.t("PREP_PICK_ONE_ROUND", "第 %d 回合 · %d 选 1") % [ref, EveEventTable.count()]
+	_hud.show_event(_run.event_options(), _run.entry_line(), sub)
 	busy = false
 
 
@@ -190,9 +203,18 @@ func _apply_event_and_advance(id: StringName, target: Dictionary) -> void:
 		if not _hud.event_is_open():
 			_hud.show_event(_run.event_options(), _run.entry_line(),
 					T.t("PREP_PICK_ONE", "节点 %d · %d 选 1")
-							% [_run.node_index, EveEventTable.count()])
+							% [_run.event_clock(), EveEventTable.count()])
 		return
 	_hud.hide_event()
+
+	# ★ 2026-10-28 联机事件回合：**不推进节点**。
+	#   联机那套 17 回合表没有 node_index 的概念（敌方编组来自 `PVE_SOURCE_NODE`
+	#   映射），事件由 `versus.round_kind() == CAROUSEL` 触发 ⇒ 选完只把面板收起，
+	#   直接回到准备阶段，回合推进权仍在房主 / 回合倒计时手上。
+	#   ⚠️ 单机这条永远是 false，走下面的 `advance()`，行为与改动前一致。
+	if versus_event:
+		_begin_prep_cb.call()
+		return
 
 	# 事件节点不占一个回合：选完直接推进到下一节点，走它的正常准备阶段。
 	_run.advance()

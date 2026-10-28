@@ -37,6 +37,14 @@ func is_alive() -> bool:
 
 
 ## 掉血；返回是否因此被淘汰
+## 房主权威血量校正（联机 SYNC 用）。
+## ⚠️ 不做胜负判定，只把数值与淘汰态对齐 —— 判定仍归房主。
+func set_hp_sync(v: int) -> void:
+	hp = maxi(0, v)
+	if hp <= 0:
+		eliminated = true
+
+
 func take_damage(amount: int) -> bool:
 	if amount <= 0:
 		return false

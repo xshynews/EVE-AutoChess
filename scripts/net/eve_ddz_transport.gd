@@ -17,11 +17,35 @@ extends Node
 
 ## 服务端 id 恒为 1（ENet 约定）
 const SERVER_ID := 1
-const MAX_CLIENTS := 3
+## 服务端最多收几个连接。斗地主 3 人 ⇒ 留 4 个位（含余量）。
+## ⚠️ 2026-10-27：曾以为「传 3 会让服务端拒绝连接」，那个结论**不可信** ——
+##   当时无头探针用 tick 数判退出，而 headless 的 _process 不受帧率限制，
+##   服务端常在客户端启动前就退了（表现为 CONNECTING 卡死 / ECONNREFUSED）。
+##   修好探针后该现象消失。⇒ 4 仍保留（合理余量），但它不是 bug 根因。
+const MAX_CLIENTS := 4
 ## 连接超时（毫秒），由驱动层传 now_ms 进来
 const CONNECT_TIMEOUT_MS := 15000
-## 负载编解码复用会话层那两个静态函数（`var_to_bytes`，保证 int 不变 float）
-const PROTO := preload("res://scripts/net/ddz_net.gd")
+## ★ 2026-10-27：把 to_wire / from_wire 内联进来，不再 preload `ddz_net.gd`。
+##   理由**不是**性能或 bug：这一层只借两个序列化函数，却把整条斗地主
+##   画面层依赖（ddz_game / ddz_ai / ddz_plays）拖进了传输层，
+##   任何要用传输层的场景都得连坐加载它们。内联 = 依赖归零。
+##   ⚠️ 当时曾把「ENet 连不上」归因于这条 preload，**那个因果不成立** ——
+##      真正原因是探针用 tick 判退出，headless 下提前退了。
+const MAX_WIRE_BYTES := 64 * 1024
+
+
+## 负载转字节。用 `var_to_bytes` 而不是 JSON：JSON 会把整数变成浮点数。
+## `bytes_to_var` 不会反序列化对象，可安全处理不可信数据。
+static func to_wire(d: Dictionary) -> PackedByteArray:
+	return var_to_bytes(d)
+
+
+## 字节转负载。空/截断/超长/非字典一律返回空字典。
+static func from_wire(b: PackedByteArray) -> Dictionary:
+	if b.size() < 4 or b.size() > MAX_WIRE_BYTES:
+		return {}
+	var v = bytes_to_var(b)
+	return v if v is Dictionary else {}
 
 signal peer_joined(peer_id: int)
 signal peer_left(peer_id: int)
@@ -36,6 +60,10 @@ var last_error := ""
 
 var _connect_started_ms := 0
 var _ever_connected := false
+## 2026-10-27: a client must NOT poll before peer_connected(1).
+## ENetMultiplayerPeer::poll() does: if (!peers.has(1)) { close(); return; }
+## peers[1] only appears on EVENT_CONNECT, so polling early kills the link.
+var _client_ready_to_poll := false
 
 
 func _ready() -> void:
@@ -67,7 +95,7 @@ func poll() -> void:
 		#    实测排了大半个小时，别再改回去。
 		var from := peer.get_packet_peer()
 		var data := peer.get_packet()
-		var d: Dictionary = PROTO.from_wire(data)
+		var d: Dictionary = from_wire(data)
 		if not d.is_empty():
 			packet.emit(from, d)
 
@@ -85,7 +113,8 @@ func host_start(port: int) -> bool:
 	is_server = true
 	my_id = SERVER_ID
 	_ever_connected = true
-	peer.peer_connected.connect(func(id: int): peer_joined.emit(id))
+	peer.peer_connected.connect(func(id: int):
+		peer_joined.emit(id))
 	peer.peer_disconnected.connect(func(id: int): peer_left.emit(id))
 	return true
 
@@ -110,6 +139,7 @@ func join(ip: String, port: int, now_ms: int) -> bool:
 	peer.peer_connected.connect(func(id: int):
 		if id == SERVER_ID:
 			_ever_connected = true
+			_client_ready_to_poll = true
 			my_id = peer.get_unique_id()
 			connected_ok.emit()
 		else:
@@ -135,7 +165,7 @@ func send_to(target_peer_id: int, d: Dictionary) -> void:
 	if peer == null or not is_instance_valid(peer):
 		return
 	peer.set_target_peer(target_peer_id)
-	peer.put_packet(PROTO.to_wire(d))
+	peer.put_packet(to_wire(d))
 
 
 func broadcast(d: Dictionary) -> void:

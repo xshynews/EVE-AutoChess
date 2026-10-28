@@ -206,6 +206,11 @@ var _board_focus_init := false
 var _board_frame_mode := 0
 
 func _process(delta: float) -> void:
+	# ★ 2026-10-27（用户：「血条堆叠」）：屏幕空间标签避让。
+	# ⚠️ 放在布阵分支**之前**：布阵态要跳过，但战斗态的标签必须在
+	#    下面任何 `return` 之前更新完（否则画面上会残留上一帧的偏移）。
+	if board == null or not board.visible:
+		_declutter_labels()
 	# ── 棋盘可见时（= 布阵阶段）：取景交给棋盘，不做舰队跟随 ──────────
 	# 理由：玩家此刻关心的是「格子在哪」，跟着舰队包围盒走会让 66 单位宽的
 	# 棋盘被裁掉一半 —— 而看不到全盘的棋盘等于没有。
@@ -1439,11 +1444,142 @@ func snap_ships(ships: Array[EveShip]) -> void:
 		visual.snap_facing(ship.body, ship.alive)
 
 
+## 只释放**一艘**船的可视节点（真联机 PvP 重建敌方舰队时用）。
+## ⚠️ 不能用 `clear_ships()`：那会连我方一起清掉。
+func free_ship_visual(ship_id: int) -> void:
+	var node = _ship_nodes.get(ship_id, null)
+	if node != null and is_instance_valid(node):
+		node.queue_free()
+	_ship_nodes.erase(ship_id)
+
+
 func clear_ships() -> void:
 	for node in _ship_nodes.values():
 		if is_instance_valid(node):
 			node.queue_free()
 	_ship_nodes.clear()
+
+
+# ------------------------------------------------------------------ 标签避让
+
+## 屏幕空间标签避让参数（2026-10-27 用户：「血条堆叠」）。
+##
+## ⚠️ 这是「治」不是「藏」：名字常驻（用户定案），重叠靠**推开**解决。
+##    层数上限 5 = 同一处最多排 5 行；再多的压暗 —— 继续往上推会顶出画面，
+##    比堆叠更难读。
+const LABEL_DECLUTTER_STEP_PX := 15.0
+const LABEL_DECLUTTER_MAX_LAYERS := 5
+const LABEL_DECLUTTER_DIM := 0.35
+
+
+## 给一组屏幕矩形分配垂直偏移（像素，正 = 向上）。
+##
+## 纯函数：不碰节点、不看相机 —— 验收脚本可以直接喂矩形断言（红线 40 友好）。
+## `priorities[i]` 越大越优先留在原位（被集火 > 旗舰 > 普通船）。
+## 返回与输入**同序**的 Array[Dictionary]：{shift: float, dim: float}。
+static func declutter_offsets(rects: Array, priorities: Array,
+		step_px: float = LABEL_DECLUTTER_STEP_PX,
+		max_layers: int = LABEL_DECLUTTER_MAX_LAYERS) -> Array:
+	var n := rects.size()
+	var out: Array = []
+	out.resize(n)
+	if n == 0:
+		return out
+	var order: Array = []
+	for i in range(n):
+		order.append(i)
+	# 高优先级先占位；同优先级按屏幕高度从上往下排。
+	order.sort_custom(func(a, b):
+		if priorities[a] != priorities[b]:
+			return priorities[a] > priorities[b]
+		var ra: Rect2 = rects[a]
+		var rb: Rect2 = rects[b]
+		return ra.position.y < rb.position.y)
+	var placed: Array = []
+	for i in order:
+		var r: Rect2 = rects[i]
+		var shift := 0.0
+		var layer := 0
+		# ⚠️ 超过层数上限后**继续推开**（叠在一起更难看），只是把透明度压下去。
+		#    break 只防极端拥挤（几十块同点）时的长循环 ——
+		#    早期版本把循环条件写成 `layer < max_layers`，结果是「推满 5 层就停，
+		#    再检查还撞不撞」，而那时 r 通常已经推到一个不撞的位置 ⇒
+		#    `dim` 永远算成 1，上限形同不存在（实测 9 块同点只压暗 3 块）。
+		while _rect_hits(r, placed):
+			shift += step_px
+			r.position.y -= step_px
+			layer += 1
+			if layer > 12:
+				break
+		var dim := 1.0 if layer < max_layers else LABEL_DECLUTTER_DIM
+		placed.append(r)
+		out[i] = {"shift": shift, "dim": dim}
+	return out
+
+
+## 是否与已占位的矩形相撞。
+##
+## ⚠️ 用 `Rect2.intersects()` 的**默认**口径（`include_borders = false`）：边贴边
+##    不算撞。这样才能靠 15px 步长把 14px 高的标签一块一块排开 ——
+##    早期版本在这里 `grow(2)` 想留 2px 间隙，结果步长 15 减高度 14 只剩 1px，
+##    永远判撞 ⇒ 每块都被推到层数上限、集体压暗（血条照样糊成一片）。
+static func _rect_hits(r: Rect2, placed: Array) -> bool:
+	for q in placed:
+		if r.intersects(q as Rect2):
+			return true
+	return false
+
+
+## 每帧一次：屏幕投影 → 重叠检测 → 世界 Y 偏移（交给各船的标签层平滑）。
+##
+## ⚠️ 只在**非布阵态**调用：布阵按格子排列本来就分得开，而且布阵期不跑
+##    `sync_from_body` ⇒ 偏移不会生效，算了也是空转。
+func _declutter_labels() -> void:
+	if camera == null:
+		return
+	var rects: Array = []
+	var prios: Array = []
+	var refs: Array = []       ## 与 rects 同序：[{node, wpp}]
+	for node in _ship_nodes.values():
+		if not is_instance_valid(node) or not node.visible:
+			continue
+		if not node.has_method("label_block_world"):
+			continue
+		var block: Rect2 = node.label_block_world()
+		if block.size.x <= 0.0 or block.size.y <= 0.0:
+			continue
+		var base: Vector3 = node.label_root.global_position
+		var center := base + Vector3(0.0, block.position.y + block.size.y * 0.5, 0.0)
+		# 相机背后的点 unproject 会给出无意义值 ⇒ 跳过（本来也看不见）
+		if camera.is_position_behind(center):
+			continue
+		var p := camera.unproject_position(center)
+		# 用「世界 +1 单位」投影出的像素差算 px/世界单位 —— 把相机朝向也算进去。
+		var px_per_world := p.distance_to(
+				camera.unproject_position(center + camera.global_transform.basis.y))
+		if px_per_world < 1e-4:
+			continue
+		var size_px: Vector2 = block.size * px_per_world
+		rects.append(Rect2(p - Vector2(size_px.x * 0.5, size_px.y * 0.5), size_px))
+		var locked: bool = node.ship != null and node.ship.id == _cam_lock_id
+		node.set_label_camera_lock(locked)
+		var pri := 0
+		if node.ship != null:
+			if node.ship.is_focused:
+				pri += 4
+			if node.ship.is_flagship:
+				pri += 2
+		if locked:
+			pri += 2
+		prios.append(pri)
+		refs.append({"node": node, "wpp": 1.0 / px_per_world})
+	if refs.is_empty():
+		return
+	var res: Array = declutter_offsets(rects, prios)
+	for i in range(refs.size()):
+		var d: Dictionary = res[i]
+		refs[i].node.set_label_offset_world(float(d.shift) * float(refs[i].wpp))
+		refs[i].node.set_label_dim(float(d.dim))
 
 
 # ------------------------------------------------------------------ 坐标转换

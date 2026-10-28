@@ -41,17 +41,151 @@ class_name EveShipDatabase
 ## ★ 2026-10-10（审查 2#5）：武器/防御/定位的稳定 id（逻辑只认 id，不认中文）。
 ## ⚠️ 用 preload 常量引用（无头跑没有全局类缓存）。
 const CIDS := preload("res://scripts/core/eve_combat_ids.gd")
+## 定位标签（role_tag）要查的两份唯一真源：电子战名单 / 加强型战列名单。
+## ⚠️ 依赖方向：这两个表都**不**引用本文件，单向，无环。
+## ⚠️ 用 preload 常量而不是全局类名 —— 无头跑不一定有全局类缓存。
+const TRAITS := preload("res://scripts/data/eve_trait_table.gd")
+const PLANS := preload("res://scripts/data/eve_enemy_plans.gd")
 
 ## ★ 2026-10-10（i18n）：术语取词。舰船名**必须用 EVE 官方译名**
 ##（英文 = 官方英文原名，中文 = 官方简中译名）—— 见 `eve_terms.gd` 顶注。
 const TERMS := preload("res://scripts/core/eve_terms.gd")
 
 const CELL_METERS := 6000.0
+
+## ── ★ 2026-10-29（用户定案）：12 艘战列舰按「普通/加强 × 盾抗/甲抗」四类重排 ──
+##
+## 用户原话：「5 费战列很贵，但买了之后扛不住打不赢，那不等于废物吗」。
+## 所以这一档**不再按 0.65/0.35 拆装甲/结构**，三层血量直接按类别写死；
+## 武器也换成**双通道**（主通道 100% / 副通道 50% 概率），副通道带满穿盾。
+##
+## ⛔ 「加强型」不是我们编的分类 —— 就是 `EveEnemyPlans` 里那 4 艘：
+##    鹏鲲 / 死亡漩涡（盾抗）、地狱天使 / 亥伯龙神（甲抗）。
+const BATTLESHIP_CLASS := {
+	&"raven": &"common_shield", &"scorpion": &"common_shield",
+	&"typhoon": &"common_shield", &"tempest": &"common_shield",
+	&"megathron": &"common_armor", &"dominix": &"common_armor",
+	&"armageddon": &"common_armor", &"apocalypse": &"common_armor",
+	&"rokh": &"plus_shield", &"maelstrom": &"plus_shield",
+	&"hyperion": &"plus_armor", &"abaddon": &"plus_armor",
+}
+
+## 三层血量 = [护盾, 装甲, 结构]，**按定位分两张表**。
+##
+## ★ 2026-10-29（用户定案）：「攻击型攻击强防御弱，防御型防御强攻击弱」。
+##   四类只定「底子」（= 攻击型的血量），防御型另走 `BATTLESHIP_HP_TANK`。
+##
+##   ⛔ 为什么不用「底子 × 1.15 倍率」：190 × 1.15 = 218.5、250 × 1.15 = 287.5，
+##   层层都出半格血，表列（商店卡面 / 图鉴）还得跟着凑整，两处永远差 1。
+##   ⇒ 直接写整数，玩家看到的每一格就是战斗里那一条。
+const BATTLESHIP_HP := {
+	&"common_shield": [220.0, 320.0, 190.0],   ## 730（改前 600）
+	&"common_armor": [110.0, 420.0, 190.0],    ## 720（改前 739）
+	&"plus_shield": [250.0, 350.0, 200.0],     ## 800
+	&"plus_armor": [150.0, 450.0, 200.0],      ## 800
+}
+
+## 防御型（比同类的攻击型厚 ~15%）。**加强型全是防御型**，所以它只有这一张。
+##
+##   普通盾 250/370/220=840 · 普通甲 125/485/220=830
+##   加强盾 290/400/230=920 · 加强甲 175/520/230=925
+##
+## ⚠️ 战力口径（EHP × DPS，用来定「谁都不吃亏」）：
+##   普通盾 攻 730×80=58400 / 防 840×70=58800
+##   普通甲 攻 720×80=57600 / 防 830×70=58100
+##   ⇒ 两档差 < 1%，买哪艘都不亏；差的是**打法**（攻坚 vs 站桩）。
+##
+## ⛔ 不要把攻击型的血往下砍来「对称」：用户买 5 费战列的核心诉求就是
+##    「扛得住」（2026-10-29 原话：「买了之后扛不住打不赢，那不等于废物吗」）。
+const BATTLESHIP_HP_TANK := {
+	&"common_shield": [250.0, 370.0, 220.0],
+	&"common_armor": [125.0, 485.0, 220.0],
+	&"plus_shield": [290.0, 400.0, 230.0],
+	&"plus_armor": [175.0, 520.0, 230.0],
+}
+
+## 穿盾率（Sins of a Solar Empire 的相位导弹式）：**每发掷一次**，掷中就直接越过
+## 护盾落到装甲（装甲空了再落到结构），掷不中照常先吃护盾。
+##
+## ⛔ 不做「主/副两条通道各自结算」——那样甲抗战列撞满盾时 80 点会白扔，
+##    等于打不动任何盾抗船（用户原案的隐患，2026-10-29 讨论后弃用）。
+## ✅ 单通道 + 概率穿盾：每发伤害永远落地，DPS 与改前完全一致，
+##    而且天然留出「护盾击穿装备」的通道 —— 装备未来就是把这一格拉高。
+##
+## 档位：甲抗 > 盾抗（甲抗船就是硬啃装甲的），加强型 > 普通型。
+## ⚠️ 这几个数按用户原案的副通道占比（20/100 · 20/120 · 50/150）顺出来，
+##    想调就改这一张表，别去改战斗解算。
+const BATTLESHIP_SHIELD_PIERCE := {
+	&"common_shield": 0.20,
+	&"common_armor": 0.30,
+	&"plus_shield": 0.25,
+	&"plus_armor": 0.40,
+}
+
 const ARMOR_SHARE := 0.65
 ## Fallback default for attack interval (sec/shot).
 ## 2026-10-27: the table now carries a real gradient; this is only
 ## the fallback when the column is missing.
 const ATTACK_CYCLE_SECONDS := 1.0
+
+## ══════════════════════════════════════════════════════════════
+##  ★ 2026-10-29（用户定案）：「加强型单独加一个出现概率减少，
+##  不能和普通的战列一个出现概率」
+## ══════════════════════════════════════════════════════════════
+##  商店按费用分池（`by_cost`），同费等概率 ⇒ 4 艘加强型战列和 8 艘普通战列
+##  一样常出现。可加强型的三层血量比普通型厚一档（920/925 vs 840/830）、
+##  穿盾率也高一档 ⇒ 它应该是「抽到就是运气」，不是常规选项。
+##
+##  权重 0.70 的含义（5 费池 8 普通 + 4 加强，总权重 8 + 4×0.7 = 10.8）：
+##    普通战列每艘 **9.3%** · 加强型每艘 **6.5%** · 加强型 = 普通战列的 **70%**
+##    （用户口径：「如果普通战列是 10%，那加强型至少应该是 7% 左右」）
+##
+##  ⚠️ 绝对份额到不了 10% / 7% —— 12 艘的占比必须合计 100%，
+##     按 4×7 + 8×10 = 108% 的写法无法成立 ⇒ 只能等比缩到 9.3% / 6.5%，
+##     **比值 0.7 才是真正被满足的那个约束**。
+##
+##  ⚠️ 只影响**出现频率**，⛔ 不改价格 / 不改数值 —— 抽到仍然是 5 费，
+##     强度不变，只是更难刷到。
+##  ⚠️ 新加带权重的船就写进这张表，`pick_from_pool()` 会自动读到；
+##     表里没有的船一律权重 1.0（= 现在的等概率）。
+const SHOP_WEIGHT := {
+	&"rokh": 0.7, &"maelstrom": 0.7,
+	&"hyperion": 0.7, &"abaddon": 0.7,
+}
+
+## 某艘船的刷新权重（1.0 = 常规等概率）。
+static func shop_weight(ship_id: StringName) -> float:
+	return float(SHOP_WEIGHT.get(ship_id, 1.0))
+
+## 从**同一费用档**的池子里抽一艘，尊重 `SHOP_WEIGHT`。
+##
+## ⚠️ 消费**恰好一次** `rng.randf()`：商店序列由固定种子复现，
+##    少掷或多掷一次都会让整条商店链错位。
+##
+## ⚠️ 池子里全是权重 1.0 时**退回原来的 `randi_range`** ——
+##    1~4 费池一艘都不带权重，走加权路径会白白改掉它们的既有抽样序列
+##    （老存档/老探针的复现性会全变）。
+static func pick_from_pool(pool: Array, rng: RandomNumberGenerator) -> Dictionary:
+	if pool.is_empty():
+		return {}
+	# ⚠️ 池子里是 `derive()` 的产物，主键叫 **`ship_key`**（`id` 只在原始表行上）。
+	var total := 0.0
+	var weighted := false
+	for row in pool:
+		var w := shop_weight(StringName(row.get("ship_key", &"")))
+		total += w
+		if w < 1.0:
+			weighted = true
+	if not weighted:
+		return pool[rng.randi_range(0, pool.size() - 1)]
+	var roll := rng.randf() * total
+	var acc := 0.0
+	for row in pool:
+		acc += shop_weight(StringName(row.get("ship_key", &"")))
+		if roll <= acc:
+			return row
+	return pool[pool.size() - 1]
+
 
 ## ── ★ 2026-10-25 全局移速倍率（用户：「舰船速度目视过慢」）──────────
 ##
@@ -119,6 +253,23 @@ const LOGISTICS_REPAIR := {
 }
 ## 修理循环间隔（秒）。取 2.0 是 EVE 里「装甲维修器」的典型周期。
 const LOGISTICS_REPAIR_CYCLE := 2.0
+
+## ★★ 2026-10-28 用户定案：**后勤舰同时修两层**。
+##
+##   原修层（`logistics_repair`）保持原值不动；
+##   另一层（`logistics_repair_secondary`）按 **3 : 7** 派生 ——
+##   即「原修层 7 点，衍生层 3 点」，**向下取整**（用户：「就低不就高」）。
+##
+##   用户原话：「所有后勤舰船，原来修盾的，以原来修盾量为7，衍生出3的修甲量，
+##              反之亦然，比如，矮脚鸡级现在的修盾量为每两秒修12点，
+##              那衍生出的修甲量为5」
+##   ⇒ 12 × 3 / 7 = 5.14 → **5**；56 × 3 / 7 = 24 → **24**（正好整除）。
+##
+##   ⚠️ 反向同样乘 3/7（不是 7/3）：装甲主修的船，衍生护盾 = 装甲量 × 3/7。
+##      若按 7/3 反推，巡洋会变成「甲 56 + 盾 130」，明显过头 —— 已跟用户确认过。
+##   ⚠️ 只派生**护盾 / 装甲**两层，**不碰结构**（结构是最后一道血，能修＝两条命）。
+const LOGISTICS_SECONDARY_NUM := 3.0
+const LOGISTICS_SECONDARY_DEN := 7.0
 
 # ── 伤害类型分布（EM, THERMAL, KINETIC, EXPLOSIVE）────────────────
 # 注：PackedFloat32Array 的构造不是常量表达式，GDScript 里不能用 const 承载。
@@ -203,10 +354,22 @@ const TRACKING_DECAY_BY_COST := {
 # 盾抗船：护盾层强（动能/爆炸抗高），装甲层弱。
 # 甲抗船：装甲层强（电磁/热能抗高），护盾层弱。
 # 结构层永远 0 抗 —— 这是 EVE 的规则，也是「结构是最后一道血」的由来。
-static var SHIELD_TANK_SHIELD_RESISTS := PackedFloat32Array([0.0, 0.45, 0.55, 0.60])
-static var SHIELD_TANK_ARMOR_RESISTS := PackedFloat32Array([0.50, 0.30, 0.20, 0.10])
-static var ARMOR_TANK_SHIELD_RESISTS := PackedFloat32Array([0.0, 0.20, 0.40, 0.50])
-static var ARMOR_TANK_ARMOR_RESISTS := PackedFloat32Array([0.60, 0.35, 0.25, 0.10])
+#
+# ⚠️ 上面三行是 2026-10-29 **之前**的口径，保留做沿革参考；现行口径见下一段。
+## ★ 2026-10-29（用户定案）：**抗性全归 0**。
+##
+## 用户原话：「EVE 里面的抗性是要做多类型的子弹，每个种族的子弹都是多类型的，
+##   而不是绑定发射器……所以我说没用。」
+## 本作每艘船焊死一种武器（激光炮永远只打电磁/热能），玩家没有"换弹种针对目标"
+## 这个动作 ⇒ 抗性退化成**单向的减伤税**，只会拉长 TTK，让玩家觉得"打得费劲"。
+##
+## ⛔ 别再按 EVE 的直觉把数字填回去：那不是遗漏，是**故意的 0**。
+## ⚠️ 四类武器的伤害分布（`PROFILE_*`）**保留不动** —— 将来真做多弹种时直接复用；
+##    当前所有层抗性为 0 ⇒ `damage_factor()` 恒等 1.0，分布不影响结果。
+static var SHIELD_TANK_SHIELD_RESISTS := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
+static var SHIELD_TANK_ARMOR_RESISTS := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
+static var ARMOR_TANK_SHIELD_RESISTS := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
+static var ARMOR_TANK_ARMOR_RESISTS := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
 static var HULL_RESISTS := PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
 
 
@@ -222,8 +385,11 @@ static func _static_init() -> void:
 
 # ═══════════════════════════════════════════════════════════ 派生规则
 
-## 原始行 → 工程用的完整数值 Dictionary
-##
+## 战列舰的穿盾率；其余 40 艘为 0（走原来的「先盾后甲」顺序）。
+static func battleship_pierce(bs_class: StringName) -> float:
+	return float(BATTLESHIP_SHIELD_PIERCE.get(bs_class, 0.0))
+
+
 ## 输出的字段分两类：
 ##   ① 权威原值（ship_key / weapon_type / attack / range_cells …）—— 直通，不加工
 ##   ② 派生值（armor / hull / optimal_range / max_speed …）—— 由换算常数算出
@@ -242,6 +408,17 @@ static func derive(row: Dictionary) -> Dictionary:
 	var armor := roundf(armor_struct * ARMOR_SHARE)
 	var hull := armor_struct - armor
 	var shield := float(row["shield"])
+
+	# ★ 2026-10-29：战列舰**不拆**，三层血量按类别 + 定位写死
+	#   （攻击型 `BATTLESHIP_HP` / 防御型 `BATTLESHIP_HP_TANK`）。
+	#   ⚠️ 判据用 role id（不是在比中文），映射只有 `EveCombatIds` 一处。
+	var bs_class: StringName = BATTLESHIP_CLASS.get(StringName(row["id"]), &"")
+	if bs_class != &"":
+		var tank := CIDS.role_id_of(String(row["role"])) == CIDS.R_DEFENSE
+		var hp3: Array = (BATTLESHIP_HP_TANK if tank else BATTLESHIP_HP)[bs_class]
+		shield = float(hp3[0])
+		armor = float(hp3[1])
+		hull = float(hp3[2])
 
 	# --- ② 抗性档位 ---
 	# ⚠️ 判据用 **id**（不是在比中文）：拼错字会在 `EveCombatIds.unknown_values`
@@ -277,6 +454,14 @@ static func derive(row: Dictionary) -> Dictionary:
 	#    但那是**数据的巧合**，真正该信的是 `defense` 这一列本身。
 	var logi_layer := (&"shield" if defense_id == CIDS.D_SHIELD else &"armor") if is_logi else &""
 	var logi_repair := float(LOGISTICS_REPAIR.get(cost, LOGISTICS_REPAIR[1])) if is_logi else 0.0
+	# ★ 2026-10-28：衍生层 = 主修层之外的另一层（护盾 ↔ 装甲，⛔ 不含结构）。
+	#   量 = floor(主修量 × 3 / 7) —— 口径见 `LOGISTICS_SECONDARY_NUM` 的上方注释。
+	var logi_layer_2 := (&"armor" if logi_layer == &"shield" else &"shield") if is_logi else &""
+	# ⚠️ 显式 `: float`：`floor()` 在 4.7 的返回推导是 Variant，
+	#    而本项目把该警告当错误 ⇒ `:=` 会让整个文件编译失败
+	#    （整条依赖链跟着挂，`verify_audio` 就是被这条打成红的）。
+	var logi_repair_2: float = floor(logi_repair * LOGISTICS_SECONDARY_NUM
+			/ LOGISTICS_SECONDARY_DEN) if is_logi else 0.0
 
 	# 2026-10-27: fire rate (sec/shot) now comes from the table column.
 	# Alpha scales with cycle so DPS = damage/cycle stays identical,
@@ -284,6 +469,11 @@ static func derive(row: Dictionary) -> Dictionary:
 	var cycle := float(row.get("attack_interval", ATTACK_CYCLE_SECONDS))
 	if cycle <= 0.0:
 		cycle = ATTACK_CYCLE_SECONDS
+
+	# `weapon_damage` 既是战斗用的「每发伤害」，也是 DPS 的唯一分母来源。
+	# ⚠️ 第一次抄成 `attack` 而非 `attack x cycle` 会让全表 DPS 差一个数量级。
+	var weapon_damage := (logi_atk if is_logi else float(row["attack"])) * cycle
+	var shield_pierce := battleship_pierce(bs_class)
 
 	return {
 		# ── 身份 ──
@@ -333,7 +523,9 @@ static func derive(row: Dictionary) -> Dictionary:
 		#    ⛔ 别为了让这两个数一致而改 `attack` —— 那会让
 		#       `warhead_scale()` 放大出来的 HUD 数字变成假的。
 		#       （`warhead_scale` 同时乘两者，所以星级/关卡缩放仍然同步。）
-		"weapon_damage": (logi_atk if is_logi else float(row["attack"])) * cycle,
+		"weapon_damage": weapon_damage,
+		# ★ 2026-10-29：战列舰每发「无视护盾、直接落下一层」的概率；其余船为 0。
+		"shield_pierce": shield_pierce,
 		"weapon_cycle": cycle,
 		"shots_per_second": 1.0 / cycle,
 		"weapon_profile": WEAPON_PROFILE.get(StringName(weapon), PROFILE_MISSILE),
@@ -362,6 +554,9 @@ static func derive(row: Dictionary) -> Dictionary:
 		"logistics_layer": logi_layer,
 		"logistics_repair": logi_repair,
 		"logistics_cycle": LOGISTICS_REPAIR_CYCLE,
+		# ★ 2026-10-28：同一循环里**再补一笔**给另一层（护盾 ↔ 装甲）。
+		"logistics_layer_secondary": logi_layer_2,
+		"logistics_repair_secondary": logi_repair_2,
 
 		# ── 派生：电容（占位，权威表没有这一维）──
 		"cap_max": 300.0 + armor_struct * 0.6,
@@ -397,6 +592,74 @@ static func by_cost(cost: int) -> Array[Dictionary]:
 static func by_id(ship_id: String) -> Dictionary:
 	var row := EveShipTable.find_row(ship_id)
 	return derive(row) if not row.is_empty() else {}
+
+
+# ═══════════════════════════════════════════════════════════ 定位标签
+
+## 定位五档（**互斥**，52 艘恰好分完：17 + 15 + 8 + 8 + 4）
+##
+## ★ 2026-10-28（用户定案）：「最顶上的分类要加个定位，把攻击、防御、后勤、
+##   电子战、加强型加进去」。
+##
+## ── 为什么不是直接读表里的 `role` ──────────────────────────────
+##  表里的 `role` 只有三种（攻击型 20 / 防御型 24 / 后勤 8），
+##  而**电子战**和**加强型**不在那一列：
+##    · 电子战 = `EveTraitTable.EW_SHIP_KEYS` 的 8 艘（羁绊维度，跨 role）
+##    · 加强型 = `EveEnemyPlans.REINFORCED_BATTLESHIP` 的 4 艘战列（用户 10-27 点名）
+##  这两个名单都是**别处的唯一真源** ⇒ 这里只做「查」，⛔ 绝不复制名单。
+##
+## ── 互斥的取法（优先级 ew > command > role）─────────────────────
+##  电子战船在表里仍标着「攻击型 / 防御型」（那份注释说得很清楚：
+##  那是定位标签不是数值档）。若两档都算，同一艘船会出现两次、五档合计 60+。
+##  收成互斥后：攻击 17 · 防御 15 · 后勤 8 · 电子战 8 · 加强型 4 = 52。
+##  ⇒ 「攻击型」这一档**不包括**电子战船，UI 上要让玩家能看见这个口径
+##    （图鉴每档 chip 后的数字就是干这个的）。
+const ROLE_TAGS: Array[StringName] = [
+	&"attack", &"defense", &"logistics", &"ew", &"command",
+]
+
+## 档位 → 中文（唯一真源。HUD / 图鉴都从这里取）
+const ROLE_LABELS := {
+	&"attack": "攻击型",
+	&"defense": "防御型",
+	&"logistics": "后勤",
+	&"ew": "电子战",
+	&"command": "加强型",
+}
+
+
+## 一艘船的定位档。未知 id 返回 `&""`。
+static func role_tag(ship_id: String) -> StringName:
+	if ship_id.is_empty():
+		return &""
+	if TRAITS.EW_SHIP_KEYS.has(ship_id):
+		return &"ew"
+	if PLANS.REINFORCED_BATTLESHIP.has(ship_id):
+		return &"command"
+	var d := by_id(ship_id)
+	if d.is_empty():
+		return &""
+	match String(d.get("role", "")):
+		"后勤":
+			return &"logistics"
+		"防御型":
+			return &"defense"
+		_:
+			return &"attack"
+
+
+## 定位档 → 中文
+static func role_label(tag: StringName) -> String:
+	return String(ROLE_LABELS.get(tag, ""))
+
+
+## 某一档有多少艘（图鉴 chip 上的数字）
+static func count_by_role(tag: StringName) -> int:
+	var n := 0
+	for s in all_ships():
+		if role_tag(String(s["ship_key"])) == tag:
+			n += 1
+	return n
 
 
 ## 按派系取

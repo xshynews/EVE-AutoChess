@@ -133,6 +133,11 @@ var active_hull: float = 0.0
 #     再叠一层消耗会让它整场修不出来，实测意义不大）。
 var logistics_repair: float = 0.0     ## 每次修理量（点）
 var logistics_layer: StringName = &"" ## 修哪一层：&"shield" 或 &"armor"
+## ★ 2026-10-28：后勤舰**同时修两层**。下面这组是「另一层」那一笔：
+##   层 = 主修层的对面（护盾 ↔ 装甲，⛔ 不含结构），量 = 主修量 × 3/7（向下取整）。
+##   由 `EveBattleSimulator` 在同一个 `logistics_cycle` 里紧跟着再修一次。
+var logistics_repair_secondary: float = 0.0
+var logistics_layer_secondary: StringName = &""
 var logistics_cycle: float = 2.0      ## 修理间隔（秒）
 var logistics_timer: float = 0.0      ## 距下次修理的倒计时
 var repaired_total: float = 0.0       ## 本场累计修了多少（给 HUD / 验收）
@@ -185,6 +190,14 @@ var incoming_mult: float = 1.0
 ## 模拟器在 `apply_damage()` 时传给战斗核心（只影响 armor 层）。
 var armor_pierce: float = 0.0
 
+## 穿盾：每一发**掷一次**，命中概率就直接越过护盾落到装甲（装甲空则落结构）。
+##
+## ★ 2026-10-29（用户定案，Sins 式）：12 艘战列舰各自带一个 0~1 的穿盾率
+## （见 `EveShipDatabase.BATTLESHIP_SHIELD_PIERCE`），其余 40 艘为 0 ⇒ 行为完全不变。
+## ⚠️ 和 `armor_pierce` 不是一回事：那个是「无视装甲抗性」，这个是「跳过整层护盾」。
+## 🔮 未来「护盾击穿装备」就是把这一个值拉高（拉到 1.0 = Stellaris 鱼雷式全穿）。
+var shield_pierce: float = 0.0
+
 # --- 原始数据（保留武器类型名、导弹参数等未结构化字段） ---
 var _extra: Dictionary = {}
 
@@ -224,6 +237,8 @@ func apply_stats(stats: Dictionary) -> void:
 	#   在 `EveBattleSimulator` 里用 `logistics_repair > 0.0` 一刀拦掉。
 	logistics_repair = float(stats.get("logistics_repair", 0.0))
 	logistics_layer = StringName(stats.get("logistics_layer", &""))
+	logistics_repair_secondary = float(stats.get("logistics_repair_secondary", 0.0))
+	logistics_layer_secondary = StringName(stats.get("logistics_layer_secondary", &""))
 	logistics_cycle = maxf(0.1, float(stats.get("logistics_cycle", 2.0)))
 	logistics_timer = logistics_cycle
 	repaired_total = 0.0
@@ -236,6 +251,8 @@ func apply_stats(stats: Dictionary) -> void:
 	weapon_cycle = float(stats.get("weapon_cycle", 1.0))
 	weapon_timer = weapon_cycle
 	weapon_damage = float(stats.get("weapon_damage", 0.0))
+	# ★ 2026-10-29：战列舰的穿盾率（其余船 0）。装备将来直接改这个字段即可。
+	shield_pierce = float(stats.get("shield_pierce", 0.0))
 	weapon_profile = stats.get("weapon_profile", PackedFloat32Array([0.0, 0.0, 0.0, 1.0]))
 	optimal_range = float(stats.get("optimal_range", 0.0))
 	falloff = float(stats.get("falloff", 0.0))
@@ -440,16 +457,29 @@ func is_logistics_unit() -> bool:
 ## ⚠️ 参数名叫 `target` 而不是 `ally`：它现在**可以是自己**。
 ##    名字留在调用点上会被读成"只对友军"，所以这里只说 target。
 func repair_ally(target: EveShip) -> float:
+	return _repair_layer(target, logistics_layer, logistics_repair)
+
+
+## ★ 2026-10-28 衍生层那一笔（另一层护盾/装甲，量 = 主修 × 3/7）。
+##
+## 与 `repair_ally` 是**两笔独立结算**：各自挑自己那层里最缺的目标
+## （挑人逻辑在 `EveBattleSimulator._replenish_own_ships`）。
+## 返回值同样是「实际修进去的点数」，0 = 没修到（目标那层已满 / 没目标）。
+func repair_ally_secondary(target: EveShip) -> float:
+	return _repair_layer(target, logistics_layer_secondary, logistics_repair_secondary)
+
+
+## 修一层的共用实现。三条口径见 `repair_ally` 的注释（只修这一层 / 不超上限 / 可修自己）。
+func _repair_layer(target: EveShip, layer: StringName, amount: float) -> float:
 	if target == null or not target.alive:
 		return 0.0
-	if logistics_layer.is_empty() or logistics_repair <= 0.0:
+	if layer.is_empty() or amount <= 0.0:
 		return 0.0
-	var layer: StringName = logistics_layer
 	var cap := float(target.max_hp.get(layer, 0.0))
 	if cap <= 0.0:
 		return 0.0
 	var before := float(target.hp.get(layer, 0.0))
-	target.hp[layer] = minf(cap, before + logistics_repair)
+	target.hp[layer] = minf(cap, before + amount)
 	var gained := float(target.hp[layer]) - before
 	repaired_total += gained
 	return gained
@@ -470,6 +500,8 @@ func repair_scale(amount_mult: float, cycle_mult: float) -> void:
 	if logistics_repair <= 0.0 or logistics_layer.is_empty():
 		return
 	logistics_repair *= amount_mult
+	# ★ 2026-10-28：衍生层同乘 —— 否则羁绊只强化主修，两层比例会被悄悄改掉。
+	logistics_repair_secondary *= amount_mult
 	logistics_cycle = maxf(0.3, logistics_cycle * cycle_mult)
 
 

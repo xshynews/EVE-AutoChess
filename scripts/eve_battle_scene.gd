@@ -35,6 +35,23 @@ extends Node
 const ARENA_SCRIPT := preload("res://scripts/scene/eve_battle_arena.gd")
 const HUD_SCRIPT := preload("res://scripts/ui/eve_hud_root.gd")
 const RUN_STATE_SCRIPT := preload("res://scripts/core/eve_run_state.gd")
+## [versus] multiplayer trio
+const MATCH_STATE_SCRIPT := preload("res://scripts/core/eve_match_state.gd")
+const MATCH_PLAYER_SCRIPT := preload("res://scripts/core/eve_match_player.gd")
+const AI_BRAIN_SCRIPT := preload("res://scripts/core/eve_ai_brain.gd")
+const VNET_SCRIPT := preload("res://scripts/net/eve_versus_net.gd")
+const VTR_SCRIPT := preload("res://scripts/net/eve_versus_transport.gd")
+## 跨网走隧道时必须用 **ENet(UDP 27015)** —— 隧道的 port-forward 只映射这一个端口。
+## ⛔ 别把隧道模式改成 TCP：实测 easytier 在 --no-tun 下 TCP 流转发不通
+##    （连上本地监听器后立刻 ECONNRESET，服务端一次 ACCEPT 都没有）。
+const VENET_SCRIPT := preload("res://scripts/net/eve_ddz_transport.gd")
+const TUNNEL_ENET_PORT := 27015
+## ★ 2026-10-28 中转模式（`scripts/net/eve_udp_relay.gd`）：
+## 本机转发器占 27015（接住加入方的 ENet 包），房主的 ENet 服务端用 **27016** 错开。
+const RELAY_ENET_PORT := 27016
+const RELAY_SCRIPT := preload("res://scripts/net/eve_udp_relay.gd")
+## ★ 2026-10-28 零门槛：中继地址内置（见 `scripts/net/eve_net_config.gd` 顶注）。
+const NETCFG := preload("res://scripts/net/eve_net_config.gd")
 ## 对局存档（`user://run.cfg`）—— 见 `EveRunStore` 顶注。
 const RUN_STORE := preload("res://scripts/core/eve_run_store.gd")
 const TIERS := preload("res://scripts/data/eve_campaign_tiers.gd")
@@ -115,6 +132,11 @@ const MAX_FRAME_DT := 0.1
 var arena: EveBattleArena
 var hud: EveHudRoot
 var run: EveRunState
+## [versus] the room; null = single player.
+var versus: EveMatchState = null
+## 联机：本回合已打完，正处在「只可打捞」的结算等待里。
+## 该标志为 true 时，进下一回合**只**由回合倒计时触发。
+var _versus_await_result := false
 var sim: EveBattleSimulator = null
 ## 音频层（阶段 D 子项 ④）。三条总线 + 节流 + 可断言计数器。
 var audio: EveAudio
@@ -172,6 +194,10 @@ var _pending_event: StringName:
 		return _prep_phase.pending_event
 	set(v):
 		_prep_phase.pending_event = v
+
+## ★ 2026-10-28 联机事件回合：已经处理过的回合号（0 = 还没处理过）。
+## 用来保证「一回合只弹一次事件面板」—— 选完会重入 `begin_prep()` 建队。
+var _v_event_round := 0
 
 var _ship_pick_cache: Array:
 	get:
@@ -248,6 +274,119 @@ var _busy: bool:
 ##    `clear()` / `merge()`，⛔ 不重新赋值 ⇒ 本变量永远指向那份拖动状态
 ##    （验收脚本 `verify_run` 直接 `_battle.get("_drag")` 读它）。
 var _drag: Dictionary = {}
+
+
+## [versus] round clock: accumulate while fighting, forfeit on timeout.
+func _versus_tick(delta: float) -> void:
+	if versus == null or versus.finished:
+		return
+	# ★ 2026-10-28 房主权威：**还没开赛就什么都不跑** ——
+	#   否则加入方在「等待房主」期间自己的回合时钟已经开始走，
+	#   120 秒到点还会判自己负（正是这次要修的「各有各的节奏」）。
+	if _vawait_start and not _vstarted:
+		return
+	if versus.round_kind() == EveMatchState.RoundKind.CAROUSEL:
+		# ★ 2026-10-28 联机事件回合：没有战斗，但**表要照常走**。
+		#   改之前这里是 `return`（时钟完全不动）⇒ 一旦事件面板选完，
+		#   玩家就卡在该回合（点开战才会结算，而事件回合又不该打）。
+		#   现在：面板还没选完就停表（决策无时限），选完后照常倒计时，
+		#   到点由房主推进到下一回合。
+		if _v_event_round != versus.global_round():
+			return
+		versus.round_elapsed += delta
+		_refresh_versus_clock()
+		if versus.round_timed_out():
+			_versus_advance_round()
+		return
+	versus.round_elapsed += delta
+	_refresh_versus_clock()   # every frame, this is a countdown
+	# ★ 准备阶段每秒把当前编制发一次。
+	#   为什么不是只在开打时发：玩家可能在准备期任意时刻改布阵，
+	#   而且「0 艘 ⇒ 判负」那条路根本不走 start_battle()，只在开打时发会漏。
+	if _autodeploy and run.phase == EveRunState.Phase.PREP and run.field.is_empty():
+		# 让本地玩家也吃一次 AI 的准备逻辑（买船 + 上阵），只为验收。
+		var b := AI_BRAIN_SCRIPT.new("inferno")
+		b.take_prep_turn(run)
+	if _vonline and run.phase == EveRunState.Phase.PREP:
+		var now_ms := Time.get_ticks_msec()
+		if now_ms - _vfleet_last_ms >= 1000:
+			_vfleet_last_ms = now_ms
+			_versus_broadcast_fleet()
+	# ★ 联机结算期：本回合已打完，正在「只可打捞」的等待里。
+	#   倒计时归零才是进下一回合的唯一信号。
+	if _versus_await_result:
+		if _versus_is_authority() and versus.round_elapsed >= EveMatchState.ROUND_TIME:
+			_versus_advance_round()
+		return
+	if not versus.round_timed_out():
+		return
+	# ★ 2026-10-28：超时判负/推进只由权威（单机 / 房主）做 ——
+	#   加入方数到 120 秒只负责把顶条读成 0:00，等房主的 ROUND。
+	if not _versus_is_authority():
+		return
+	# No winner in time. If the simulator is still running it has its
+	# own sudden death, so let it finish normally.
+	var sim = _get_sim.call()
+	if sim != null and not sim.finished:
+		return
+	_settle_versus_timeout()
+
+
+## 回合推进的权威：单机 / 房主。
+##
+## ★ 2026-10-28 房主权威（用户：「需要房主点击开始游戏各个玩家才能开始游戏」
+##   「各有各的节奏，这不对」）：加入方**不再自己判到点**，
+##   只跟房主广播的 ROUND 走（见 `_versus_net_tick`）。
+func _versus_is_authority() -> bool:
+	return not _vonline or _vhost
+
+
+## Timeout with no simulator running at all.
+## 联机唯一推进点：回合倒计时归零（或打完时时钟已耗尽）才进下一回合。
+## ★ 2026-10-28：只有权威（单机 / 房主）能推进；房主推进后广播 ROUND 给加入方。
+func _versus_advance_round() -> void:
+	if versus == null or versus.finished:
+		return
+	if not _versus_is_authority():
+		return
+	_versus_await_result = false
+	versus._next_round()
+	versus.round_elapsed = 0.0
+	_refresh_versus_hud()
+	_versus_announce_round()
+	if versus.finished:
+		_versus_finish()
+		return
+	begin_prep()
+
+
+func _settle_versus_timeout() -> void:
+	if versus == null or versus.finished:
+		return
+	if not _versus_is_authority():
+		return
+	var me: int = -1
+	for i in versus.players.size():
+		var q = versus.players[i]
+		if q != null and not q.is_ai:
+			me = i
+			break
+	if me < 0:
+		return
+	if versus.round_kind() == EveMatchState.RoundKind.PVP:
+		var opp: int = versus.human_opponent()
+		if opp >= 0:
+			versus.apply_outcome({"a": me, "b": opp, "winner": opp, "a_alive": 0, "b_alive": 0})
+	else:
+		versus.apply_outcome({"a": me, "b": -1, "a_won": false, "a_alive": 0, "b_alive": 0})
+	versus.round_elapsed = 0.0
+	versus._next_round()
+	_refresh_versus_hud()
+	_versus_announce_round()
+	if versus.finished:
+		_versus_finish()
+		return
+	begin_prep()
 
 
 func _ready() -> void:
@@ -367,6 +506,11 @@ func _ready() -> void:
 	_battle_phase.setup(run, hud, audio, arena, _resolve_phase, _get_sim,
 			_get_own_ships, _get_enemy_ships, _get_own_field_index,
 			_on_unit_destroyed, _on_shot_fired)
+	# [versus] 多人结算挂在 battle_over 上，**不是** sim.battle_finished。
+	#  ⚠️ 三条收束路径里只有「模拟器打完」那条有 sim 信号；
+	#     「未布阵判负」「时限判负」是直接调 finished() 的 ⇒ 挂 sim 会漏。
+	#     实测：准备倒计时到点、场上 0 艘 ⇒ 判负了但多人血量没掉。
+	_battle_phase.battle_over.connect(_versus_settle)
 
 	# ★ 准备阶段模块接线（事件节点四选一）。
 	_prep_phase.setup(run, hud, _resolve_phase, _refresh_run_ui, _clear_field, begin_prep)
@@ -413,7 +557,55 @@ func _ready() -> void:
 				RUN_STORE.pending_difficulty).get("id", "simple"))
 		RUN_STORE.pending_difficulty = ""
 	run.start_run()
-	begin_prep()
+	# [versus] build the room only when the menu asked for it.
+	# After start_run(): each AI needs its own independent run.
+	if int(RUN_STORE.pending_versus_ai) > 0:
+		_setup_versus(int(RUN_STORE.pending_versus_ai))
+	elif String(RUN_STORE.pending_versus_role) != "":
+		# ★ 2026-10-27：从联机大厅进来的真人局。
+		#  ⚠️ 目前**远端玩家还是由 AI 顶替**（回合同步层未接完）：
+		#     大厅握手、座位、开始信号都是真的 TCP；但对手的编制/操作
+		#     还没从网络同步过来。这里先把「人数」对上，跑通整条回合流程。
+		# ★ 按房间座位表建局：ai 位 = 电脑补位，其余（真人位）当前也暂由 AI 顶替
+		#   （远端编制同步未接完）。
+		var slots: Array = RUN_STORE.pending_versus_slots
+		var ai_n := 0
+		for sl in slots:
+			if String((sl as Dictionary).get("kind", "")) == "ai":
+				ai_n += 1
+		if ai_n <= 0:
+			ai_n = maxi(1, int(RUN_STORE.pending_versus_seats) - 1)
+		print("[versus] 房间座位 %d 个，其中电脑 %d 个（role=%s）"
+				% [slots.size() if not slots.is_empty() else 0, ai_n,
+				String(RUN_STORE.pending_versus_role)])
+		# ★ 按**座位表**建局，不是按 AI 个数。
+		#   远端真人也必须是玩家表里的一员，否则 PvP 永远轮不到和他打
+		#   （配对只在玩家表内部做）。座位下标 == 玩家下标，两台机器才对得上。
+		# ★★ 隧道路径用**固定座位表**：房主 0 / 加入方 1 / 电脑 2,3。
+		#   为什么固定：大厅在隧道模式下没有房间通道（房间握手要等 ENet 起来），
+		#   而建局必须在进战场时立刻完成 ⇒ 双方先约定同一张表。
+		#   ⚠️ 因此隧道模式目前是「1 PC 房主 + 1 手机加入 + 2 电脑」，
+		#      要支持多真人再加入方座位号协商。
+		var my_seat := int(RUN_STORE.pending_versus_my_seat)
+		if bool(RUN_STORE.pending_versus_tunnel) or bool(RUN_STORE.pending_versus_relay):
+			slots = [
+				{"kind": "human", "name": "房主"}, {"kind": "human", "name": "玩家 2"},
+				{"kind": "ai", "name": "电脑 3"}, {"kind": "ai", "name": "电脑 4"},
+			]
+			my_seat = 0 if String(RUN_STORE.pending_versus_role) == "host" else 1
+			RUN_STORE.pending_versus_my_seat = my_seat
+			print("[versus] 隧道路径：固定座位表（我 = %d）" % my_seat)
+		_setup_versus_by_slots(slots, my_seat)
+		_versus_online_setup()
+	RUN_STORE.pending_versus_role = ""
+	RUN_STORE.pending_versus_ai = 0
+	# ★ 2026-10-28 房主权威：联机进战场后**不自己开第 1 回合** ——
+	#   房主等对端连上（或宽限到点）后广播 START；加入方收到 START 才开。
+	#   单机 `_vawait_start` 恒 false ⇒ 走原来的 `begin_prep()`，行为不变。
+	if _vawait_start:
+		_begin_versus_wait()
+	else:
+		begin_prep()
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -425,6 +617,32 @@ func _ready() -> void:
 ## ⚠️ 这里【不建模拟器】。准备阶段不该有战斗推进 ——
 ##    舰队只是站在那里，等玩家说「开打」。
 func begin_prep() -> void:
+	# [versus] AI players take their prep turn first.
+	# One round = one call; the auto-start countdown path is covered too.
+	if versus != null:
+		_run_ai_prep_turns()
+		_refresh_versus_hud()
+		versus.round_elapsed = 0.0   # fresh clock every round
+		# ★★ 2026-10-28 用户：「这个事件…同时适用于联机对战，适用于所有事件回合」。
+		#
+		#  联机的事件回合 = `RoundKind.CAROUSEL`（每阶段第 4 回合，云顶选秀位），
+		#  ⛔ 不是 `EveNodeTable` 的 4/10/14 —— 联机跑的是另一套 17 回合表，
+		#  `run.node_index` 在联机里根本不推进。两套都走同一张 `EveEventTable`，
+		#  所以新事件在单机 / 联机自动都能抽到，不需要第二份数据。
+		#
+		#  ⚠️ 同一回合只弹一次：选完会重入本函数建队，`_v_event_round` 记着
+		#     已经处理过的回合号 ⇒ 不会反复弹面板。
+		#  ⚠️ 折扣计时用 `set_event_clock(global_round())` 写真实回合号
+		#     （见 `EveRunState.event_clock()` 的说明）。
+		run.set_event_clock(versus.global_round())
+		var gr := versus.global_round()
+		if versus.round_kind() == EveMatchState.RoundKind.CAROUSEL and _v_event_round != gr:
+			_v_event_round = gr
+			_prep_phase.versus_event = true
+			_prep_phase.enter_event_node()
+			return
+		_prep_phase.versus_event = false
+	# match over? then rank and stop driving rounds
 	# 事件节点（4 / 10 / 14）：没有战斗，进来就开面板。
 	#
 	# ⚠️ 放在函数**最前面**分派，而不是在后面加一个 if：
@@ -524,7 +742,11 @@ func begin_prep() -> void:
 	hud.show_entry(run.node_index, run.node_type(), run.entry_line())
 	hud.set_loss_cost(run.loss_preview())
 	hud.set_fleet(_own_ships)
-	hud.set_start_button("✦ 开战", true)
+	# ★ 联机事件回合没有战斗 ⇒ 按钮换成「进入下一回合」（直接推进，不开打）。
+	if versus != null and versus.round_kind() == EveMatchState.RoundKind.CAROUSEL:
+		hud.set_start_button(T.t("PREP_NEXT_ROUND", "▶ 进入下一回合"), true)
+	else:
+		hud.set_start_button("✦ 开战", true)
 	_log_synergies()
 
 	hud.append_log({
@@ -697,7 +919,27 @@ func _log_synergies() -> void:
 ## 敌方舰队 = 节点表指定的编组（EveEnemyComps）
 ##
 ## ⚠️ 装配逻辑在 `EveFleetFactory.build_enemy`（与玩家那条链共用 id 计数器）。
+## 敌方舰队。联机模式下 PvP 回合用**对手送来的编制**造船。
 func _build_enemy_fleet() -> Array[EveShip]:
+	if versus == null:
+		return _fleet.build_enemy(run)
+	var kind := versus.round_kind()
+	if kind == EveMatchState.RoundKind.PVP:
+		var opp: int = versus.human_opponent()
+		if opp < 0:
+			return [] as Array[EveShip]
+		# ★ 真联机：对手是真人时，他的编制是网络送来的（本地没有他的 run）。
+		var remote := _versus_remote_entries(opp)
+		if not remote.is_empty():
+			print("[versus-net] PvP 用网络编制 seat=%d n=%d" % [opp, remote.size()])
+			return _fleet.build_from_entries(remote, 1)
+		var pr = versus.players[opp]
+		if pr == null or pr.run == null:
+			return [] as Array[EveShip]
+		return _fleet.build_own(pr.run, 1)
+	var src: int = versus.pve_source_node()
+	if src > 0:
+		run.comp_source_node = src
 	return _fleet.build_enemy(run)
 
 
@@ -777,7 +1019,7 @@ func _place_fleet(fleet: Array[EveShip], team: int) -> void:
 	#   ⛔ 别把这里退回「只有困难 / 炼狱才按阵型」—— 用户 2026-10-27 明确要
 	#      N9 在**普通档**就站在隔离带后方两格。
 	var formation := ""
-	if team == 1 and bool(run.difficulty_row().get("enemy_formation", false)):
+	if team == 1 and bool(run.enemy_tier_row().get("enemy_formation", false)):
 		formation = String(EveEnemyComps.by_id(run.enemy_comp_id()).get("formation", ""))
 	var positions := arena.default_formation(fleet.size(), team, formation)
 	# ⚠️ 这里必须显式标 Array，不能写 `var entries := ...`：
@@ -815,7 +1057,49 @@ func _place_fleet(fleet: Array[EveShip], team: int) -> void:
 ## ★ 2026-10-10（2⑦ 状态机三拆）：主体搬进 `eve_phase_battle.start()`，
 ##   它**返回**新建的模拟器。⚠️ 只有真的开打才覆盖 `sim` —— 空手上阵 / 非准备阶段
 ##   那两条早退路径返回 null，此时⛔ 不能把 `sim` 冲成 null（原来也不会）。
+## [versus] keep AI economies in step when the human starts early.
+##
+## The round clock is shared, so starting early is allowed, but the AI
+## runs must still earn gold / xp / wrecks for the round they just played.
+func _versus_settle_ai_economy() -> void:
+	if versus == null:
+		return
+	var kind := versus.round_kind()
+	if kind == EveMatchState.RoundKind.CAROUSEL:
+		return
+	for q in versus.players:
+		if q == null or not q.is_ai or q.run == null:
+			continue
+		if not q.is_alive():
+			continue
+		# settle with a draw-ish outcome: no beacon change here (the match
+		# layer owns HP), this only advances their economy.
+		if q.run.phase == EveRunState.Phase.PREP:
+			# ⚠️ 第 5 个参数是 `Array[int]`（本场丢掉的船上场下标）。
+			#    直接写字面量 `[]` 是**无类型 Array** ⇒ 运行时报
+			#    「Array 与 Array[int] 元素类型不同」并中断这一帧的调用。
+			#    它挂在 `start_battle()` 的最前面，所以表现是「倒计时一归零就报错」。
+			var lost_field: Array[int] = []
+			q.run.resolve_battle(0, [], [], 1.0, lost_field)
+			q.run.advance()
+
+
 func start_battle() -> void:
+	# ★ 2026-10-28 联机事件回合：没有战斗 ⇒ 这个按钮 = 「进入下一回合」。
+	#   权威（单机 / 房主）才推进；加入方点了也只会等房主的 ROUND 广播。
+	if versus != null and versus.round_kind() == EveMatchState.RoundKind.CAROUSEL:
+		if _versus_is_authority():
+			_versus_advance_round()
+		return
+	# [versus] human started early -> AI still needs its economy
+	_versus_settle_ai_economy()
+	# [versus] 开打这一刻把本回合编制发出去（对手要拿它造船）
+	_versus_broadcast_fleet()
+	# ★ 真联机 PvP：**开打前**用对手送来的编制重建敌方舰队。
+	#   为什么必须在这里：`begin_prep()` 是准备阶段**开始**就建队的，
+	#   那一刻对手本回合的编制还没发过来（他要等准备阶段中途才发），
+	#   于是只能先按本地 AI 占位 —— 到开打时再换成真的。
+	_versus_rebuild_enemy_if_remote()
 	var s := _battle_phase.start()
 	if s != null:
 		sim = s
@@ -920,6 +1204,9 @@ func _enter_event_node() -> void:
 func _process(delta: float) -> void:
 	if run == null:
 		return
+	# [versus] round clock runs in every phase (prep time counts too)
+	_versus_tick(delta)
+	_versus_net_tick()
 	# ⚠️ 暂停 = **整个推进停摆**，不只是战斗 sim：
 	#    准备阶段的倒计时（`hud.tick_stage`）也必须停 ——
 	#    否则「暂停了 30 秒，回来发现准备时间没了、自动开战了」，
@@ -927,6 +1214,14 @@ func _process(delta: float) -> void:
 	#    它在暂停期间照常跑的话，舰艏会继续转向、镜头插值继续走，
 	#    画面看着在动而数字不动，玩家会以为暂停坏了。
 	if _paused:
+		return
+
+	# ★ 2026-10-28 房主权威：还没开赛 ⇒ **不跑准备倒计时**。
+	#   ⚠️ 少了这一行，加入方在等待期间 `hud.tick_stage()` 照样走到 0，
+	#      然后 `_on_stage_timer_expired()` 按「场上 0 艘」直接判负 ——
+	#      表现就是「房主还没点开始，手机这边先输了」。网络轮询在上面的
+	#      `_versus_net_tick()` 里已经跑过了，这里早退不影响收 START。
+	if _vawait_start and not _vstarted:
 		return
 
 	match run.phase:
@@ -1186,6 +1481,11 @@ func _on_stage_timer_expired() -> void:
 				"text": "准备时间到（自动开战已关闭，布好阵后点「开战」）"})
 		return
 	hud.append_log({"time": 0.0, "category": &"system", "text": "准备时间结束 —— 自动开战"})
+	# ★ 中央倒计时归零的「开战」闪字：放在真正开打这一刻，
+	#   ⛔ 不能交给 overlay 自己看 time_left==0 —— 主控会立刻 `set_stage()` 换上新计时，
+	#   overlay 下一帧读到的已经是新回合的 30s，闪字永远不触发。
+	if versus != null and hud.has_method("play_countdown_flash"):
+		hud.play_countdown_flash()
 	start_battle()
 
 
@@ -2258,6 +2558,301 @@ var _mouse_calibrated := false
 ## 做法：把光标挪到靶子的报告中心，读 `gui_get_hovered_control()`。
 ## 命中 ⇒ 修正为 0；没命中 ⇒ 在附近网格里搜，找到命中的那一格，
 ## 用「实际命中位置 − 报告中心」当修正量。
+## [versus] Battle over -> settle multiplayer damage and advance the round.
+##
+## Called from the resolve phase right after resolve_battle(), so the
+## single-player beacon/salvage flow is untouched. In versus mode we
+## additionally apply the TFT-style rule: the loser loses
+## (opponent surviving ships) x (round weight) HP.
+## [versus] build the room: 1 human (this scene run) + N AI players.
+func _setup_versus(ai_count: int) -> void:
+	var players: Array = []
+	players.append(MATCH_PLAYER_SCRIPT.new(run, "你", false))
+	var names := ["AI-铁猫", "AI-秃鹫", "AI-巨像", "AI-夜鹰",
+		"AI-毒蝎", "AI-狂徒", "AI-幽灵"]
+	for i in mini(ai_count, names.size()):
+		var r2 = RUN_STATE_SCRIPT.new()
+		r2.name = "AiRun_%d" % i
+		add_child(r2)
+		r2.start_run()
+		var p2 = MATCH_PLAYER_SCRIPT.new(r2, String(names[i]), true)
+		p2.brain = AI_BRAIN_SCRIPT.new("inferno")
+		players.append(p2)
+	versus = MATCH_STATE_SCRIPT.new(players, randi())
+	print("[versus] room: 1 human + %d AI, %d rounds" % [ai_count, MATCH_STATE_SCRIPT.TOTAL_ROUNDS])
+	_apply_versus_rules()
+	# 结算页只留打捞：推进交给回合倒计时（心理博弈的一部分）。
+	var rw = hud.get_node_or_null("Result")
+	if rw != null and rw.has_method("set_versus_mode"):
+		rw.set_versus_mode(true)
+	hud.append_log({"time": 0.0, "category": &"system",
+			"text": "联机对战：1 人类 + %d AI · %d 回合" % [ai_count, MATCH_STATE_SCRIPT.TOTAL_ROUNDS]})
+
+
+## [versus] every AI player takes one prep turn. The human uses the mouse.
+## 回合时钟下限校验。
+##
+## ⚠️ 2026-10-28 实测教训：把 `ROUND_TIME` 临时压到 12s 时，
+##    **准备阶段（30s）还没走完时钟就归零** ⇒ 每回合直接超时推进，
+##    一路冲到第 8 回合、一枪没打。
+##    ⇒ 「倒计时是唯一裁判」的成立前提：时钟 > 准备 + 最长战斗时限。
+func _versus_check_round_time() -> void:
+	# ⚠️ 别把 60 写死：战斗时限的唯一真源是 `EveNodeTable.BATTLE_SECONDS`
+	#    （2026-10-28 起统一 60s）。写死的话，以后改时限这里会继续"通过"，
+	#    而实际已经退化。
+	var need := PREP_SECONDS + EveNodeTable.BATTLE_SECONDS
+	if EveMatchState.ROUND_TIME <= need:
+		var msg := "回合时钟 %.0fs ≤ 准备 %.0fs + 战斗 %.0fs ⇒ 会退化成「永远判负」或「零打捞时间」" % [EveMatchState.ROUND_TIME, PREP_SECONDS, EveNodeTable.BATTLE_SECONDS]
+		push_warning("[versus] " + msg)
+		print("[versus] WARN " + msg)
+
+
+## ★★ 联机对战的**通用规则**（2026-10-27 用户定案 + 2026-10-28 补漏）。
+##
+## 规则本身：**撤掉开战键，一切以倒计时为最终判断**；最后 10 秒中央放大读秒。
+##
+## ⛔ 为什么必须收成一个函数：这条规则曾在 `_setup_versus()`（1 人类 + AI）里
+##    单独实现，而 `_setup_versus_by_slots()`（从联机大厅进局）**漏了**
+##    ⇒ 用户从大厅进局又看见开战键，以为是「被人改回来了」。
+##    ⇒ 以后新增任何建局路径，都只调这里，⛔ 别在各处重写那两行。
+##
+## ⚠️ 两道都要设：
+##    ① `auto_start_on_timeout = true` —— 倒计时归零必须自动开战，
+##       否则撤了按钮就变成「永远开不了打」。
+##    ② 按钮整个藏起来 —— 不给任何人提前开打的入口（那是快进开关）。
+##    ③ 中央倒计时只在联机开（单机仍要手动开战，大字会挡布阵）。
+func _apply_versus_rules() -> void:
+	auto_start_on_timeout = true
+	# ★ 2026-10-28 用户定案：多人 PvE 回合的**电脑舰队**一律按炼狱档算
+	#   （吃羁绊 · 按阵型站位 · 强度 ×1.40），与主菜单选的难度无关。
+	#   ⚠️ 必须在 `begin_prep()` **之前**生效：敌方舰队是准备阶段建出来的。
+	#   ⛔ 不改 `difficulty_id` —— 那会把玩家自己的收入 / 利息 / 败亡代价
+	#      一起换成炼狱口径（多人经济仍按主菜单选的档走）。
+	run.enemy_tier_override = EveMatchState.PVE_DIFFICULTY
+	if hud == null:
+		return
+	if hud.has_method("set_start_visible"):
+		hud.set_start_visible(false)
+	if hud.has_method("set_round_countdown_active"):
+		hud.set_round_countdown_active(true)
+
+
+## 按座位表建局。`my_seat` = 本机占的那一位。
+##
+## ⚠️ 玩家数组**下标必须等于座位下标** —— 两台机器各自建局，
+##    只有下标对齐，配对结果与血量才可能一致。
+func _setup_versus_by_slots(slots: Array, my_seat: int) -> void:
+	var players: Array = []
+	for i in slots.size():
+		var kind := String((slots[i] as Dictionary).get("kind", "ai"))
+		if i == my_seat:
+			players.append(MATCH_PLAYER_SCRIPT.new(run, "你", false))
+			continue
+		var r2 = RUN_STATE_SCRIPT.new()
+		r2.name = "SlotRun_%d" % i
+		add_child(r2)
+		r2.start_run()
+		var nm := ("电脑 %d" % (i + 1)) if kind == "ai" else ("玩家 %d" % (i + 1))
+		# 远端真人本地也按「AI 位」处理：编制由网络送进来，
+		# 本地那份 run 只用来记账（血量 / 存活）。
+		var p2 = MATCH_PLAYER_SCRIPT.new(r2, nm, true)
+		p2.brain = AI_BRAIN_SCRIPT.new("inferno")
+		players.append(p2)
+	_versus_check_round_time()
+	versus = MATCH_STATE_SCRIPT.new(players, randi())
+	print("[versus] 按座位建局：%d 位（我 = %d）" % [players.size(), my_seat])
+	_apply_versus_rules()
+	# 验收专用：--start-round=N 直接快进到第 N 回合（联机 PvP 验收要跳到 2-2）。
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--start-round="):
+			var skip := int(a.split("=")[1])
+			for k in maxi(0, skip - 1):
+				versus._next_round()
+			print("[versus] 快进到 round=%d（%s）" % [versus.global_round(), versus.round_label()])
+			break
+
+
+func _run_ai_prep_turns() -> void:
+	if versus == null:
+		return
+	for pr in versus.players:
+		if pr == null or not pr.is_ai or pr.brain == null:
+			continue
+		if not pr.is_alive():
+			continue
+		pr.brain.take_prep_turn(pr.run)
+
+
+## [versus] 战斗结束 → 结算联机伤害并推进回合。
+##
+## ⚠️ `own_alive` / `foe_alive` 带默认值 **-1（= 未知，由本函数自己数）**：
+##   `eve_phase_battle` 的 `battle_finished` 包装只传 `(winner_team)` 一个参数
+##   （它认识 sim，不认识双方存活数），而 `_versus_settle` 原来要求 3 个参数 ⇒
+##   运行时 `Invalid call ... Expected 3 argument(s)`，**整条结算链断掉**：
+##   结算页、伤害分配、回合推进全都不执行（表现为「打完没反应」）。
+##   ⇒ 少给参数时自己从模拟器数，调用方给就给。
+## [versus] push round / kind / everyone HP into the command bar.
+## [versus] match over -> rank everyone and report.
+func _versus_finish() -> void:
+	if versus == null:
+		return
+	var rows: Array = []
+	for q in versus.players:
+		if q == null:
+			continue
+		rows.append({
+			"name": q.display_name, "hp": q.hp,
+			"is_ai": q.is_ai, "alive": q.is_alive(),
+		})
+	# survivors first (higher HP wins), eliminated last
+	rows.sort_custom(func(a, b):
+		if bool(a["alive"]) != bool(b["alive"]):
+			return bool(a["alive"])
+		return int(a["hp"]) > int(b["hp"]))
+	var line := ""
+	for i in rows.size():
+		var rr = rows[i]
+		var tg := "[AI]" if bool(rr.get("is_ai", false)) else ""
+		var st := "存活" if bool(rr.get("alive", false)) else "淘汰"
+		line += "%d.%s%s(%s %d)  " % [i + 1, tg, String(rr.get("name","?")), st, int(rr.get("hp",0))]
+	var msg := "联机对战结束 · " + line
+	# Pop the ranking panel (the single-player result window is reused:
+	# same frame, same buttons, only the content swaps).
+	# The HUD does not forward show_result; the battle scene reaches the
+	# window directly, so do the same for the ranking panel.
+	var rw = hud.get_node_or_null("Result")
+	if rw != null and rw.has_method("show_versus_ranking"):
+		rw.show_versus_ranking(rows, versus.round_label())
+	hud.append_log({"time": 0.0, "category": &"system", "text": msg})
+	print("[versus] over: " + line)
+
+
+## [versus] show the round clock in the command bar.
+func _refresh_versus_clock() -> void:
+	if versus == null or hud == null:
+		return
+	var cb = hud.get_node_or_null("CommandBar")
+	if cb == null:
+		return
+	var left: float = maxf(0.0, EveMatchState.ROUND_TIME - versus.round_elapsed)
+	var mm := int(left / 60.0)
+	var ss := int(left) % 60
+	if cb.has_method("set_versus_clock"):
+		cb.set_versus_clock("%d:%02d" % [mm, ss], versus.round_timed_out())
+
+
+func _refresh_versus_hud() -> void:
+	if versus == null or hud == null:
+		return
+	var rows: Array = []
+	for q in versus.players:
+		if q == null:
+			continue
+		rows.append({
+			"name": q.display_name, "hp": q.hp,
+			"is_ai": q.is_ai, "alive": q.is_alive(),
+		})
+	var kind := versus.round_kind()
+	var kn := "打怪"
+	if kind == EveMatchState.RoundKind.PVP:
+		kn = "PvP"
+	elif kind == EveMatchState.RoundKind.CAROUSEL:
+		kn = "事件"
+	elif kind == EveMatchState.RoundKind.BOSS:
+		kn = "BOSS"
+	# Find the command bar by name instead of guessing a hud forwarder:
+	# the bar lives at Hud/CommandBar/... and exposes set_versus().
+	var cb = hud.get_node_or_null("CommandBar")
+	if cb == null:
+		# fall back to a search in case the path differs
+		var st: Array[Node] = [hud]
+		while not st.is_empty():
+			var nd: Node = st.pop_back()
+			if nd != hud and nd.has_method("set_versus"):
+				cb = nd
+				break
+			for ch in nd.get_children():
+				st.append(ch)
+	if cb != null and cb.has_method("set_versus"):
+		cb.set_versus(versus.round_label(), kn, rows)
+
+
+func _versus_settle(winner_team: int, own_alive: int = -1, foe_alive: int = -1) -> void:
+	if versus == null:
+		return
+	if own_alive < 0 or foe_alive < 0:
+		own_alive = 0
+		foe_alive = 0
+		if sim != null:
+			for s in sim.ships:
+				if not s.alive:
+					continue
+				if s.team == 0:
+					own_alive += 1
+				else:
+					foe_alive += 1
+	var kind := versus.round_kind()
+	if kind == EveMatchState.RoundKind.PVP:
+		var opp: int = versus.human_opponent()
+		if opp < 0:
+			# bye round: no fight, no damage
+			return
+		var me: int = -1
+		for i in versus.players.size():
+			var pr = versus.players[i]
+			if pr != null and not pr.is_ai:
+				me = i
+				break
+		if me < 0:
+			return
+		var win := -1
+		if winner_team == 0:
+			win = me
+		elif winner_team == 1:
+			win = opp
+		versus.apply_outcome({
+			"a": me, "b": opp, "winner": win,
+			"a_alive": own_alive, "b_alive": foe_alive })
+	else:
+		# PvE / BOSS: the human fights the scripted comp
+		var me2: int = -1
+		for i in versus.players.size():
+			var pr2 = versus.players[i]
+			if pr2 != null and not pr2.is_ai:
+				me2 = i
+				break
+		if me2 < 0:
+			return
+		versus.apply_outcome({
+			"a": me2, "b": -1, "a_won": (winner_team == 0),
+			"a_alive": own_alive, "b_alive": foe_alive })
+	# ★★ 2026-10-27 用户定案：结算页不推进，**推进由回合倒计时决定**。
+	#  「如果它打完，倒计时也结束了，那就到下一回合，没时间让他选打捞」
+	#  ⇒ 这里只登记「本回合已打完」，真正的 _next_round 在
+	#     _versus_advance_round()（倒计时归零 / 或时钟已耗尽时立刻）里做。
+	_refresh_versus_hud()
+	# 房主权威血量广播（在任何提前 return 之前发，保证客户端总能收到）
+	_versus_broadcast_sync()
+	# match over -> rank everyone, then stop driving rounds so the
+	# single-player EVACUATED ending does not mask the versus ranking.
+	if versus.finished:
+		_versus_finish()
+		return
+	_versus_await_result = true
+	if versus.round_timed_out():
+		# 打完的那一刻时钟也走完了 ⇒ 一秒都不给留，直接进下一回合。
+		_versus_advance_round()
+		return
+	var pr3 := versus.progress()
+	var hp_line := ""
+	for i in versus.players.size():
+		var q = versus.players[i]
+		if q == null:
+			continue
+		hp_line += "%s=%d  " % [q.display_name, q.hp]
+	hud.append_log({"time": 0.0, "category": &"system",
+			"text": "[versus] %s-%d  |  %s" % [str(pr3.get("stage",0)), int(pr3.get("round",0)), hp_line]})
+
 func ai_calibrate_mouse() -> Dictionary:
 	var vp := get_viewport()
 	if vp == null:
@@ -2733,3 +3328,387 @@ func _ai_color(v: Variant) -> Color:
 		return Color(String(v))
 	return Color.WHITE
 
+
+# ══════════════════════════════════════════════════════════════
+#  真联机（真人）：回合编制交换
+# ══════════════════════════════════════════════════════════════
+#  开打那一刻每台机器广播 FLEET {seat, round, entries}；
+#  收到别人的编制就存起来，PvP 时用它造船当对手。
+#  ⚠️ 只同步「谁在场上 / 什么船 / 几星」—— 对手的 run 不在这台机器上，
+#     羁绊只能用 apply_fleet_traits 近似（见 EveFleetFactory.build_from_entries）。
+#  ⚠️ 血量/配对：各机器按**同一张座位表**本地推进（结果一致）；
+#     房主权威校正（SYNC）还没接，见 _versus_net_tick 的 TODO。
+var _vtr = null
+var _vnet = null
+var _vonline := false
+var _vseat := 0
+var _vhost := false
+## 房主「开赛」前的等待宽限（毫秒）：等加入方的 ENet 连上；没人来就直接开。
+##
+## ★ 2026-10-28 房主权威：房主点「开始对战」后不是立刻开打，而是先等对端把
+##   ENet 连上（最多这么久），然后把 START 广播出去、自己才开始第 1 回合。
+##   ⚠️ 太短 ⇒ 慢一点的手机还没连上就已经开打（就是这次要修的问题）；
+##      太长 ⇒ 房主一个人干等。1.5s 覆盖「手机 ENet 首次握手」的常见耗时。
+const VERSUS_START_GRACE_MS := 1500
+
+## 本机是否已**真正开始第 1 回合**（房主：发了 START；客户端：收到 START）。
+var _vstarted := false
+## 联机进战场后是否要先等 START（不跑倒计时、不判负）。
+## 单机恒 false ⇒ 行为一个字节不变。
+var _vawait_start := false
+## 房主：ENet 起来之后是否已经看到过至少一个对端。
+var _vpeer_seen := false
+## 房主 ENet 起来的时刻（毫秒，算宽限用）。
+var _vhost_up_ms := 0
+## 客户端：ENet 是否已连上房主 / 上次重连的时刻（隧道里房主可能还没起服务端）。
+var _vjoined := false
+var _vjoin_retry_ms := 0
+## 是否走隧道（决定客户端重连的目标与端口）。
+var _vuse_tunnel := false
+## 等房主开赛时的全屏提示层（只有加入方会看到）。
+var _vwait_layer: CanvasLayer = null
+## ★ 2026-10-28 中转模式：本机 UDP 转发器（`scripts/net/eve_udp_relay.gd`）与开关。
+var _vrelay = null
+var _vrelay_mode := false
+## round -> {seat: Array entries}
+var _vfleets := {}
+## 上次广播编制的时刻（毫秒）。准备阶段每秒发一次，保证对手随时有最新快照。
+var _vfleet_last_ms := 0
+## 验收专用：`--autodeploy` 让本地玩家在准备阶段自动走一遍 AI 的准备回合，
+## 这样无头跑联机时场上有船，编制不为空（正常玩没有这个参数）。
+var _autodeploy := false
+
+
+func _versus_online_setup() -> void:
+	_autodeploy = OS.get_cmdline_user_args().has("--autodeploy")
+	var role := String(RUN_STORE.pending_versus_role)
+	if role == "":
+		return
+	_vonline = true
+	_vhost = (String(RUN_STORE.pending_versus_role) == "host")
+	_vseat = int(RUN_STORE.pending_versus_my_seat)
+	var use_tunnel := bool(RUN_STORE.pending_versus_tunnel)
+	## ★ 2026-10-28：中转模式 —— 两端都连公网 UDP 中继，手机因此不需要 TUN。
+	var use_relay := bool(RUN_STORE.pending_versus_relay)
+	RUN_STORE.pending_versus_relay = false
+	_vrelay_mode = use_relay
+	_vuse_tunnel = use_tunnel
+	# ★ 2026-10-28 房主权威：**联机一律先等 START**（单机不进本函数，行为不变）。
+	#   · 房主：等对端连上（宽限 `VERSUS_START_GRACE_MS`）后自己发 START；
+	#   · 加入方：等房主广播的 START（隧道里房主可能还没点开始 ⇒ 要重连）。
+	_vawait_start = true
+	_vstarted = false
+	_vnet = VNET_SCRIPT.new()
+	# 隧道与中转都走 **ENet(UDP)**；只有局域网直连走 TCP 那套。
+	if use_tunnel or use_relay:
+		_vtr = VENET_SCRIPT.new()
+	else:
+		_vtr = VTR_SCRIPT.new()
+	add_child(_vtr)
+	_vtr.set_process(false)
+	_vnet.attach_transport(_vtr)
+	# 房主：看到对端连上就记一笔（宽限因此可以提前结束）
+	if _vhost:
+		_vtr.peer_joined.connect(func(pid: int):
+			if pid != 1:
+				_vpeer_seen = true
+				print("[versus-net] 对端连上 peer=%d" % pid)
+				# ★ 迟到加入：房主已经开赛了 ⇒ 立刻把 START / 当前回合补发一次，
+				#   否则这台机器会一直停在「等待房主开始…」（它错过了那条广播）。
+				if _vstarted:
+					_versus_announce_round())
+	else:
+		_vtr.connected_ok.connect(func():
+			_vjoined = true
+			print("[versus-net] 已连上房主，等 START"))
+	if use_relay:
+		_start_relay_transport()
+		return
+	if use_tunnel:
+		# 隧道已把对端的 27015 映射到本地 27015 ⇒ 双方都只连 127.0.0.1。
+		if _vhost:
+			var okh: bool = _vtr.host_start(TUNNEL_ENET_PORT)
+			_vhost_up_ms = Time.get_ticks_msec()
+			print("[versus-net] 隧道主机 ENet:%d ok=%s" % [TUNNEL_ENET_PORT, str(okh)])
+		else:
+			_vjoin_retry_ms = Time.get_ticks_msec()
+			var okj: bool = _vtr.join("127.0.0.1", TUNNEL_ENET_PORT, _vjoin_retry_ms)
+			print("[versus-net] 隧道加入 ENet:127.0.0.1:%d ok=%s" % [TUNNEL_ENET_PORT, str(okj)])
+		return
+	if _vhost:
+		var ok: bool = _vtr.host_start(int(RUN_STORE.pending_versus_port))
+		_vhost_up_ms = Time.get_ticks_msec()
+		_vnet.host_setup(["你", "空位", "空位", "空位"], 1)
+		print("[versus-net] host=%s seat=%d" % [str(ok), _vseat])
+	else:
+		var raw := String(RUN_STORE.pending_versus_addr)
+		var ip := raw
+		var port := int(RUN_STORE.pending_versus_port)
+		var c := raw.rfind(":")
+		if c > 0:
+			ip = raw.substr(0, c)
+			port = int(raw.substr(c + 1))
+		_vjoin_retry_ms = Time.get_ticks_msec()
+		var ok2: bool = _vtr.join(ip, port, _vjoin_retry_ms)
+		print("[versus-net] join=%s %s:%d seat=%d" % [str(ok2), ip, port, _vseat])
+
+
+## 中转模式：起本机转发器 + ENet。
+##
+## ★ 2026-10-28：手机不能建 TUN ⇒ 两端都主动连公网 UDP 中继（`eve_udp_relay.gd`）。
+##   本机转发器占 **27015**；房主的 ENet 服务端错开用 **27016**，加入方 ENet 连 27015。
+## ⚠️ 这里**不碰 EasyTier**：中转模式全程用户态 UDP，不需要管理员/虚拟网卡。
+func _start_relay_transport() -> void:
+	var rh := String(RUN_STORE.pending_versus_relay_host).strip_edges()
+	var rp := int(RUN_STORE.pending_versus_relay_port)
+	# ★ 2026-10-28 零门槛：大厅没带地址（空/0）⇒ 用**内置**服务器。
+	#   ⇒ 玩家装完游戏什么都不用配，两端都只认房间码。
+	if rh == "" or rp <= 0:
+		rh = NETCFG.host()
+		rp = NETCFG.port()
+	var code := String(RUN_STORE.pending_versus_code)
+	_vrelay = RELAY_SCRIPT.new()
+	_vrelay.name = "UdpRelay"
+	add_child(_vrelay)
+	_vrelay.configure(rh, rp, code,
+			RELAY_SCRIPT.SIDE_HOST if _vhost else RELAY_SCRIPT.SIDE_GUEST)
+	var okb: bool = _vrelay.start(TUNNEL_ENET_PORT)
+	print("[relay] 转发器 127.0.0.1:%d ok=%s · 中继 %s:%d · 房间 %s" % [
+			TUNNEL_ENET_PORT, str(okb), rh, rp, code])
+	if _vhost:
+		_vrelay.set_fixed_local("127.0.0.1", RELAY_ENET_PORT)
+		var okh: bool = _vtr.host_start(RELAY_ENET_PORT)
+		_vhost_up_ms = Time.get_ticks_msec()
+		print("[relay] 房主 ENet 127.0.0.1:%d ok=%s" % [RELAY_ENET_PORT, str(okh)])
+	else:
+		_vjoin_retry_ms = Time.get_ticks_msec()
+		var okj: bool = _vtr.join("127.0.0.1", TUNNEL_ENET_PORT, _vjoin_retry_ms)
+		print("[relay] 加入 ENet 127.0.0.1:%d ok=%s" % [TUNNEL_ENET_PORT, str(okj)])
+
+
+## 联机：进战场后先「等 START」—— 不跑倒计时、不判负、不建舰队。
+##
+## ★ 2026-10-28 房主权威（用户：「需要房主点击开始游戏各个玩家才能开始游戏」
+##   「各有各的节奏，这不对」）。
+##   · 房主：等对端 ENet 连上（≤ `VERSUS_START_GRACE_MS`）就发 START；
+##   · 加入方：等房主广播的 START；隧道/中继里房主可能还没点开始 ⇒ 每秒重连。
+func _begin_versus_wait() -> void:
+	if _vhost:
+		_set_wait_text("等待玩家接入…")
+		print("[versus] 房主：等对端 ENet 连上（最多 %d ms）后开赛" % VERSUS_START_GRACE_MS)
+	else:
+		_set_wait_text("等待房主开始…")
+
+
+## 房主：把 START 广播出去，然后自己才开始第 1 回合。
+##
+## ⚠️ 必须**先广播、后 `begin_prep()`**：反过来的话自己这边的 30 秒准备先跑了，
+##    而 START 还在路上 —— 两台机器的准备倒计时就从不同时刻起算（漂移的源头）。
+func _versus_host_start() -> void:
+	if _vstarted:
+		return
+	_vstarted = true
+	_hide_wait_layer()
+	if _vonline and _vtr != null:
+		_vtr.broadcast({"kind": 4, "start": 1, "round": 0})
+		print("[versus-net] START 广播（房主开赛）")
+	begin_prep()
+
+
+## 加入方：收到房主的 START 才开始第 1 回合。
+func _versus_client_start() -> void:
+	if _vstarted:
+		return
+	_vstarted = true
+	_hide_wait_layer()
+	print("[versus-net] START 收到 —— 跟随房主开赛")
+	begin_prep()
+
+
+## 房主：广播「新回合开始」。加入方只认这条，自己不再数到点。
+func _versus_announce_round() -> void:
+	if not _vonline or not _vhost or _vtr == null or versus == null:
+		return
+	_vtr.broadcast({"kind": 4, "start": 1, "round": _versus_round_no(),
+			"stage": versus.stage, "round_no": versus.round})
+	print("[versus-net] ROUND 广播 %s（global=%d）" % [versus.round_label(), _versus_round_no()])
+
+
+## 加入方：跟随房主切到下一回合。
+##
+## ⚠️ 强制 `begin_prep()`：本机可能还在打/还在结算，房主已经进下一回合了 ——
+##    房主权威下**以房主的节拍为准**，本机那份残留状态必须被重建掉。
+func _versus_client_follow(st: int, rd: int) -> void:
+	if versus == null or versus.finished:
+		return
+	versus.stage = maxi(1, st)
+	versus.round = clampi(rd, 1, versus.rounds_in_stage())
+	versus.round_elapsed = 0.0
+	versus.reroll_pairings()
+	_versus_await_result = false
+	_refresh_versus_hud()
+	print("[versus-net] 跟随房主进下一回合 %s" % versus.round_label())
+	begin_prep()
+
+
+## 等 START 的全屏提示（懒建；⛔ 只建一次）。
+func _set_wait_text(t: String) -> void:
+	if _vwait_layer == null:
+		_vwait_layer = CanvasLayer.new()
+		_vwait_layer.layer = 50
+		add_child(_vwait_layer)
+		var dim := ColorRect.new()
+		dim.color = Color(0.02, 0.03, 0.04, 0.55)
+		dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+		dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_vwait_layer.add_child(dim)
+		var lb := Label.new()
+		lb.name = "WaitLabel"
+		lb.set_anchors_preset(Control.PRESET_FULL_RECT)
+		lb.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lb.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		lb.add_theme_color_override("font_color", Color(0.84, 0.95, 0.97))
+		lb.add_theme_color_override("font_outline_color", Color(0.02, 0.03, 0.04, 0.94))
+		lb.add_theme_constant_override("outline_size", 4)
+		lb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		FONT.fs(lb, 30)
+		_vwait_layer.add_child(lb)
+	var l := _vwait_layer.get_node_or_null("WaitLabel") as Label
+	if l != null:
+		l.text = t
+	_vwait_layer.visible = true
+
+
+func _hide_wait_layer() -> void:
+	if _vwait_layer != null:
+		_vwait_layer.queue_free()
+		_vwait_layer = null
+
+
+## 本机这一回合的编制（网络用的最小集）。
+func _versus_my_entries() -> Array:
+	var out: Array = []
+	for e in run.field_entries():
+		out.append({"ship_key": String(e.get("ship_key", "")), "star": int(e.get("star", 1))})
+	return out
+
+
+func _versus_round_no() -> int:
+	if versus == null:
+		return 0
+	return int(versus.global_round())
+
+
+## 开打时广播自己的编制。
+func _versus_broadcast_fleet() -> void:
+	if not _vonline or _vnet == null or _vtr == null:
+		return
+	var r := _versus_round_no()
+	var entries := _versus_my_entries()
+	_vtr.broadcast({"kind": 8, "seat": _vseat, "round": r, "entries": entries})
+	var by_round: Dictionary = _vfleets.get(r, {})
+	by_round[_vseat] = entries
+	_vfleets[r] = by_round
+	print("[versus-net] 广播编制 seat=%d round=%d n=%d" % [_vseat, r, entries.size()])
+
+
+## 真联机 PvP：用对手的网络编制重建敌方舰队（开打前调用）。
+## 返回是否重建（没有对手编制时保持 prep 阶段那支占位舰队）。
+func _versus_rebuild_enemy_if_remote() -> bool:
+	if not _vonline or versus == null:
+		return false
+	if versus.round_kind() != EveMatchState.RoundKind.PVP:
+		return false
+	var opp: int = versus.human_opponent()
+	if opp < 0:
+		return false
+	var entries := _versus_remote_entries(opp)
+	if entries.is_empty():
+		print("[versus-net] PvP 对手 seat=%d 的编制还没到，沿用占位舰队" % opp)
+		return false
+	for sh in _enemy_ships:
+		arena.free_ship_visual(sh.id)
+	_enemy_ships = _fleet.build_from_entries(entries, 1)
+	_place_fleet(_enemy_ships, 1)
+	for sh2 in _enemy_ships:
+		arena.spawn_ship_visual(sh2)
+	print("[versus-net] PvP 用对手(seat=%d)网络编制重建敌方舰队 n=%d" % [opp, _enemy_ships.size()])
+	return true
+
+
+## 房主权威：把全员血量广播出去，客户端以此为准覆盖本地结算。
+##  ⚠️ 为什么还要 SYNC：客户端是**各自本地结算**的（响应快、不依赖网络），
+##     一旦某台机器少算一回合，血量就会永久漂移。房主这份是唯一真值。
+func _versus_broadcast_sync() -> void:
+	if not _vonline or not _vhost or _vtr == null or versus == null:
+		return
+	var hp_arr: Array = []
+	var al_arr: Array = []
+	for pl in versus.players:
+		hp_arr.append(int(pl.hp) if pl != null else 0)
+		al_arr.append(pl != null and pl.is_alive())
+	_vtr.broadcast({"kind": 9, "round": _versus_round_no(), "hp": hp_arr, "alive": al_arr})
+	print("[versus-net] SYNC 发 round=%d hp=%s" % [_versus_round_no(), str(hp_arr)])
+
+
+func _versus_net_tick() -> void:
+	if not _vonline or _vtr == null:
+		return
+	# ★ 中转模式：先把本机转发器这一帧的包搬完 —— ENet 的收发都经过它。
+	if _vrelay != null:
+		_vrelay.poll()
+	_vtr.poll()
+	# ── 开赛闸门（房主权威）──
+	if not _vstarted:
+		if _vhost:
+			# 对端连上就立刻开；没人来就等宽限到点（房主一个人也能玩）
+			if _vpeer_seen or Time.get_ticks_msec() - _vhost_up_ms >= VERSUS_START_GRACE_MS:
+				_versus_host_start()
+		elif (_vuse_tunnel or _vrelay_mode) and not _vjoined:
+			# 隧道里房主可能还没点「开始对战」（他的 ENet 服务端还没起）⇒ 每秒重连一次
+			var now_ms := Time.get_ticks_msec()
+			if now_ms - _vjoin_retry_ms >= 1000:
+				_vjoin_retry_ms = now_ms
+				_vtr.stop()
+				_vtr.join("127.0.0.1", TUNNEL_ENET_PORT, now_ms)
+				print("[versus-net] 重连房主 ENet:%d" % TUNNEL_ENET_PORT)
+	for msg in _vnet.drain():
+		var d: Dictionary = msg["d"]
+		var kk := int(d.get("kind", -1))
+		# ── 房主的开赛 / 换回合广播（客户端唯一推进源）──
+		if kk == 4:
+			if not _vhost and int(d.get("start", 0)) == 1:
+				var rr4 := int(d.get("round", 0))
+				if not _vstarted:
+					_versus_client_start()
+					# 迟到加入：房主补发的是「当前回合」而不是第 1 回合 ⇒ 跟上它
+					if rr4 > 1:
+						_versus_client_follow(int(d.get("stage", 0)), int(d.get("round_no", 0)))
+				elif rr4 > _versus_round_no():
+					_versus_client_follow(int(d.get("stage", 0)), int(d.get("round_no", 0)))
+			continue
+		if kk == 9 and not _vhost and versus != null:
+			var hp_arr: Array = d.get("hp", [])
+			for i in mini(hp_arr.size(), versus.players.size()):
+				var pl = versus.players[i]
+				if pl != null:
+					pl.set_hp_sync(int(hp_arr[i]))
+			_refresh_versus_hud()
+			print("[versus-net] SYNC 收 round=%d hp=%s" % [int(d.get("round", 0)), str(hp_arr)])
+			continue
+		if kk != 8:
+			continue
+		var rr := int(d.get("round", 0))
+		var by_round: Dictionary = _vfleets.get(rr, {})
+		by_round[int(d.get("seat", -1))] = d.get("entries", [])
+		_vfleets[rr] = by_round
+		print("[versus-net] 收到编制 seat=%d round=%d n=%d" % [int(d.get("seat", -1)), rr,
+			(d.get("entries", []) as Array).size()])
+
+
+## PvP 时取对手这一回合的编制；还没到就返回空数组（调用方回退到脚本编组）。
+func _versus_remote_entries(seat: int) -> Array:
+	if not _vonline:
+		return []
+	var by_round: Dictionary = _vfleets.get(_versus_round_no(), {})
+	return by_round.get(seat, [])

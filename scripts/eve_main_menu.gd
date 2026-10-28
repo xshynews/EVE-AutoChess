@@ -61,11 +61,25 @@ const BATTLE_SCENE := "res://scenes/battle_scene.tscn"
 const CARD_ROOM_MODE_ID := "cardroom"
 ## 斗地主牌局场景（观战模式：三个 AI 自动打）。P2 起从棋牌室卡片进入。
 const DOUDIZHU_SCENE := "res://scenes/doudizhu.tscn"
+## 联机对战大厅（真联机：建房 / 加入）
+const VERSUS_LOBBY_SCENE := "res://scenes/versus_lobby.tscn"
 ## 开场剧情场景（**只在第一次玩时**经过它，见 `_on_start_pressed`）
 const INTRO_SCENE := "res://scenes/intro_scene.tscn"
 ## 「第一次玩」的判据：第 1 模式（任务关卡）的第 1 难度（守卫边境）
 const FIRST_MODE_ID := "campaign"
-const FIRST_TIER_ID := "guard_border"
+## 首次游玩播开场的「那一档难度」。
+##
+## ⛔⛔ 2026-10-28 修一个**静默失效八天**的 bug：这里原来写 `"guard_border"`
+##    —— 那是任务关卡还没拆成四档难度时的旧 id。四档化之后难度 id 变成
+##    `simple / normal / hard / inferno`（见 `EveCampaignTiers.DIFFICULTIES`），
+##    于是 `tier_id == FIRST_TIER_ID` **永远为 false** ⇒
+##    `target_scene_for_start()` 永远返回 BATTLE_SCENE ⇒
+##    **新玩家第一次点「开始」直接跳进战斗，开场片头一次都没播过**。
+##    表现是 `verify_intro` 长期挂一条红（"第一次玩 ⇒ 去开场（实际 battle_scene）"），
+##    而人和代码都以为是测试过时 —— 实际是功能断了。
+##    ⇒ `verify_intro` 已加断言「本常量必须等于 DIFFICULTIES[0].id」，
+##      以后难度再改名会当场红，不会再静默。
+const FIRST_TIER_ID := "simple"
 const PROGRESS := preload("res://scripts/core/eve_progress_store.gd")
 ## ★ 2026-10-10 主界面 BGM。菜单原本**没有音频宿主**（见 `_build_sys` 里那条
 ##    「菜单上没有这个宿主」的说明）⇒ 要出声必须自己起一个只做
@@ -75,6 +89,9 @@ const AUDIO_SCRIPT := preload("res://scripts/core/eve_audio.gd")
 const STORE := preload("res://scripts/core/eve_settings_store.gd")
 ## ★ 2026-10-10 i18n：文案取词入口（见 eve_text.gd 顶注）。
 const T := preload("res://scripts/core/eve_text.gd")
+## ★ 2026-10-28 舰船图鉴：全屏浮层（见 `scripts/ui/eve_ship_codex.gd` 顶注）。
+const CODEX_SCRIPT := preload("res://scripts/ui/eve_ship_codex.gd")
+const SHIP_DB := preload("res://scripts/core/eve_ship_database.gd")
 ## 对局存档（`user://run.cfg`）—— 「继续上局」入口靠它判断有没有档。
 const RUN_STORE := preload("res://scripts/core/eve_run_store.gd")
 ## ★ 2026-10-10 主界面「设置」窗 —— 与战场 / 牌桌**共用同一个类**，只是换档案。
@@ -94,13 +111,19 @@ const CREDITS_MODE_ID := "credits"
 const CREDITS_W := 964.0
 const CREDITS_H := 470.0
 
-## ★ 2026-10-12 侧栏改**两层**（用户定）：第一层 疆域 / 自走棋 / 娱乐总汇 / 版权声明；
+## ★ 2026-10-12 侧栏改**两层**（用户定）：第一层 自走棋 / 娱乐总汇 / 版权声明；
 ##   「自走棋」是**父项**（`parent: true`），`children` 为第二层（缩进显示，竖条排列）：
 ##   任务关卡 / 无尽模式 / 联机对战。
 ##   ⚠️ 父项**本身不承载卡片**：点它 = 展开/收起；展开时自动选中第一个子项。
 ##   ⚠️ 子项不新建 key 以外的文案 —— 模式名一律走 `MODE_<id>_NAME`（i18n 口径不变）。
-const TERRITORY_MODE_ID := "territory"
+## ★★ 2026-10-28 用户：「删除主菜单疆域选项，其他按钮顺势上移」⇒ 原来的第一项
+##   「疆域」占位整项删除（连同 `TERRITORY_MODE_ID`）。侧栏是 VBoxContainer，
+##   删掉后其余行自然上移，⛔ 不需要手工改任何 Y 坐标。
 const AUTOCHESS_MODE_ID := "autochess"
+## 联机对战（1 人类 + N AI）—— 多人架构的单机落地形态
+const VERSUS_MODE_ID := "versus"
+## 对手人数卡片：1v1 / 1v3 / 1v7（云顶是 8 人，这里给三档先跑通）
+const VERSUS_AI_COUNTS := [1, 3, 7]
 ## 第二层行的缩进与高度（父行 MODE_H=62；子行略矮，形成层级感）
 const SUB_INDENT := 26.0
 const SUB_MODE_H := 54.0
@@ -151,24 +174,39 @@ const GRID_GAP_V := 24.0
 const SYS_MARGIN_R := 120.0
 const SYS_TOP := 88.0
 
-## ★ 2026-10-12 改**两层侧栏**（用户定）：第一层 疆域 / 自走棋 / 娱乐总汇；
+## ★ 2026-10-12 改**两层侧栏**（用户定）：第一层 自走棋 / 娱乐总汇；
 ##   版权声明仍作为伪模式追加在最后（见 `_build_top_table()`）。
 ##
 ## ⚠️ `任务关卡` 不在这里 —— 它的副标题是**运行时取词拼出来的**（`_campaign_meta()`），
 ##    const 初始化器里调不了函数 ⇒ 由 `_build_top_table()` 现拼进 `autochess.children`。
 ##
 ## ⚠️ 认「自走棋」的是 `id` 而不是下标（见 `AUTOCHESS_MODE_ID`）。
+## 联机对战的对手人数卡片。
+##
+## ⚠️ 做成函数而不是 const：EXTRA_MODES 是 const 数组，
+##    里面要放「按 VERSUS_AI_COUNTS 生成」的卡片就只能调函数。
+static func versus_cards() -> Array:
+	var out: Array = []
+	# ── 真人联机（放在最前面：这才是「联机对战」该有的入口）──
+	# ⛔ 2026-10-27 用户口径：**不要**「人机 1v2 / 1v4」那种档位。
+	#    人机是「补空位」用的，在房间座位表里点「加电脑」，不是一个独立玩法。
+	out.append({
+		"name": "创建房间", "code": "VERSUS_HOST", "open": true,
+		"desc": "开一个房，把本机地址告诉对方；对方在大厅里填地址加入。"
+				+ "房主点「开始对战」后双方同时进入同一局。",
+		"stats": [["模式", "真人联机 · 房主", ""], ["端口", "37015", ""],
+				["对手", "1~3 名真人", ""]],
+	})
+	out.append({
+		"name": "加入房间", "code": "VERSUS_JOIN", "open": true,
+		"desc": "填房主的地址（例如 192.168.1.10:37015）连进去，等房主开始。",
+		"stats": [["模式", "真人联机 · 加入方", ""], ["地址", "大厅里填", ""],
+				["对手", "真人 + 空位", ""]],
+	})
+	return out
+
+
 const EXTRA_MODES: Array = [
-	{
-		# ★ 2026-10-12：用户要求「疆域先只做个按钮」⇒ 可点、可选中，
-		#   右侧显示一张「待开发」卡（形态同棋牌室里未开放的几张）。
-		"id": TERRITORY_MODE_ID, "name": "疆域", "meta": "待开发", "locked": false,
-		"cards": [{
-			"name": "疆域", "code": "TERRITORY", "open": false,
-			"desc": "为争夺星域控制权而战的长线玩法，尚未开始设计。",
-			"stats": [["状态", "待开发", ""], ["计划", "未排期", ""]],
-		}],
-	},
 	{
 		# ★ 2026-10-12：新增父项「自走棋」。`children` = 第二层（缩进、竖条排列）。
 		#   ⚠️ 它**没有 `cards`**：所有"按卡片下标"的路径都由 `_content_row_of()`
@@ -191,14 +229,14 @@ const EXTRA_MODES: Array = [
 			{
 				# ★ 2026-10-12：原顶层「多人对战」改名**「联机对战」**并移入第二层。
 				#   ⚠️ id 仍是 `versus`（沿用既有 key，⛔ 别改 id —— 会连带动 i18n/验收）。
-				"id": "versus", "name": "联机对战", "meta": "待开发", "locked": true,
-				"cards": [{
-					"name": "联机对战", "code": "VERSUS", "open": false,
-					"desc": "与其他指挥官同场博弈，八人各自为战。对手的阵容在变化，"
-							+ "没有固定解法 —— 这是留给后期的模式。",
-					"stats": [["对手", "其他玩家 · 8 人", ""], ["终点", "最后存活者获胜", ""],
-							["前置", "需要联网与服务器", ""], ["状态", "待开发", ""]],
-				}],
+				# ★★ 2026-10-27：**从占位改成真模式** —— 单机落地形态是「1 人类 + N AI」，
+				#    跑的就是 EveMatchState 那套多人架构（阶段 x 回合 / 配对 / 掉血 / 淘汰）。
+				#    以后接真人联机只换「同时准备」那一步，房间逻辑不动。
+				"id": VERSUS_MODE_ID, "name": "联机对战",
+				"meta": "人机 · 1v1 / 1v4 / 1v8", "locked": false,
+				# ⚠️ cards 留空 —— EXTRA_MODES 是 const，调不了 versus_cards()。
+				#   真卡片由 _build_top_table() 注入（见那里的 versus 分支）。
+				"cards": [],
 			},
 		],
 	},
@@ -252,7 +290,7 @@ var _mode_names: Array[Label] = []
 var _mode_metas: Array[Label] = []
 var _mode_bars: Array[ColorRect] = []
 var _mode_arrows: Array[Label] = []
-## ★ 2026-10-12 两层侧栏：`_top` = 第一层（疆域 / 自走棋 / 娱乐总汇 / 版权声明），
+## ★ 2026-10-12 两层侧栏：`_top` = 第一层（自走棋 / 娱乐总汇 / 版权声明），
 ##   `_modes` = **可见行**（父项 + 展开时的子项）—— 下游（选中 / 卡片 / 键盘）一律
 ##   按 `_modes` 索引，父项/子项展开收起只影响这张可见表（见 `_rebuild_rows()`）。
 var _top: Array = []
@@ -286,6 +324,9 @@ var _settings: Variant = null
 var _settings_btn: Button = null
 ## 「继续上局」（有对局存档时才 `visible`；见 `_build_sys`）。
 var _continue_btn: Button = null
+## ★ 2026-10-28 图鉴入口按钮（只在「任务关卡」难度卡片下面显示）与浮层实例。
+var _codex_btn: Button = null
+var _codex: Control = null
 
 
 func _ready() -> void:
@@ -338,8 +379,8 @@ func _ready() -> void:
 	_rebuild_rows()
 	for m in _all_rows():
 		_pick[String(m["id"])] = 0
-	# ★ 2026-10-12：默认选中**「任务关卡」**（自走棋的主玩法）—— 主入口必须仍是自走棋，
-	#   ⛔ 别让默认落在新增的「疆域」占位行上（那样一进菜单右侧只有一张"待开发"卡）。
+	# ★ 2026-10-12：默认选中**「任务关卡」**（自走棋的主玩法）—— 主入口必须仍是自走棋。
+	# ★ 2026-10-28：疆域行已删 ⇒ 第一行就是「自走棋」父项，默认仍落在任务关卡。
 	_mode_idx = maxi(0, _index_of_id("campaign"))
 	_build_brand()
 	_build_sys()
@@ -468,7 +509,7 @@ static func _campaign_meta() -> String:
 	return T.t("MODE_CAMPAIGN_META", "%d 回合 · 共 %d 个难度") \
 			% [int(first["rounds"]), TIERS.difficulties().size()]
 
-## 第一层表 = EXTRA_MODES（疆域 / 自走棋 / 娱乐总汇）+ 末尾追加的版权声明伪模式。
+## 第一层表 = EXTRA_MODES（自走棋 / 娱乐总汇）+ 末尾追加的版权声明伪模式。
 ##
 ## ⚠️ 「任务关卡」在这里**现拼**进 `autochess.children` 的第一位 ——
 ##    它的副标题 `_campaign_meta()` 要取词 + 代数字，const 里做不到。
@@ -478,11 +519,26 @@ func _build_top_table() -> Array:
 		"id": "campaign", "name": "任务关卡", "meta": _campaign_meta(),
 		"locked": false, "cards": TIERS.difficulties(),
 	}
+	# versus 的卡片在 EXTRA_MODES 里就地构造（见 versus_cards()）。
+	# ⛔ 别在这里再建一个 versus 行 —— EXTRA_MODES 已经有一个同 id 的，
+	#    两份会渲染出两行「联机对战」（2026-10-27 踩过）。
 	var out: Array = []
 	for m in EXTRA_MODES:
 		var row: Dictionary = (m as Dictionary).duplicate(true)
 		if String(row.get("id", "")) == AUTOCHESS_MODE_ID:
-			row["children"] = [campaign] + (row.get("children", []) as Array)
+			# versus  already lives in EXTRA_MODES 的 children（见那里的「联机对战」项）。
+			# ⛔ 别再往这里插一个同 id 的 —— 会渲染出两行「联机对战」。
+			var kids: Array = [campaign] + (row.get("children", []) as Array)
+			# EXTRA_MODES 是 const ⇒ versus 的卡片只能在这里注入。
+			# ⚠️ versus 是 autochess 的**子项**，不在 EXTRA_MODES 顶层，
+			#    所以必须遍历 children 找它，不能只看 row 自己（2026-10-27 踩过：
+			#    写在顶层判断里，结果 cards 永远是空的）。
+			for i in kids.size():
+				var kd: Dictionary = kids[i]
+				if String(kd.get("id", "")) == VERSUS_MODE_ID:
+					kd["cards"] = versus_cards()
+					kids[i] = kd
+			row["children"] = kids
 		out.append(row)
 	out.append({
 		"id": CREDITS_MODE_ID, "name": "版权声明", "meta": "致谢 · 开源许可",
@@ -1021,6 +1077,28 @@ func _build_strips() -> void:
 	_strip_row.add_theme_constant_override("v_separation", int(GRID_GAP_V))
 	_content.add_child(_strip_row)
 
+	# ★ 2026-10-28 图鉴入口：难度卡片**下面**一颗按钮（用户定的位置）。
+	#   只在「任务关卡」这一行显示（`_refresh()` 里按 `_content_id()` 收放）。
+	_codex_btn = Button.new()
+	_codex_btn.name = "CodexButton"
+	_codex_btn.text = T.t("CODEX_OPEN", "舰船图鉴 · %d 艘") % SHIP_DB.count()
+	_codex_btn.custom_minimum_size = Vector2(300, 42)
+	_codex_btn.size = Vector2(300, 42)
+	_codex_btn.position = Vector2(STRIP_POS.x, STRIP_POS.y + STRIP_H + 16.0)
+	_codex_btn.add_theme_font_size_override("font_size", 15)
+	BTN_THEME.apply(_codex_btn, "hud")
+	_codex_btn.pressed.connect(_open_codex)
+	_content.add_child(_codex_btn)
+
+
+## 打开舰船图鉴（懒建；浮层挂根节点 = 屏幕空间，手机档不会被设计空间裁掉）。
+func _open_codex() -> void:
+	if _codex == null:
+		_codex = CODEX_SCRIPT.new()
+		_codex.name = "ShipCodex"
+		add_child(_codex)
+	_codex.call("open")
+
 
 ## 一条难度 = 一个竖长条
 func _make_strip(card: Dictionary, idx: int) -> void:
@@ -1199,12 +1277,17 @@ func _refresh() -> void:
 	# ★ 2026-10-10 版权声明：右侧换成大方框，收掉卡片区。
 	if _is_credits():
 		_strip_row.visible = false
+		if _codex_btn != null:
+			_codex_btn.visible = false
 		if _credits_panel != null:
 			_credits_panel.visible = true
 		return
 	_strip_row.visible = true
 	if _credits_panel != null:
 		_credits_panel.visible = false
+	# ★ 图鉴按钮只在「任务关卡」显示（放难度卡片正下方，别的模式不占版面）
+	if _codex_btn != null:
+		_codex_btn.visible = (String(_content_id()) == "campaign")
 
 	var cards := _cards_of(_mode_idx)
 	# 先按模式定好「列数 + 卡片尺寸」，再让 `_make_strip` 去建 ——
@@ -1306,6 +1389,14 @@ func target_scene_for_start() -> String:
 	if not bool(cards[sel]["open"]):
 		return ""
 	var mode_id := _content_id()
+	# 联机对战：两张真人卡片都先进大厅（建房/加入在那里握手）。
+	# ⚠️ 必须在 tier_id 分支之前判：联机卡片没有 `id` 字段。
+	if mode_id == VERSUS_MODE_ID:
+		var vcode := String(cards[sel].get("code", ""))
+		if vcode == "VERSUS_HOST" or vcode == "VERSUS_JOIN":
+			RUN_STORE.pending_versus_role = "host" if vcode == "VERSUS_HOST" else "join"
+			RUN_STORE.pending_versus_ai = 0
+			return VERSUS_LOBBY_SCENE
 	# ★ 棋牌室（2026-10-06 二次改）：**不再切独立场景**，所以这里返回 ""。
 	#   ⚠️ 放在 tier_id 之前判：棋牌室的卡片没有 `id` 字段，
 	#      落到下面会被当成「非首次」而错误地进 BATTLE_SCENE。
@@ -1381,6 +1472,21 @@ func _on_start_pressed() -> void:
 	#    ⚠️ 只对任务关卡生效（棋牌室 / 斗地主没有难度概念）。
 	if _content_id() == FIRST_MODE_ID:
 		RUN_STORE.pending_difficulty = String(cards[sel].get("id", "simple"))
+	# ★ 2026-10-27：联机对战把 AI 对手数带给战场（EveMatchState 用它建房）
+	if _content_id() == VERSUS_MODE_ID:
+		var code := String(cards[sel].get("code", "VERSUS_1"))
+		# ⚠️ VERSUS_HOST / VERSUS_JOIN 走大厅（真联机），不是人机档。
+		#    原来无条件 substr(7) ⇒ 会把它们变成「0 个 AI」的假人机局。
+		if code == "VERSUS_HOST" or code == "VERSUS_JOIN":
+			RUN_STORE.pending_versus_ai = 0
+		elif code.begins_with("VERSUS_"):
+			RUN_STORE.pending_versus_ai = int(code.substr(7))
+		else:
+			RUN_STORE.pending_versus_ai = 0
+		print("[versus] menu picked code = ", code, " ai = ", RUN_STORE.pending_versus_ai)
+	else:
+		RUN_STORE.pending_versus_ai = 0
+		RUN_STORE.pending_versus_role = ""
 	RUN_STORE.session_active = true
 	get_tree().change_scene_to_file(target)
 

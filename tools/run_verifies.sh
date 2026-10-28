@@ -72,6 +72,7 @@ SUITE=(
   verify_run_save
   verify_review_fixes
   verify_menu
+  verify_codex
   verify_ui_scale
   verify_ui_metrics
   verify_resolution

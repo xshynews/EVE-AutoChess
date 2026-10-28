@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" path="res://tools/verify_net_config.gd" id="1_vnc"]
+[ext_resource type="Script" path="res://tools/verify_net_config.gd" id="1"]
 
 [node name="VerifyNetConfig" type="Node"]
-script = ExtResource("1_vnc")
+script = ExtResource("1")

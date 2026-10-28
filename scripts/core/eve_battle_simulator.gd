@@ -120,14 +120,20 @@ func damage_multiplier() -> float:
 			SUDDEN_DEATH_HARD_CAP)
 
 ## 战斗日志（HUD 消费）
+##
+## ★ 2026-10-28（用户：「战斗日志要标注敌方我方的船发生的变化，要做个区分」）：
+##   `team` = 这条日志说的是**哪一方的船**（0 我方 / 1 敌方 / -1 不分阵营）。
+##   ⛔ 别从文案里反推 —— 两边船名会重名（我方也买茶隼级），只能由写入侧带过来。
 class LogEntry:
 	var time: float
 	var category: StringName   ## fire / damage / break / system / economy
 	var text: String
-	func _init(p_time: float, p_cat: StringName, p_text: String) -> void:
+	var team: int
+	func _init(p_time: float, p_cat: StringName, p_text: String, p_team: int = -1) -> void:
 		time = p_time
 		category = p_cat
 		text = p_text
+		team = p_team
 
 ## ★ 2026-10-23：敌方「思考等级」0~3（只影响 team == 1，我方永远按 0 打）。
 ## 口径见 `EveCampaignTiers.DIFFICULTIES` 的 `ai_level` 注释。
@@ -183,6 +189,9 @@ func setup(own_ships: Array[EveShip], enemy_ships: Array[EveShip]) -> void:
 	#   上一场的旗舰与集火目标会**静默地留在身上**（新船 id 恰好撞上就串味）。
 	_flagship.clear()
 	_focus_target.clear()
+	# ★ 2026-10-28：站位方位也要重置（见 `_station_dir`）。
+	_station_dir.clear()
+	_station_x.clear()
 	# 时限回到默认（180s），由调用方决定是否用 set_time_limit() 收窄。
 	# ⚠️ 必须在这里重置而不是依赖新实例 —— 复用同一个模拟器重开一局时，
 	#    上一场的时限会静默地留在身上。
@@ -536,7 +545,7 @@ func _set_target(ship: EveShip, tgt: EveShip) -> void:
 	ship.locked = false
 	ship.lock_elapsed = 0.0
 	_target_switches += 1
-	_log(&"system", "%s 锁定目标：%s" % [ship.ship_name, tgt.ship_name])
+	_log(&"system", "%s 锁定目标：%s" % [ship.ship_name, tgt.ship_name], ship.team)
 
 
 ## 重算「谁领头 + 集火谁」。每 `TARGET_REFRESH_INTERVAL` 跑一次（与索敌同频）。
@@ -636,7 +645,7 @@ func _name_focus(flag: EveShip, team: int, cur: EveShip) -> EveShip:
 	# 迟滞：新候选要显著更优才换（负分时按 |cur| 缩放，与单舰口径一致）
 	var threshold := cur_score + absf(cur_score) * FOCUS_SWITCH_MARGIN + 1.0
 	if best != cur and best_score > threshold:
-		_log(&"system", "旗舰 %s 集火点名：%s" % [flag.ship_name, best.ship_name])
+		_log(&"system", "旗舰 %s 集火点名：%s" % [flag.ship_name, best.ship_name], flag.team)
 		return best
 	return cur
 
@@ -851,9 +860,17 @@ func _fire_once(ship: EveShip, target: EveShip) -> void:
 	# ★ 2026-10-24：机制壁垒（炼狱 BOSS）—— 未破解时整艘船吃 10% 伤害。
 	#   与抗性分开乘：抗性按伤害类型逐层算，壁垒是整船的机制护盾。
 	raw_damage *= target.incoming_mult
+	# ★ 2026-10-29（用户定案）：**每发独立掷一次穿盾**。
+	#   掷中 ⇒ 这一发跳过护盾直接落装甲（甲抗战列因此能"硬啃"）。
+	#   ⚠️ 只有护盾还在时才掷 —— 盾已经破了，掷不掷结果一样，
+	#      白白消耗随机数会让同一颗种子下的战报跟以前对不上。
+	var pierced := 0.0
+	if ship.shield_pierce > 0.0 and float(target.hp.get(&"shield", 0.0)) > 0.0:
+		if rng.randf() < ship.shield_pierce:
+			pierced = 1.0
 	var result := EveCombatCore.apply_damage(
 		target.hp, target.resists, raw_damage, ship.weapon_profile, false,
-		ship.armor_pierce
+		ship.armor_pierce, pierced
 	)
 	var applied := float(result["applied"])
 
@@ -866,16 +883,16 @@ func _fire_once(ship: EveShip, target: EveShip) -> void:
 	shot_fired.emit(ship, target, true, quality, applied)
 	_log(&"fire", "%s → %s  %s  %.0f 伤害" % [
 		ship.ship_name, target.ship_name, _quality_text(quality), applied
-	])
+	], target.team)
 
 	# 破层事件
 	for layer in result["breaks"]:
-		_log(&"break", "%s 的%s被击穿" % [target.ship_name, _layer_text(layer)])
+		_log(&"break", "%s 的%s被击穿" % [target.ship_name, _layer_text(layer)], target.team)
 
 	if target.hp[&"hull"] <= 0.0:
 		target.alive = false
 		ship.kills += 1
-		_log(&"damage", "%s 已被摧毁" % target.ship_name)
+		_log(&"damage", "%s 已被摧毁" % target.ship_name, target.team)
 		unit_destroyed.emit(target)
 
 
@@ -974,21 +991,84 @@ func _advance_with_formation(ship: EveShip, dt: float,
 	return true
 
 
+## 旗舰认为「已站到站位上」的容差（米）。
+##
+## ★★ 2026-10-28 修「护卫跑到边缘」时新增。见 `_flagship_advance` 的说明。
+const STATION_SETTLE := 3_000.0
+
+## 每队「站位方位」的平滑状态（team → 水平单位向量）。
+##
+## ★★ 2026-10-28（同上）：站位原来取「从目标指向旗舰**当前位置**」的实时方位。
+##   那个方位会在两军擦身而过时**瞬间翻转 180°** ⇒ 站位跳到敌人另一侧
+##   ⇒ 旗舰掉头冲回去 ⇒ 双方反复对穿、全队被拖着一路跑（用户报的"跑到边缘"）。
+##   ⇒ 现在把它做成**有惯性、且不许绕过目标背后**的方位：
+##      ① 每 tick 朝理想方位做指数平滑（时间常数 `STATION_AXIS_TAU`）；
+##      ② 硬夹在「我方半场轴」（team0 = +Z，team1 = −Z）的 ±`STATION_AXIS_MAX_DEG` 锥内
+##         —— 站到目标背后的几何结果是"两军互换阵地"，必须排除。
+var _station_dir: Dictionary = {}
+
+## 站位方位从旧值转到理想值的时间常数（秒）。
+## ⚠️ 太小 = 没有惯性（擦身时抖动照旧）；太大 = 敌人绕侧翼时我方转不过来。
+const STATION_AXIS_TAU := 1.5
+
+## ★ 站位允许的横向偏移（米，= ±x）。
+##   取 16 km：与 `FORMATION_MAX_COLS` 那条注释里的「战场取景横向跨度 ±16 km」同尺度。
+##   没有它，敌人横向漂多少我方就追多少 —— 两军各自横着追对方的站位（实测 t=20
+##   双方旗舰 z 只差 1.5 km、x 却差了 13.5 km），看起来同样是"跑到边缘去了"。
+const STATION_MAX_LATERAL := 16_000.0
+
+## ★ 站位横向跟随目标的**时间常数**（秒）。
+##   横向不能像纵深那样"有多近就多近"：两队都在追对方的横向位置 ⇒ 共振，
+##   实测会拉开 12 km+（护卫射程才 6 km，等于谁也别打谁），并在场地上横着滑。
+##   ⇒ x 走慢速低通（4 s），把"互相追"压成缓慢平移。
+const STATION_LATERAL_TAU := 4.0
+
+## 横向低通的状态（team → 平滑后的 x，米）。
+var _station_x: Dictionary = {}
+
+## 站位方位允许偏离「我方半场轴」的最大角度（度）。
+## 75° 意味着可以在敌**侧翼**站位，但绝不站到它背后。
+const STATION_AXIS_MAX_DEG := 75.0
+
+
 ## 旗舰的运动：① 全队还没都能开火 ⇒ 推进到覆盖站位；② 已覆盖 ⇒ 锚定。
 ##
 ## ⚠️ 本函数是**收敛的唯一保证**：只要还有跟班够不着，旗舰就会继续推。
 ##    ⛔ 不要给它加"本舰已够得着就停"的提前退出 —— 那正是 14 倍回归的写法。
+##
+## ★★ 2026-10-28（用户报「护卫运动着运动着就跑到边缘去了」）：
+##   原来的锚定条件**只有** `_fleet_covered()` —— 那是「**全员槽位**都够得着」。
+##   它在队伍含深排船时**几何上永远不成立**：
+##     第 3 排槽位在旗舰身后 18 km，护卫（1 格 = 6 km 射程）要够得着
+##     ⇒ 要求旗舰距敌 ≤ 6 × 0.72 − 18 = **−10.8 km**（负距离，不可能）。
+##   而 `_fleet_station_distance()` 自己又有 3 km 下限（不许旗舰撞进敌阵）。
+##   ⇒ 两条口径互相矛盾：站位停在 3 km，覆盖恒为 false
+##     ⇒ 旗舰**永不锚定、全程满推** ⇒ 两军直接对穿，
+##       各跑到对方阵地后方，看起来就是「运动着运动着跑到边缘」。
+##   实测（tools 探针，8 艘全护卫）：60 秒内旗舰从 z=+40 km 冲到 −15 km，
+##   双方反复穿阵，队形散成 40 km。
+##
+##   ⇒ 现在补上第二条锚定路径：**旗舰已到达 `_fleet_station` 的站位**（容差内）
+##     就锚定 —— 与 3 km 下限同口径，「到位」这件事有明确的几何判据。
+##     `_fleet_covered()` 保留：它先成立时提前锚定，省掉最后一段微调。
+## ★★ 2026-10-28（同上）：**锚定只看「在不在站位上」**，不再额外看 `_fleet_covered()`。
+##   原来的锚定条件是「全覆盖 ⇒ 就地锚定」，而全覆盖**不代表站位正确**：
+##   一旦跟班全灭（只剩旗舰），`_fleet_covered()` 恒为 true ⇒ 旗舰**就地锁死**，
+##   停在哪儿算哪儿（实测残局旗舰把自己锁在 z=−14.5 km）。
+##   ⇒ 判据换成几何位置：**离站位够近**才锚定，否则一律推进回站位。
+##     `_fleet_covered()` 仍参与站位距离的计算（`_fleet_station_distance`），
+##     只是不再单独构成"可以停"的理由。
 func _flagship_advance(flag: EveShip, dt: float, target: EveShip) -> bool:
 	if target == null or not target.alive:
 		return false
-	if _fleet_covered(flag.team, target):
-		# ★ 全队都能开火 ⇒ 旗舰锚定。整队站桩输出（战列线）。
+	var station := _fleet_station(flag, target, dt)
+	if flag.body.position.distance_to(station) <= STATION_SETTLE:
+		# ★ 到位 ⇒ 旗舰锚定。整队站桩输出（战列线）。
 		#   锚定的另一个好处：站位稳定 ⇒ 槽位不抖 ⇒ 跟班不来回追。
 		flag.body.acceleration = -flag.body.velocity * 1.5
 		return true
-	# 还没全覆盖 ⇒ 推到「最吃亏的那艘也刚好够得着」的站位上。
-	flag.body.acceleration = EveDestinyMotion.goto_thrust(
-			flag.body, _fleet_station(flag, target), dt)
+	# 还没到位 ⇒ 推到「最吃亏的那艘也刚好够得着」的站位上。
+	flag.body.acceleration = EveDestinyMotion.goto_thrust(flag.body, station, dt)
 	return true
 
 
@@ -1020,14 +1100,59 @@ func _fleet_covered(team: int, target: EveShip) -> bool:
 ## 深度为 `d` 的跟班距敌 ≈ `S + d`。要它够得着：
 ##     S + d ≤ reach  ⇒  S ≤ reach − d
 ## 全队取最小 ⇒ 旗舰要**顶到最靠里**的那一个约束上。
-func _fleet_station(flag: EveShip, target: EveShip) -> Vector3:
+func _fleet_station(flag: EveShip, target: EveShip, dt: float = 0.0) -> Vector3:
 	var need := _fleet_station_distance(flag.team, target)
-	var away := flag.body.position - target.body.position
-	away.y = 0.0
-	if away.length_squared() < 1.0:
-		# 旗舰已经贴到目标身上（退化）⇒ 朝本方半场退开
-		away = Vector3(0.0, 0.0, 1.0 if flag.team == 0 else -1.0)
-	return target.body.position + away.normalized() * need
+	# ── 方位：理想 = 从目标指向旗舰当前位置；再做「有惯性 + 不许绕后」的处理 ──
+	var home := Vector3(0.0, 0.0, 1.0 if flag.team == 0 else -1.0)
+	var ideal := flag.body.position - target.body.position
+	ideal.y = 0.0
+	if ideal.length_squared() < 1.0:
+		ideal = home
+	ideal = ideal.normalized()
+	ideal = _clamp_to_home_cone(ideal, home)
+	# 指数平滑：把「擦身而过时的 180° 翻转」摊成几秒的缓慢转向
+	var prev: Vector3 = _station_dir.get(flag.team, ideal)
+	var k := 1.0 - exp(-maxf(dt, 0.0) / maxf(0.01, STATION_AXIS_TAU))
+	var dir := prev.lerp(ideal, k)
+	if dir.length_squared() < 1e-6:
+		dir = ideal
+	dir = _clamp_to_home_cone(dir.normalized(), home)
+	_station_dir[flag.team] = dir
+	var station := target.body.position + dir * need
+	# ★★ 2026-10-28（同上）**中线夹持** —— 这条才是「不再跑到边缘」的真正钉子。
+	#
+	#   站位公式是「目标位置 + 我方半场方向 × need」，锚点在**敌人**身上。
+	#   而两队都在推进 ⇒ 这是个正反馈：我冲过去、你冲过来，各追着对方的站位跑，
+	#   一路把战场拖到对方半场甚至屏幕外（实测全护卫局 60s 内旗舰从 z=+40 km
+	#   冲到 z=−15 km，两队反复穿阵）。
+	#   ⇒ 站位**永远不许越过中线**（team0 = z≥0，team1 = z≤0）。
+	#     两军都在中线相遇，谁先到谁先停；敌人越线也不会把我方拖过去。
+	#     距敌因此只会**更近**（更容易开火），不会更远 —— 不存在打不着的问题。
+	if flag.team == 0:
+		station.z = maxf(station.z, 0.0)
+	else:
+		station.z = minf(station.z, 0.0)
+	# ★ 横向同理：不许被敌人带着横着追出去（先慢速低通，再夹边界）。
+	var want_x := target.body.position.x
+	var prev_x: float = _station_x.get(flag.team, want_x)
+	var kx := 1.0 - exp(-maxf(dt, 0.0) / STATION_LATERAL_TAU)
+	var sx := lerpf(prev_x, want_x, kx)
+	sx = clampf(sx, -STATION_MAX_LATERAL, STATION_MAX_LATERAL)
+	_station_x[flag.team] = sx
+	station.x = clampf(sx, -STATION_MAX_LATERAL, STATION_MAX_LATERAL)
+	return station
+
+
+## 把方位夹进「本方半场轴」的 ±`STATION_AXIS_MAX_DEG` 锥内。
+static func _clamp_to_home_cone(dir: Vector3, home: Vector3) -> Vector3:
+	var lim := deg_to_rad(STATION_AXIS_MAX_DEG)
+	var ang := home.angle_to(dir)
+	if ang <= lim:
+		return dir
+	if ang >= PI - 1e-4:
+		# 正好反向（擦身而过那一瞬）：直接取半场轴，别让 slerp 走任意一侧
+		return home
+	return home.slerp(dir, lim / ang).normalized()
 
 
 ## 旗舰站位距敌的**最小允许值**（米）—— 等于 `min(reach_i × margin − depth_i)`。
@@ -1167,9 +1292,9 @@ func _update_capacitor(ship: EveShip, dt: float) -> void:
 	ship.cap_dry = bool(result["cap_dry"])
 	if ship.cap_dry != was_dry:
 		if ship.cap_dry:
-			_log(&"system", "%s 电容干涸，主动修理停止" % ship.ship_name)
+			_log(&"system", "%s 电容干涸，主动修理停止" % ship.ship_name, ship.team)
 		else:
-			_log(&"system", "%s 电容已恢复" % ship.ship_name)
+			_log(&"system", "%s 电容已恢复" % ship.ship_name, ship.team)
 
 
 # ------------------------------------------------------------------ ★ 后勤
@@ -1204,15 +1329,27 @@ func _replenish_own_ships(ships_arr: Array, dt: float) -> void:
 		# 否则下一帧立刻再触发一次，节流形同虚设）。
 		m.logistics_timer = m.logistics_cycle
 		var t := _pick_repair_target(m, ships_arr)
-		if t == null:
-			continue
 		# ⚠️ 显式标注 float：`m` 来自无类型 Array ⇒ 它的方法返回 Variant，
 		#    `:=` 推断会报 "Cannot infer the type"（踩过）。
-		var gained: float = m.repair_ally(t)
-		if gained > 0.0:
+		# ⛔ 这里**不能** `continue`：主修那层全队满血时，衍生层那一笔照样该出手
+		#    （两支维修器是并行的，不是主修失败就整体作废）。
+		if t != null:
+			var gained: float = m.repair_ally(t)
+			if gained > 0.0:
+				_log(&"repair", "%s → %s %s +%d" % [
+						m.ship_name, t.ship_name, _layer_text(m.logistics_layer),
+						int(roundf(gained))], m.team)
+		# ★ 2026-10-28：**紧跟着补一笔另一层**（护盾 ↔ 装甲，量 = 主修 × 3/7）。
+		#   · 独立挑目标：那一层里最缺的友军，可以和上面那一笔是同一个人，也可以是别人
+		#     —— 用户口径是「一层修盾、一层修甲」两条线并行，不是同一艘修两次。
+		var t2 := _pick_repair_target(m, ships_arr, m.logistics_layer_secondary)
+		if t2 == null:
+			continue
+		var gained2: float = m.repair_ally_secondary(t2)
+		if gained2 > 0.0:
 			_log(&"repair", "%s → %s %s +%d" % [
-					m.ship_name, t.ship_name, _layer_text(m.logistics_layer),
-					int(roundf(gained))])
+					m.ship_name, t2.ship_name, _layer_text(m.logistics_layer_secondary),
+					int(roundf(gained2))], m.team)
 
 
 ## 挑一个最该修的友军。返回 null = 没有可修的。
@@ -1242,8 +1379,11 @@ func _replenish_own_ships(ships_arr: Array, dt: float) -> void:
 ##    这里是每 `logistics_cycle` 秒一次的主动修理。一个是被动小水流、
 ##    一个是主动大剂量，叠在同一层上是**设计意图**（后勤能给自己续命），
 ##    不是重复计数 —— 血池是同一本账，谁写进去都算数，不存在"算了两次"。
-func _pick_repair_target(medic: EveShip, ships_arr: Array) -> EveShip:
-	var layer: StringName = medic.logistics_layer
+## ★ 2026-10-28：`layer_override` 非空时改修那一层（后勤的第二支维修器用）。
+##   传空 = 沿用 `medic.logistics_layer`（主修，原行为一字不变）。
+func _pick_repair_target(medic: EveShip, ships_arr: Array,
+		layer_override: StringName = &"") -> EveShip:
+	var layer: StringName = medic.logistics_layer if layer_override.is_empty() else layer_override
 	if layer.is_empty():
 		return null
 	var best: EveShip = null
@@ -1327,8 +1467,10 @@ func _finish(team: int) -> void:
 
 # ------------------------------------------------------------------ 工具
 
-func _log(category: StringName, text: String) -> void:
-	log_entries.append(LogEntry.new(elapsed, category, text))
+## `team`：这条日志说的是哪一方的船（0 我方 / 1 敌方 / -1 不分阵营）。
+## 见 `LogEntry.team` 的注释 —— 战斗日志窗靠它做左右阵营区分。
+func _log(category: StringName, text: String, team: int = -1) -> void:
+	log_entries.append(LogEntry.new(elapsed, category, text, team))
 	# 限制日志长度，避免长局内存膨胀
 	if log_entries.size() > 2000:
 		log_entries = log_entries.slice(log_entries.size() - 1500)

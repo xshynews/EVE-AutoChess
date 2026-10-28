@@ -229,10 +229,19 @@ static func lock_duration(scan_resolution: float, signature_radius: float) -> fl
 ## 来源：武器羁绊「激光炮 6 艘：攻击 ×1.21 · 无视 25% 装甲」。
 ## ⚠️ 只作用于 armor 层 —— 护盾/结构不受影响，这是 EVE 的常识口径
 ##    （装甲板被穿甲弹直接打穿，护盾是能量场、结构是骨架）。
+## `shield_pierce`（0 或 1）= 这一发**是否无视护盾**。
+## 概率由调用方（模拟器）掷：掷中传 1.0，掷不中传 0.0。
+## ★ 2026-10-29（用户定案，Sins of a Solar Empire 的相位导弹式）：
+##   掷中就跳过整层护盾，直接落到装甲（装甲也空了就落结构）；
+##   掷不中就走原来的 shield → armor → hull。
+## ⚠️ 这里是**纯几何选择**，不掷骰、不含概率 —— 战斗核心保持确定性，
+##    自检才能用固定种子复现。掷骰放模拟器，是为了「每发独立」。
+## 🔮 未来「护盾击穿装备」= 把 `EveShip.shield_pierce` 拉高到 1.0，
+##    这里一行都不用改（全穿盾就是 Stellaris 鱼雷）。
 ## 返回 applied（实际生效量）/ applied_by_type / remaining / breaks（破层事件）
 static func apply_damage(hp: Dictionary, resists: Dictionary, amount: float,
 		profile: PackedFloat32Array, bypass_resists: bool = false,
-		armor_pierce: float = 0.0) -> Dictionary:
+		armor_pierce: float = 0.0, shield_pierce: float = 0.0) -> Dictionary:
 	var remaining: float = maxf(0.0, amount)
 	var applied := 0.0
 	var applied_by_type := PackedFloat32Array()
@@ -241,8 +250,15 @@ static func apply_damage(hp: Dictionary, resists: Dictionary, amount: float,
 	var mix := normalize_damage_profile(profile)
 	var breaks: Array[StringName] = []
 	var pierce := clampf(armor_pierce, 0.0, 0.95)
+	# 穿盾时把护盾层挪到队尾 ⇒ 顺序变成 armor → hull → shield。
+	# ⚠️ 用「重排」而不是「跳过」：万一装甲/结构都空了，剩下那点伤害还能落到护盾，
+	#    不然会凭空蒸发（玩家看着血条不动，只会以为卡了）。
+	var layers: Array = LAYERS.duplicate()
+	if shield_pierce > 0.5:
+		layers.erase(&"shield")
+		layers.append(&"shield")
 
-	for layer in LAYERS:
+	for layer in layers:
 		if remaining <= 0.0:
 			break
 		var current: float = maxf(0.0, hp.get(layer, 0.0))

@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://c7jx4ngv4gd7i"
-path="res://.godot/imported/revelation_hull_ac1_t1_a.png-d92741c8f2237a855596ff33b3e91bb1.ctex"
+path.s3tc="res://.godot/imported/revelation_hull_ac1_t1_a.png-d92741c8f2237a855596ff33b3e91bb1.s3tc.ctex"
+path.etc2="res://.godot/imported/revelation_hull_ac1_t1_a.png-d92741c8f2237a855596ff33b3e91bb1.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "bafb2d4fbc7f1ff4fd18fe9456085ce2"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/vfx/revelation_hull_ac1_t1_a.png"
-dest_files=["res://.godot/imported/revelation_hull_ac1_t1_a.png-d92741c8f2237a855596ff33b3e91bb1.ctex"]
+dest_files=["res://.godot/imported/revelation_hull_ac1_t1_a.png-d92741c8f2237a855596ff33b3e91bb1.s3tc.ctex", "res://.godot/imported/revelation_hull_ac1_t1_a.png-d92741c8f2237a855596ff33b3e91bb1.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -40,4 +42,4 @@ process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
-detect_3d/compress_to=1
+detect_3d/compress_to=0

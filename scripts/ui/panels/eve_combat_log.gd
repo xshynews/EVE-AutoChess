@@ -42,6 +42,19 @@ const CAT_COLORS := {
 	&"repair": Color(0.52, 0.86, 0.68),
 }
 
+## ★ 2026-10-28（用户：「战斗日志应该标注敌方我方的船发生的变化，要做个区分」）
+##
+## 三层区分，都用**颜色**承载，不额外写长字（窄栏 172 宽，字多一行就放不下）：
+##   ① 行首 2px 竖条 = 阵营（我方冷青 / 敌方暖红 / 不分阵营透明）
+##   ② 竖条右边一个 1 字标签（我 / 敌）—— 只为了扫读时不用先认颜色
+##   ③ 文本自身的颜色仍按**类别**（损伤红 / 破层橙 / 后勤绿…）
+##      ⛔ 阵营不接管文本颜色：那会把「破层」和「损伤」揉成一种观感。
+const SIDE_COLORS := {
+	0: Color(0.42, 0.76, 0.92),   # 我方：冷青
+	1: Color(0.92, 0.47, 0.40),   # 敌方：暖红
+}
+const SIDE_LABELS := {0: "我", 1: "敌"}
+
 ## 分类 → 行首小字。没有对应分类就不显示前缀。
 const CAT_LABELS := {
 	&"economy": "结算",
@@ -114,18 +127,42 @@ func append_text(text: String, category: StringName = &"system",
 func _append_line(entry) -> void:
 	var cat: StringName = _cat_of(entry)
 	var time_v := _time_of(entry)
+	var team := _team_of(entry)
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 4)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	# ① 阵营竖条（无阵营时透明但仍占位，保证所有行左边界对齐）
+	var side := ColorRect.new()
+	side.color = SIDE_COLORS.get(team, Color(0, 0, 0, 0))
+	side.custom_minimum_size = Vector2(2, 0)
+	side.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(side)
+
 	var t := Label.new()
 	t.text = "%04.1f" % time_v
 	t.add_theme_color_override("font_color", Color(0.34, 0.43, 0.47))
 	FONT.fs(t, 9)
-	t.custom_minimum_size = Vector2(30, 0)
+	# ⚠️ 30 → 26px：加了「阵营字」之后正文被挤掉两个字，
+	#    时间戳本身只需放下 `%04.1f`（"12.4" ≈ 22px），这里还回 4px。
+	t.custom_minimum_size = Vector2(26, 0)
 	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(t)
+
+	# ② 阵营字（我 / 敌）—— 定宽 11px：不写字的行也占位，列不会参差
+	var sl := Label.new()
+	var side_text := ""
+	if SIDE_COLORS.has(team):
+		var cn: String = String(SIDE_LABELS.get(team, ""))
+		side_text = T.t("LOG_SIDE_%d" % team, cn)
+	sl.text = side_text
+	sl.add_theme_color_override("font_color", SIDE_COLORS.get(team, Color(0, 0, 0, 0)))
+	FONT.fs(sl, 9)
+	sl.custom_minimum_size = Vector2(11, 0)
+	sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(sl)
 
 	var chip := ColorRect.new()
 	chip.color = CAT_COLORS.get(cat, Color(0.4, 0.5, 0.5))
@@ -171,6 +208,17 @@ static func _text_of(entry) -> String:
 		return String(entry.get("text", ""))
 	var v = entry.get("text")
 	return String(v) if v != null else ""
+
+
+## 阵营：0 我方 / 1 敌方 / -1 不分阵营。
+##
+## 两种来源都认：模拟器发的是 `LogEntry`（有 `.team`），
+## 场景 / HUD 发的是 Dictionary（多数不带 `team` ⇒ 视为不分阵营）。
+static func _team_of(entry) -> int:
+	if entry is Dictionary:
+		return int(entry.get("team", -1))
+	var v = entry.get("team")
+	return int(v) if v != null else -1
 
 
 func _text_color_for(cat: StringName) -> Color:

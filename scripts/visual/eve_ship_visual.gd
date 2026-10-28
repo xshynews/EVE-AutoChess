@@ -236,6 +236,10 @@ func setup(p_ship: EveShip) -> void:
 	label_root = Node3D.new()
 	label_root.name = "Labels"
 	add_child(label_root)
+	# ★ 2026-10-27（用户：「血条堆叠」）：标签层**脱离船体旋转**。
+	#   理由见 `_sync_label_transform()`；不设 top_level 的话，
+	#   屏幕空间的垂直避让偏移会跟着船体的俯仰/滚转一起歪。
+	label_root.top_level = true
 	_build_bars()
 	_build_labels()
 	# 敌我识别（必须在 _build_labels 之后：要改它刚建好的标签颜色）
@@ -249,9 +253,14 @@ func setup(p_ship: EveShip) -> void:
 
 	_last_pos = ship.body.position
 	position = ship.body.position / METERS_PER_UNIT
+	_sync_label_transform()
 
 	# 护盾壳：开发期可见，用来确认贴花落在壳面的哪里
 	_ensure_shield_fx()
+
+	# ★ 2026-10-27：先跑一次血量/标签判定 —— 否则布阵态的满血船会带着
+	#   「默认可见」的三条满血条出场（血条现在只在关键船 / 受伤船显示）。
+	_update_bars()
 
 
 ## 切换「布阵态」—— 棋盘显形/隐藏时由 arena 广播下来。
@@ -262,6 +271,15 @@ func set_board_mode(on: bool) -> void:
 		return
 	board_mode = on
 	_apply_scale()
+	# ★ 2026-10-27：布阵态不做屏幕避让（格子布局本来就分得开），
+	#   ⇒ 进布阵时把避让偏移与降透明度归零，避免残留上一场的位置。
+	if on:
+		_label_offset = 0.0
+		_label_offset_want = 0.0
+		_label_dim = 1.0
+		_label_dim_want = 1.0
+		_apply_label_dim()
+		_sync_label_transform()
 
 
 ## 把基准缩放写进 hull_root / label_root。
@@ -1565,6 +1583,13 @@ func sync_from_body(body: EveDestinyMotion.Body, alive: bool, delta: float = 1.0
 	if not alive:
 		return
 
+	# 标签避让：偏移/透明度都走平滑（arena 每帧给的是「目标值」）。
+	# ⚠️ 不平滑会在两艘船交错的瞬间看到名字「跳层」。
+	var k := clampf(delta / 0.10, 0.0, 1.0)
+	_label_offset = lerpf(_label_offset, _label_offset_want, k)
+	_label_dim = lerpf(_label_dim, _label_dim_want, k)
+	_sync_label_transform()
+
 	_update_bars()
 	_update_command_badges()
 
@@ -1613,6 +1638,8 @@ func snap_facing(body: EveDestinyMotion.Body, alive: bool = true) -> void:
 		_facing_quat = Quaternion(target).normalized()
 		quaternion = _facing_quat
 	visible = alive
+	# 标签层是 top_level，位置不会自动跟着 `position` 走 ⇒ 这里显式同步一次。
+	_sync_label_transform()
 
 
 func _update_bars() -> void:
@@ -1620,18 +1647,33 @@ func _update_bars() -> void:
 	var a_max: float = maxf(0.001, ship.max_hp[&"armor"])
 	var h_max: float = maxf(0.001, ship.max_hp[&"hull"])
 
-	_set_bar(_shield_bar, ship.hp[&"shield"] / s_max)
-	_set_bar(_armor_bar, ship.hp[&"armor"] / a_max)
-	_set_bar(_hull_bar, ship.hp[&"hull"] / h_max)
+	# ★ 2026-10-27（用户：「血条堆叠」）：血条不再是常驻元素。
+	#   显示条件 = **关键船** 或 **已经掉过血**（受伤本身就是玩家要看的信息）。
+	#   ⇒ 开局满血的普通船只剩名字，屏幕上少掉大量横向长条。
+	var key := _is_key_ship()
+	# ⚠️ hp 是 Dictionary 取值（Variant）⇒ 这里必须显式标 bool，否则推断失败。
+	var hurt: bool = float(ship.hp[&"shield"]) < s_max - 0.5 \
+			or float(ship.hp[&"armor"]) < a_max - 0.5 \
+			or float(ship.hp[&"hull"]) < h_max - 0.5
+	var show_bars: bool = key or hurt
+
+	_set_bar(_shield_bar, ship.hp[&"shield"] / s_max, show_bars)
+	_set_bar(_armor_bar, ship.hp[&"armor"] / a_max, show_bars)
+	_set_bar(_hull_bar, ship.hp[&"hull"] / h_max, show_bars)
+	if _team_frame != null:
+		_team_frame.visible = show_bars
 
 	_stance_label.text = EveDestinyMotion.stance_label(ship.stance)
+	# 「保持距离」这类姿态每艘船基本一样 ⇒ 只给关键船显示，其余留名字就够。
+	_stance_label.visible = key
+	_apply_label_dim()
 
 
-func _set_bar(bar: MeshInstance3D, fraction: float) -> void:
+func _set_bar(bar: MeshInstance3D, fraction: float, allow: bool = true) -> void:
 	if bar == null:
 		return
 	var f := clampf(fraction, 0.0, 1.0)
-	bar.visible = f > 0.001
+	bar.visible = allow and f > 0.001
 	if not bar.visible:
 		return
 	# 用缩放模拟血条长度（锚点靠左）
@@ -1671,6 +1713,118 @@ const FOCUS_BADGE_R := 0.34
 
 var _flag_badge: MeshInstance3D = null
 var _focus_badge: MeshInstance3D = null
+
+
+# ------------------------------------------------------------------ 标签精简 / 避让
+##
+## ══════════════════════════════════════════════════════════════════
+##  用户 2026-10-27：「血条堆叠，看看怎么解决」
+## ══════════════════════════════════════════════════════════════════
+##
+##  两件事一起做（用户选定「两者都做」）：
+##    ① **精简**：常驻的只有**舰船名字**。血条与「保持距离」只在
+##       **关键船**上显示 —— 关键船 = 本队旗舰 / 被集火目标 / 玩家镜头锁定；
+##       另外**掉过血**的船自动补血条（受伤本身就是玩家要看的信息）。
+##       ⇒ 满血的普通船只剩一行名字，重叠概率从源头上大降。
+##    ② **避让**：竞技场每帧把所有标签组投影到屏幕上，重叠的按重要性
+##       从上往下排成阶梯（实现在 `eve_battle_arena.gd::declutter_offsets`）。
+##       本文件只负责「报告自己的屏幕包围盒」和「接受世界 Y 偏移」。
+##
+##  ⚠️ 偏移的单位是**世界单位**（arena 已经按相机投影换算过），
+##     不是像素 —— 因为这里只能改 3D 节点的位置。
+
+## 玩家镜头锁定本舰（由 arena 每帧写入；视觉层不自己判「谁被锁定」）。
+var _cam_lock := false
+## 避让偏移：当前值（每帧向目标平滑）与目标值（arena 写）。
+var _label_offset := 0.0
+var _label_offset_want := 0.0
+## 降透明度：标签挤到层数上限之外时压暗，避免「一堆名字糊成一团」。
+var _label_dim := 1.0
+var _label_dim_want := 1.0
+## 上一次真正写进材质的透明度（见 `_apply_label_dim` 的缓存说明）。
+var _label_dim_applied := -1.0
+
+## 标签组在世界空间的包围盒（x 以标签轴心为 0；单位 = 世界单位，已乘 label_root.scale）。
+##
+## arena 用它做屏幕空间重叠检测。宽度取「名字估算宽」与「血条宽」的较大者。
+##
+## ⚠️ 高度**按当前实际可见的元素**算，不是固定给满：
+##    精简后大多数普通船只剩一行名字（1.49~1.81），若仍按满高（0.87~1.90）
+##    报给避让算法，两艘船明明隔得开也会被判重叠、白白推开。
+func label_block_world() -> Rect2:
+	if label_root == null:
+		return Rect2()
+	var s: float = label_root.scale.y
+	var chars := 0
+	if _name_label != null:
+		chars = _name_label.text.length()
+	var half_w := maxf(BAR_WIDTH, float(chars) * 0.32) * 0.5 * s
+	# 名字常驻：font_size 32 × pixel_size 0.010 = 0.32 世界高，中心 y=1.65
+	var bottom := 1.49
+	var top := 1.81
+	if _stance_label != null and _stance_label.visible:
+		bottom = minf(bottom, 1.31)         # 姿态：24×0.009=0.216，中心 1.42
+	if _hull_bar != null and _hull_bar.visible:
+		bottom = minf(bottom, 0.87)         # 最底一条血条（hull）
+	# 指挥环比名字更高（旗舰 y=2.35 r=0.22 ⇒ 上沿 2.57）
+	if (_flag_badge != null and _flag_badge.visible) \
+			or (_focus_badge != null and _focus_badge.visible):
+		top = maxf(top, FLAG_BADGE_Y + FLAG_BADGE_R)
+	return Rect2(Vector2(-half_w, bottom * s), Vector2(half_w * 2.0, (top - bottom) * s))
+
+
+## 镜头锁定标记（arena 每帧写；只影响标签是否常驻显示血条/姿态）。
+func set_label_camera_lock(on: bool) -> void:
+	_cam_lock = on
+
+
+## 避让结果（世界 Y 偏移，正 = 向上）。arena 每帧写。
+## ⚠️ 只在战斗态生效 —— 布阵态在 `set_board_mode()` 里归零。
+func set_label_offset_world(y: float) -> void:
+	_label_offset_want = y
+
+
+## 标签不透明度（1 = 正常；挤到层数外时 arena 会给 < 1 的值压暗）。
+func set_label_dim(a: float) -> void:
+	_label_dim_want = clampf(a, 0.0, 1.0)
+
+
+## 「关键船」= 需要常驻完整标签的船。只读盘面字段（红线 40：不复刻判定）。
+func _is_key_ship() -> bool:
+	return ship != null and (_cam_lock or ship.is_flagship or ship.is_focused)
+
+
+## 把标签层摆到「船位置 + 世界 Y 偏移」，并**清零旋转**。
+##
+## ⚠️ 为什么要清零旋转：label_root 是 top_level（见 setup），它不再继承船体的
+##    俯仰/滚转。否则避让的垂直偏移会跟着船体歪，且船俯冲时名字会与血条错开。
+func _sync_label_transform() -> void:
+	if label_root == null or not is_inside_tree():
+		return
+	label_root.global_position = global_position + Vector3(0.0, _label_offset, 0.0)
+	label_root.global_rotation = Vector3.ZERO
+
+
+## 把「当前透明度」写进名字与血条材质（两者是各船独立的实例，不会串色）。
+##
+## ⚠️ 带缓存（`_label_dim_applied`）：稳态下 `_label_dim` 恒为 1，逐帧重写
+##    材质纯属浪费（20 艘 × 60 帧 = 每秒上千次无意义写入）。
+func _apply_label_dim() -> void:
+	if is_equal_approx(_label_dim_applied, _label_dim):
+		return
+	_label_dim_applied = _label_dim
+	if _name_label != null:
+		var c: Color = _name_label.modulate
+		c.a = _label_dim
+		_name_label.modulate = c
+	for bar in [_shield_bar, _armor_bar, _hull_bar]:
+		if bar == null:
+			continue
+		var mat := bar.material_override as StandardMaterial3D
+		if mat != null:
+			mat.albedo_color.a = _label_dim
+	if _team_frame_mat != null:
+		_team_frame_mat.albedo_color.a = 0.95 * _label_dim
 
 
 func _build_command_badges() -> void:

@@ -359,6 +359,21 @@ func _check_menu_wiring() -> void:
 	_ok(String(menu.INTRO_SCENE) == "res://scenes/intro_scene.tscn", "主界面知道开场场景在哪")
 
 	# ★ 反向注入⑦：同一份代码，只翻进度存档，去的目的地必须跟着翻
+	# ★★ 2026-10-28：这一段原来有一条**假的红**和一条**过时的红**，一起修：
+	#   ① 没先把模式切到「任务关卡」⇒ `_content_id()` 还停在父项「自走棋」
+	#      ⇒ `first_time` 恒为 false，前两条断言根本不成立；
+	#   ② `FIRST_TIER_ID` 写的是旧 id `"guard_border"`（四档化后不存在）
+	#      ⇒ 就算切对了模式也永远返回 BATTLE_SCENE。**这是真 bug**：
+	#      新玩家第一次点「开始」直接进战斗，开场片头一次都没播过。
+	menu._on_mode_pressed(0)                       # 展开「自走棋」→ 选中「任务关卡」
+	_ok(String(menu._content_id()) == String(menu.FIRST_MODE_ID),
+			"已切到任务关卡（实际 %s）" % menu._content_id())
+	var first_tier := String((EveCampaignTiers.difficulties()[0] as Dictionary)["id"])
+	_ok(String(menu.FIRST_TIER_ID) == first_tier,
+			"★ FIRST_TIER_ID 必须等于首档难度的真实 id（应为 %s，实际 %s）"
+			% [first_tier, menu.FIRST_TIER_ID])
+
+	menu._pick["campaign"] = 0
 	PROGRESS.save_one("intro_seen", false)
 	_ok(menu.target_scene_for_start() == MENU_INTRO,
 			"★ 第一次玩（intro_seen=false）⇒ 去开场（实际 %s）"
@@ -369,11 +384,22 @@ func _check_menu_wiring() -> void:
 			% menu.target_scene_for_start())
 	PROGRESS.save_one("intro_seen", false)
 
-	# 未开放的档位点「开始」不许进任何地方
-	menu._on_mode_pressed(0)                       # 任务关卡
-	menu._pick["campaign"] = 1                     # 第 2 难度（待开发）
-	_ok(menu.target_scene_for_start() == "",
-			"待开发难度点「开始」⇒ 哪都不去（实际 '%s'）" % menu.target_scene_for_start())
+	# ★ 2026-10-28：原断言「第 2 难度待开发 ⇒ 哪都不去」的预设已失效 ——
+	#   四档难度现在 `open` 全是 true（见 EveCampaignTiers.DIFFICULTIES）。
+	#   ⇒ 改成逐档验证**去处**：首档（intro_seen=false）去开场，其余直接进对局；
+	#     若哪档被人关掉（open=false），则必须「哪都不去」—— 两种情况都守住。
+	var tiers: Array = EveCampaignTiers.difficulties()
+	for i in tiers.size():
+		var t: Dictionary = tiers[i]
+		menu._pick["campaign"] = i
+		var got: String = menu.target_scene_for_start()
+		if bool(t.get("open", false)):
+			var want := MENU_INTRO if i == 0 else MENU_BATTLE
+			_ok(got == want, "难度 %d（%s，已开放）⇒ %s（实际 '%s'）"
+					% [i, String(t.get("name", "")), want, got])
+		else:
+			_ok(got == "", "难度 %d（%s，未开放）⇒ 哪都不去（实际 '%s'）"
+					% [i, String(t.get("name", "")), got])
 	menu._pick["campaign"] = 0
 
 	# ★ 跳过必须写盘（否则下次开局又被拦一次）

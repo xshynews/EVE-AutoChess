@@ -290,6 +290,7 @@ DOSSIER_HP_SHIELD,Shield,护盾
 DOSSIER_HP_ARMOR,Armor,装甲
 DOSSIER_HP_HULL,Hull,结构
 DOSSIER_ATTR_ATTACK,Attack,攻击
+DOSSIER_ATTR_HIT,Per shot,每发
 DOSSIER_ATTR_INTERVAL,Interval,攻击间隔
 DOSSIER_ATTR_RANGE,Range,射程
 DOSSIER_ATTR_SPEED,Speed,移速
@@ -301,6 +302,7 @@ DOSSIER_ROLE_NONE,Role　—,定位　—
 DOSSIER_META,%s · %s · %d cost,%s · %s · %d 费
 DOSSIER_ROLE,Role　%s%s,定位　%s%s
 DOSSIER_LOGI,(Logistics),（后勤）
+DOSSIER_ZOOM_TIP,Zoom in / restore,放大 / 还原
 DOSSIER_TRAIT_ACTIVE,Active,已生效
 DOSSIER_TRAIT_AWAY,%d tier(s) short,差 %d 档
 CARD_TYPE_INVALID,Invalid,非法
@@ -411,6 +413,8 @@ LOG_CAT_DAMAGE,Damage,损伤
 LOG_CAT_BREAK,Layer Broken,破层
 LOG_CAT_FIRE,Fire,射击
 LOG_CAT_REPAIR,Logistics,后勤
+LOG_SIDE_0,Us,我
+LOG_SIDE_1,Foe,敌
 BAR_TITLE,Fleet Command,舰队指挥
 BAR_STAGE_DEFAULT,Skirmish,遭遇战
 BAR_NODE,Node %d,节点 %d
@@ -428,8 +432,12 @@ ATK %d · 结构 %d"
 PREP_AUG_STAGE,%s · Choose Augment,%s · 选择增益
 PREP_AUG_BTN,Choose Augment,选择增益
 PREP_NODE_LINE,Node %d／%d · %s · %s,节点 %d／%d · %s · %s
-PREP_AUG_HINT,"Pick 1 of 4 augments — node %s shares this set, already taken ones cannot be picked again",四条增益里选一条 —— 节点 %s 共用这一套，已获取的不能再选
+PREP_AUG_HINT,"Pick 1 augment — nodes share this set, already taken ones cannot be picked again",增益里选一条 —— 节点 %s 共用这一套，已获取的不能再选
+PREP_AUG_HINT_ROUND,"Pick 1 augment — already taken ones cannot be picked again",增益里选一条 —— 已获取的不能再选
 PREP_PICK_ONE,Node %d · pick 1 of %d,节点 %d · %d 选 1
+PREP_ROUND_LINE,Round %d · %s · %s,第 %d 回合 · %s · %s
+PREP_PICK_ONE_ROUND,Round %d · pick 1 of %d,第 %d 回合 · %d 选 1
+PREP_NEXT_ROUND,▶ Next Round,▶ 进入下一回合
 PREP_NO_SHIP,"No ships at all — 「%s」needs one, pick another",一艘船都没有 ——「%s」要指定一艘船，先换一条
 PREP_PICK_SHIP,Pick 1 ship — permanent for this run,选 1 艘船 —— 本局永久生效
 PREP_NODE_NAME,Node %d · %s,节点 %d · %s

@@ -68,8 +68,12 @@ func mark_board_manual() -> void:
 
 
 ## 按下左键时试着拿起一艘船。拿起来了 → true（本次左键从此归拖放）
+##
+## ★ 2026-10-28（用户：「打捞的时候钱不够，应该允许卖船换星币」）：
+##   放行条件从「只有 PREP」改成 `run.can_sell()`（PREP + RESOLVE）。
+##   结算期拿起船**只能**拖到商店出售 —— 布阵 / 撤回那条路在提示层就被掐掉。
 func begin_drag(pos: Vector2) -> bool:
-	if _run == null or _run.phase != EveRunState.Phase.PREP:
+	if _run == null or not _run.can_sell():
 		return false          # 战斗中锁操作，是阶段 A 就定下的规矩
 
 	# ① 备战席：轨道几何只有 HUD 知道（格宽 = size.x / 8），所以问它落在第几格
@@ -179,7 +183,8 @@ func update_drag(pos: Vector2) -> void:
 		pv = _run.preview_place(cell.x, cell.y, source, index)
 	var d := resolve_hint(source, over_sell, on_mine, pv, bi >= 0,
 			_run.can_recall(), _run.bench_used(), EveRunState.BENCH_SLOTS,
-			cell, int(drag["refund"]))
+			cell, int(drag["refund"]),
+			_run.phase == EveRunState.Phase.PREP)
 	drag["hint"] = d["hint"]
 	drag["hint_ok"] = d["ok"]
 
@@ -203,11 +208,18 @@ func update_drag(pos: Vector2) -> void:
 ## ⚠️ 这是**玩家可见文案的唯一来源** —— 被拒的静默路径必须给「指对方向」的理由
 ##    （红线：⛔ 别摆「看着能点、点了没反应」的东西）。单独抽出来是为了能脱离
 ##    拖拽上下文直接断言每个分支。
+## `can_place` = 当前阶段允许布阵吗（只有 PREP 允许）。
+## ★ 2026-10-28 新增：结算（打捞）期允许拿起船去卖，但不允许布阵 ——
+##   此时除了出售以外的落点必须直接说「只能出售」，
+##   ⛔ 别让棋盘上还亮着「部署到 第 8 行第 5 列」，松手却被拒。
 static func resolve_hint(source: StringName, over_sell: bool, on_mine: bool,
 		place: Dictionary, on_bench: bool, can_recall: bool,
-		bench_used: int, bench_max: int, cell: Vector2i, refund: int) -> Dictionary:
+		bench_used: int, bench_max: int, cell: Vector2i, refund: int,
+		can_place: bool = true) -> Dictionary:
 	if over_sell:
 		return {"hint": "出售 · 返还 ◆%d" % refund, "ok": true}
+	if not can_place:
+		return {"hint": "结算阶段只能拖到商店出售", "ok": false}
 	if on_mine:
 		var ok := bool(place.get("ok", false))
 		if ok:
