@@ -1607,28 +1607,51 @@ func _t_inferno_lottery() -> void:
 			"炼狱节点 11 收入 = 基础 %d + 利息 5 + 关卡 2 = %d（实际 %d）"
 			% [base_inf, base_inf + 7, a.income()])
 
-	# ── 抽奖池 ──
-	var pool1: Array = a.lottery_pool(1)
-	var pool2: Array = a.lottery_pool(2)
-	_expect(pool1.size() == 32, "一星池 = 权威表 cost≥3 的全部 32 艘（实际 %d）" % pool1.size())
+	# ── 抽奖池：**一个合并池**（2026-10-31 用户纠正：二星不是单独的池子）──
+	var pool: Array = a.lottery_pool()
+	_expect(pool.size() == 44,
+			"合并池 = 32 艘一星 + 12 艘二星 = 44（实际 %d）" % pool.size())
+	var s1 := 0
+	var s2 := 0
 	var bad1 := 0
-	for d in pool1:
-		if int(d.get("cost", 0)) < 3 or int(d.get("star", 0)) != 1:
-			bad1 += 1
-	_expect(bad1 == 0, "一星池没有 cost<3 或星级≠1 的船（异常 %d 艘）" % bad1)
-	_expect(pool2.size() == 12, "二星池 = 12 艘（实际 %d）" % pool2.size())
 	var bad2 := 0
 	var fac := {}
 	var has_logi := false
-	for d in pool2:
-		if int(d.get("cost", 0)) != 3 or int(d.get("star", 1)) != 2:
-			bad2 += 1
-		fac[String(d.get("faction_cn", ""))] = true
-		if bool(d.get("is_logistics", false)):
-			has_logi = true
-	_expect(bad2 == 0, "二星池全部是 ★2 巡洋（3 费）—— 异常 %d 艘" % bad2)
-	_expect(fac.size() == 4, "二星池覆盖 4 个种族（实际 %s）" % str(fac.keys()))
-	_expect(has_logi, "二星池**不分定位** —— 后勤巡洋也在池里（用户原话）")
+	for d in pool:
+		var star := int(d.get("star", 0))
+		if star == 1:
+			s1 += 1
+			if int(d.get("cost", 0)) < 3:
+				bad1 += 1
+		elif star == 2:
+			s2 += 1
+			if int(d.get("cost", 0)) != 3:
+				bad2 += 1
+			fac[String(d.get("faction_cn", ""))] = true
+			if bool(d.get("is_logistics", false)):
+				has_logi = true
+		else:
+			bad1 += 1
+	_expect(s1 == 32 and bad1 == 0,
+			"池里 ★1 共 32 条、全是 cost≥3（实际 %d 条 · 异常 %d）" % [s1, bad1])
+	_expect(s2 == 12 and bad2 == 0,
+			"池里 ★2 共 12 条、全是 3 费巡洋（实际 %d 条 · 异常 %d）" % [s2, bad2])
+	_expect(fac.size() == 4, "★2 覆盖 4 个种族（实际 %s）" % str(fac.keys()))
+	_expect(has_logi, "★2 **不分定位** —— 后勤巡洋也在池里（用户原话）")
+
+	# ⚠️ 合并池的**结构特征**：12 艘巡洋会同时以 ★1 和 ★2 出现 ⇒ 同 name 两条。
+	#    这不是 bug，是"一星池本来就含 3 费巡洋"+"又追加了它们的二星版本"的必然结果。
+	#    但 UI 必须能分开（卡片键 = ship_key#star），否则后一张会覆盖前一张，
+	#    池子会**静默少 12 张** —— 这条断言就是钉住那个不变量的。
+	var seen_key := {}
+	var dup := 0
+	for d in pool:
+		var k := String(d.get("ship_key", ""))
+		if seen_key.has(k):
+			dup += 1
+		seen_key[k] = true
+	_expect(dup == 12, "合并池里有 12 对同名（同一艘船的 ★1/★2）—— 实际 %d 对" % dup)
+	_expect(seen_key.size() == 32, "去重后仍是 32 艘不同的船（实际 %d）" % seen_key.size())
 
 	# ── 开窗条件 ──
 	_expect(a.can_open_lottery(&"black_market"), "炼狱：黑市情报会开抽奖窗")
@@ -1640,13 +1663,16 @@ func _t_inferno_lottery() -> void:
 	#    这样不用去桩 rng，也不依赖任何一次性的概率。
 	var ra := _new_run_diff("inferno", 900)
 	var rb := _new_run_diff("inferno", 900)
-	var draw_a := ra.lottery_draw(1, &"")
+	var draw_a := ra.lottery_draw(&"")
 	_expect(bool(draw_a.get("ok", false)), "抽奖能抽到船（%s）" % str(draw_a.get("name", "")))
 	var coin_b0 := rb.coin
 	var bench_b0 := rb.bench.size()
-	var draw_b := rb.lottery_draw(1, StringName(draw_a.get("ship_key", &"")))
+	var key_a := StringName(draw_a.get("ship_key", &""))
+	var star_a := int(draw_a.get("star", 1))
+	var draw_b := rb.lottery_draw(key_a, star_a)
 	_expect(bool(draw_b.get("hit", false)),
-			"同种子 + 许愿同一艘 ⇒ 命中（%s）" % str(draw_b.get("name", "")))
+			"同种子 + 许愿同一艘（船+星级）⇒ 命中（%s ★%d）"
+			% [str(draw_b.get("name", "")), int(draw_b.get("star", 0))])
 	_expect(int(draw_b.get("reward", 0)) == int(draw_a.get("cost", 0)),
 			"命中奖励 = 该船一星价格 %d（实际 %d）"
 			% [int(draw_a.get("cost", 0)), int(draw_b.get("reward", 0))])
@@ -1654,28 +1680,56 @@ func _t_inferno_lottery() -> void:
 			"命中返币真到账（%d → %d）" % [coin_b0, rb.coin])
 	_expect(rb.bench.size() == bench_b0 + 1, "抽到的船进了备战席")
 
+	# ⚠️ 许愿必须**船 + 星级**都对上：只比船名的话，"许愿一星巡洋却抽到二星"
+	#    也算命中，那许愿里选的那个星级就成了摆设。
+	#    这里用同种子第 3 局故意把星级传错 ⇒ 必须**不**命中。
+	var rw := _new_run_diff("inferno", 900)
+	var wrong_star := 2 if star_a == 1 else 1
+	var draw_w := rw.lottery_draw(key_a, wrong_star)
+	_expect(StringName(draw_w.get("ship_key", &"")) == key_a,
+			"错星级那一局抽到的还是同一艘（序列未变）")
+	_expect(not bool(draw_w.get("hit", false)),
+			"★ 许愿星级对不上 ⇒ **不**算命中（许的是 ★%d，实际 ★%d）"
+			% [wrong_star, int(draw_w.get("star", 0))])
+
 	# 免费：没许愿时星币分文不动
 	var rc := _new_run_diff("inferno", 902)
 	var coin_c0 := rc.coin
-	var draw_c := rc.lottery_draw(1, &"")
+	var draw_c := rc.lottery_draw(&"")
 	_expect(String(draw_c.get("placed", "")) == "bench",
 			"空备战席 ⇒ 抽到的船进备战席（实际 %s）" % String(draw_c.get("placed", "")))
 	_expect(rc.coin == coin_c0, "抽奖本身免费（星币 %d → %d）" % [coin_c0, rc.coin])
 
-	# 二星池：抽到的是 ★2 巡洋，奖励按一星价格（3）
-	var rd := _new_run_diff("inferno", 901)
-	var draw_d := rd.lottery_draw(2, &"")
-	_expect(bool(draw_d.get("ok", false)) and int(draw_d.get("star", 0)) == 2,
-			"二星池抽到的是 ★2（实际 ★%d）" % int(draw_d.get("star", 0)))
-	_expect(int(draw_d.get("cost", 0)) == 3,
-			"二星巡洋按一星计价 = 3（实际 %d）" % int(draw_d.get("cost", 0)))
+	# ── 合并池的抽取分布：一个池里两种星级都要抽得出来 ──
+	# ⚠️ 30 抽：★2 占 12/44 ≈ 27%，漏掉的概率 < 0.01%（且种子固定，结果可复现）。
+	#    这条不是"测概率"，是钉住"抽奖确实在读池里每条的 star"这件事 ——
+	#    如果哪天有人把 star 写死成 1，这里立刻红。
+	var re := _new_run_diff("inferno", 905)
+	var seen_star := {}
+	var two_cost := -1
+	var bad_draw := 0
+	for i in range(30):
+		var r: Dictionary = re.lottery_draw(&"")
+		if not bool(r.get("ok", false)):
+			bad_draw += 1
+			continue
+		var s := int(r.get("star", 0))
+		seen_star[s] = true
+		if s == 2:
+			two_cost = int(r.get("cost", 0))
+	_expect(bad_draw == 0, "30 次抽取全部有结果（失败 %d 次）" % bad_draw)
+	_expect(seen_star.has(1) and seen_star.has(2),
+			"★ 合并池里两种星级都会抽到（30 抽出现星级 %s）" % str(seen_star.keys()))
+	_expect(two_cost == 3,
+			"抽到 ★2 巡洋按一星计价 = 3（实际 %d）" % two_cost)
 
 	a.queue_free()
 	b.queue_free()
 	ra.queue_free()
 	rb.queue_free()
 	rc.queue_free()
-	rd.queue_free()
+	rw.queue_free()
+	re.queue_free()
 
 
 ## 建一个指定难度的局（⚠️ 难度必须在 `start_run()` **之前**设，否则开局星币按旧档给）

@@ -2424,6 +2424,13 @@ func _apply_half_price_batch() -> void:
 const LOTTERY_STAR1_MIN_COST := 3
 ## 二星池的船型费用（巡洋 = cost 3）
 const LOTTERY_STAR2_COST := 3
+## 一次抽奖抽几条。
+##
+## ★ 2026-10-31：池子从「一星/二星两栏」合并成「一池」之后，这个数字是**规则**
+##   而不是"池子的个数"了 —— 放在数据层（而不是抽奖窗口里）是因为产出量属于规则，
+##   窗口只负责把结果画出来。发版前是「两池各抽一次」= 2 艘，合并后保持 2 艘不变，
+##   免得玩家一更新就发现奖励少了一半。
+const LOTTERY_DRAW_TIMES := 2
 
 
 ## 本局有没有抽奖机制（= 难度档开了 `event_lottery`，当前只有炼狱）。
@@ -2441,48 +2448,64 @@ func can_open_lottery(id: StringName) -> bool:
 	return bool(EveEventTable.by_id(id).get("opens_lottery", false))
 
 
-## 抽奖候选池。`star` = 1（cost ≥ 3 的一星船）或 2（12 艘二星巡洋）。
+## 抽奖候选池 —— **一个池子**（一星 32 艘 + 二星 12 艘，靠每项的 `star` 字段区分）。
+##
+## ★ 2026-10-31 用户纠正：「一星二星全部进一个池子……二星不是单独的池子，
+##   玩家只能选一艘」。第一版做成了「两栏两池、各许一个愿」，与这条不符。
+##
+## ⚠️ 合并后**必然有 12 对同名条目**：一星池是「cost ≥ 3 的全量」，本来就含
+##    cost == 3 的那 12 艘巡洋；二星池又是同样这 12 艘的 ★2 版本。
+##    ⇒ 同一 `ship_key` 会在池子里出现两次（star 1 和 star 2）。
+##    UI 拿 `ship_key` 当卡片键会互相覆盖，必须用 `ship_key#star` 复合键
+##    （见 `eve_lottery.gd` 的 `_card_id`）。
+##    ⇒ 许愿也必须是「船 + 星级」精确匹配，否则没法表达"我要二星那艘"。
 ##
 ## 返回的是 `derive()` 产物 + 一个 `star` 字段（UI 直接拿去画卡）。
 ## ⚠️ 每次调用都 `duplicate()` —— UI 会往卡上写 `wished` 之类的临时键，
 ##    就地改会污染 `_pools` 这个**跨回合复用**的派生缓存。
-func lottery_pool(star: int) -> Array[Dictionary]:
+func lottery_pool() -> Array[Dictionary]:
 	_build_pools()
 	var out: Array[Dictionary] = []
-	if star >= 2:
-		for row in _pools.get(LOTTERY_STAR2_COST, []):
-			var d2: Dictionary = (row as Dictionary).duplicate()
-			if int(d2.get("cost", 0)) != LOTTERY_STAR2_COST:
-				continue
-			d2["star"] = 2
-			out.append(d2)
-	else:
-		for c in range(LOTTERY_STAR1_MIN_COST, 6):
-			for row in _pools.get(c, []):
-				var d1: Dictionary = (row as Dictionary).duplicate()
-				d1["star"] = 1
-				out.append(d1)
+	# ① 一星：cost ≥ 3 全量（巡洋 12 + 战巡 8 + 战列 12 = 32）
+	for c in range(LOTTERY_STAR1_MIN_COST, 6):
+		for row in _pools.get(c, []):
+			var d1: Dictionary = (row as Dictionary).duplicate()
+			d1["star"] = 1
+			out.append(d1)
+	# ② 二星：巡洋的 ★2 版本（4 族 × 3 = 12，不分定位，后勤也在）
+	for row in _pools.get(LOTTERY_STAR2_COST, []):
+		var d2: Dictionary = (row as Dictionary).duplicate()
+		if int(d2.get("cost", 0)) != LOTTERY_STAR2_COST:
+			continue
+		d2["star"] = 2
+		out.append(d2)
 	return out
 
 
-## 抽一次。`wish` = 玩家许愿的 `ship_key`（空 = 没许愿）。
+## 抽一次（从上面那个**合并池**里等概率抽一条）。`wish` = 玩家许愿的船。
 ##
 ## 返回 `{ok, star, ship_key, name, cost, hit, reward, placed}`；
 ## `ok == false` 表示池子是空的（数据异常），调用方不该当成"抽到空"。
 ## `placed`：`bench` 进备战席 / `coin` 备战席满了折成星币。
 ##
 ## ⚠️ 一次调用**只掷一次** `pick_from_pool`（内部可能消费一次 randf）——
-##    两次抽取 = 两次调用，别在一个函数里连抽两个池，否则复现性没法对账。
-func lottery_draw(star: int, wish: StringName = &"") -> Dictionary:
-	var pool := lottery_pool(star)
+##    抽两次 = 调两次，否则复现性没法对账。
+##
+## ⚠️ 命中判定是 `ship_key` **且** 星级都对上（`wish_star`）。
+##    不能只比 `ship_key`：同名的 ★1 / ★2 在池子里是**两个不同奖品**
+##    （数值差 STAR_MULT 倍），只比名字会让"许愿一星巡洋却抽到二星"
+##    也算命中 —— 那样许愿里那个星级选择就没有意义了。
+##    `wish_star <= 0` = 不区分星级（目前没有调用方这么用，留给调试）。
+func lottery_draw(wish_key: StringName = &"", wish_star: int = 0) -> Dictionary:
+	var pool := lottery_pool()
 	if pool.is_empty():
-		push_warning("[抽奖] 池子为空（star=%d）—— 船表或费用档有问题" % star)
+		push_warning("[抽奖] 池子为空 —— 船表或费用档有问题")
 		return {"ok": false}
 	var got := EveShipDatabase.pick_from_pool(pool, rng)
 	if got.is_empty():
 		return {"ok": false}
 	var key := StringName(got.get("ship_key", &""))
-	var st := clampi(star, 1, MAX_STAR)
+	var st := clampi(int(got.get("star", 1)), 1, MAX_STAR)
 	var placed := _lottery_grant(key, st)
 	# 奖励按**一星价格**（权威表 cost）—— 「二星按一星计价」说的就是这里。
 	var base_cost := int(EveShipDatabase.by_id(String(key)).get("cost", 0))
@@ -2495,14 +2518,15 @@ func lottery_draw(star: int, wish: StringName = &"") -> Dictionary:
 				% [ship_name, st, base_cost], &"economy")
 	else:
 		log_event.emit("抽奖：获得 %s ★%d → 备战席" % [ship_name, st], &"buy")
-	# ② 许愿命中
-	var hit := wish != &"" and key == wish
+	# ② 许愿命中（船 + 星级都对上）
+	var hit := wish_key != &"" and key == wish_key \
+			and (wish_star <= 0 or wish_star == st)
 	var reward := 0
 	if hit and base_cost > 0:
 		reward = base_cost
 		coin += reward
-		log_event.emit("许愿命中「%s」—— 额外奖励 %d ◆（按一星价格）"
-				% [ship_name, reward], &"economy")
+		log_event.emit("许愿命中「%s」★%d —— 额外奖励 %d ◆（按一星价格）"
+				% [ship_name, st, reward], &"economy")
 	changed.emit()
 	return {
 		"ok": true,

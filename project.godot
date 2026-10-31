@@ -22,6 +22,7 @@ config/icon="res://icon.png"
 EveBoot="*res://scripts/core/eve_boot.gd"
 EveAiBridge="*res://scripts/core/eve_ai_bridge.gd"
 EveUpdater="*res://scripts/core/eve_updater.gd"
+MCPRuntimeProbe="*res://addons/godot_mcp/runtime/mcp_runtime_probe.gd"
 
 [display]
 

@@ -264,11 +264,12 @@ func _battle_cmd(sc: Node, cmd: String, args: Dictionary) -> Dictionary:
 			return _res(sc.call("ai_event_choose", StringName(str(args.get("id", "")))))
 		"event_ship":
 			return _res(sc.call("ai_event_ship", int(args.get("index", 0))))
-		# ★ 2026-10-31（炼狱专属抽奖）：抽两次 + 点完成，一次走完。
+		# ★ 2026-10-31（炼狱专属抽奖）：抽 + 点完成，一次走完。
+		# ⚠️ 池子已合并成一池，许愿只剩「一艘」，所以只收 wish_key / wish_star。
 		"lottery":
 			return _res(sc.call("ai_lottery_draw",
-					StringName(str(args.get("wish1", ""))),
-					StringName(str(args.get("wish2", "")))))
+					StringName(str(args.get("wish_key", ""))),
+					int(args.get("wish_star", 0))))
 		"result_next":
 			sc.call("ai_result_next")
 			return {"ok": true, "data": {}}

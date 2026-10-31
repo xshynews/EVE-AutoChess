@@ -278,8 +278,8 @@ func _apply_event_and_advance(id: StringName, target: Dictionary,
 	#      这里 ⛔ 不能顺手再 `advance()`（会把节点推两次）。
 	if _run.can_open_lottery(id) and not versus_event:
 		lottery_open = true
-		_hud.show_lottery(_run.lottery_pool(1), _run.lottery_pool(2),
-				"抽奖池已摊开 —— 点卡片许愿（每池一个），抽中它额外返星币",
+		_hud.show_lottery(_run.lottery_pool(),
+				"抽奖池已摊开 —— 点一张卡许愿（只能选一艘），抽中它额外返星币",
 				T.t("PREP_NODE_NAME", "节点 %d · %s")
 						% [_run.node_index, String(opt.get("name", id))])
 		return
@@ -287,18 +287,22 @@ func _apply_event_and_advance(id: StringName, target: Dictionary,
 	_advance_after_event()
 
 
-## 抽奖窗的「抽取」：两个池各抽一次，结果回画到窗口。
+## 抽奖窗的「抽取」：从**同一个合并池**里连抽 `DRAW_TIMES` 次，结果回画到窗口。
 ##
-## ⚠️ 两个池 = **两次 `lottery_draw()` 调用**。一次调用内部只掷一次随机
-##    （`pick_from_pool` 可能消费一次 randf）—— 想连抽两池就在外面调两次，
-##    ⛔ 不要在 run 里写一个"一次抽两艘"的函数：那会让
-##    「第几次随机数对应哪艘船」变成不可对账的。
-func on_lottery_draw(wish1: StringName, wish2: StringName) -> void:
+## ★ 2026-10-31 用户纠正：原来是一星/二星两个池子各抽一次，现在合并成一个池，
+##   所以是"同一个池抽两次" —— 两抽**允许抽到同一艘**（各自独立掷点）。
+##   总产出仍然是 2 艘，和发版前的强度一致；变的只是概率结构
+##   （原先是必得 1 艘一星 + 必得 1 艘二星，现在是 2 次 32/44 一星、12/44 二星）。
+##
+## ⚠️ 每次都要**单独**调 `lottery_draw()`。一次调用内部只掷一次随机
+##    （`pick_from_pool` 可能消费一次 randf）—— ⛔ 不要在 run 里写一个
+##    "一次抽两艘"的函数：那会让「第几次随机数对应哪艘船」变成不可对账的。
+func on_lottery_draw(wish_key: StringName, wish_star: int) -> void:
 	if _run == null or not lottery_open:
 		return
 	var results: Array = []
-	results.append(_run.lottery_draw(1, wish1))
-	results.append(_run.lottery_draw(2, wish2))
+	for i in range(EveRunState.LOTTERY_DRAW_TIMES):
+		results.append(_run.lottery_draw(wish_key, wish_star))
 	_hud.show_lottery_result(results)
 
 

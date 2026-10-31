@@ -223,8 +223,9 @@ signal event_option_chosen(id: StringName)
 signal event_ship_picked(index: int)
 
 # ── 舰船抽奖（2026-10-31 · 炼狱专属事件「黑市情报」）──
-## 玩家点了「抽取」：两个愿望原样传出（空 StringName = 该池没许愿）
-signal lottery_draw_requested(wish1: StringName, wish2: StringName)
+## 玩家点了「抽取」：愿望原样传出。空 StringName = 没许愿；
+## `wish_star` 与 `wish_key` 一起才唯一（同名 ★1/★2 是池子里两个不同奖品）。
+signal lottery_draw_requested(wish_key: StringName, wish_star: int)
 ## 玩家点了「完成」：场景据此推进节点（抽奖窗是**打断式**的，必须走完）
 signal lottery_finished
 
@@ -395,7 +396,7 @@ func _build_layout() -> void:
 	add_child(lottery_window)
 	lottery_window.visible = false
 	lottery_window.draw_requested.connect(
-			func(a: StringName, b: StringName): lottery_draw_requested.emit(a, b))
+			func(key: StringName, star: int): lottery_draw_requested.emit(key, star))
 	lottery_window.finished.connect(func(): lottery_finished.emit())
 
 	# ⑨ 居中：结算页（阶段 D）—— 默认隐藏，战斗结束时上台。
@@ -1270,15 +1271,15 @@ func hide_ship_pick() -> void:
 ## ⚠️ 与事件面板一样是**打断式**的：没有关闭按钮，玩家必须抽完点「完成」。
 ##    这是有意的 —— 抽奖是白给的东西，但流程上它挡着节点推进，
 ##    不给"关掉它"就等于不给"跳过奖励"这种自伤选项。
-func show_lottery(pool1: Array, pool2: Array, line: String = "", meta: String = "") -> void:
+func show_lottery(pool: Array, line: String = "", meta: String = "") -> void:
 	if lottery_window == null:
 		return
-	lottery_window.show_lottery(pool1, pool2, line, meta)
+	lottery_window.show_lottery(pool, line, meta)
 	lottery_window.visible = true
 	lottery_window.move_to_front()
 
 
-## 把两次抽取的结果画进抽奖窗。
+## 把抽取结果画进抽奖窗（几条都行，取决于 `EveRunState.LOTTERY_DRAW_TIMES`）。
 func show_lottery_result(results: Array) -> void:
 	if lottery_window == null:
 		return

@@ -2395,17 +2395,20 @@ func ai_event_ship(index: int) -> Dictionary:
 	return {"ok": true, "data": {"index": index}}
 
 
-## 抽奖窗：一次调用走完「抽两次 + 点完成」。
+## 抽奖窗：一次调用走完「抽取 + 点完成」。
 ##
 ## ★ 2026-10-31（炼狱专属）：AI 侧不需要"许愿"这个玩法层的东西 ——
 ##   它的价值全在玩家身上（许愿命中返币）。所以 AI 走空愿望，
-##   直接拿两艘船并推进节点。
+##   直接拿 `LOTTERY_DRAW_TIMES` 艘船并推进节点。
 ## ⚠️ 必须**同时**返回抽到的船：AI 靠它更新自己的备战席认知，
 ##   只回 `{ok:true}` 会让它对"凭空多了两艘船"一无所知。
-func ai_lottery_draw(wish1: StringName = &"", wish2: StringName = &"") -> Dictionary:
+##
+## ⚠️ 签名从 `(wish1, wish2)` 改成 `(wish_key, wish_star)`：
+##    池子合并成一个之后，"两个愿望"这个概念已经没有对应的池了。
+func ai_lottery_draw(wish_key: StringName = &"", wish_star: int = 0) -> Dictionary:
 	if not bool(_prep_phase.lottery_open):
 		return {"ok": false, "reason": "当前没有抽奖窗"}
-	_prep_phase.on_lottery_draw(wish1, wish2)
+	_prep_phase.on_lottery_draw(wish_key, wish_star)
 	# 抽完立刻点「完成」（= 推进节点）。AI 没有"看完结果再点"的节奏需求。
 	_prep_phase.on_lottery_finished()
 	return {"ok": true, "data": {

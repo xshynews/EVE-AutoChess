@@ -1,22 +1,25 @@
 extends Node
 
-## 探针：**舰船抽奖窗口**的三个画面（2026-10-31）。
+## 探针：**舰船抽奖窗口**的四个画面（2026-10-31）。
 ##
-## 玩家诉求（用户原话）：
+## 玩家诉求（用户原话，两次来回）：
 ##   「抽船事件单独做一个抽奖窗口 …… 下面会有一个许愿，让你在可能的舰船中选，
 ##     一星和二星舰船分开，选一个，如果真抽到了自己许愿的那个船，
 ##     就奖励舰船星币（二星舰船按一星计价）」
+##   → 纠正：「一星二星**全部进一个池子**……二星不是单独的池子，玩家**只能选一艘**」
 ##
-## 本探针解决的是**只有看图才能判断**的三件事：
-##   ① 32 艘 + 12 艘摊在 1000×560 的窗里，有没有被裁 / 有没有溢出窗框；
-##   ② 许愿选中态（金边）在深色卡上够不够看得出来；
-##   ③ 抽完的结果卡（两列）读不读得出「抽到谁 / 命中没有 / 返了几个币」。
+## 本探针解决的是**只有看图才能判断**的四件事：
+##   ① 44 张卡摊在 1000×560 的窗里（8 列 × 6 行），有没有被裁 / 有没有溢出窗框；
+##   ② 合并成一栏之后，★1（青边）/ ★2（金边）**能不能一眼分开** —— 这是这次改版
+##      最容易做砸的地方：两栏变一栏，星级唯一的线索就是卡面；
+##   ③ 单选许愿的选中态（金底金边）在深色卡上够不够看得出来；
+##   ④ 抽完的结果卡读不读得出「抽到谁 / 命中没有 / 返了几个币」。
 ##
 ## ── 跑法 ────────────────────────────────────────────────────────────
 ##   "$GODOT_BIN" --path . --quit-after 900 res://tools/probe_lottery.tscn
 ##   ⚠️ 不要加 --headless（要看像素）
 ##
-## 产物：outputs/lottery_1_pool.png / _2_wish.png / _3_result.png
+## 产物：outputs/lottery_1_pool.png / _2_wish.png / _3_result.png / _4_hit.png
 ##
 ## ⚠️ 走的是**真实链路**：`prep.on_event_chosen(black_market)` → 开窗 →
 ##    点卡片许愿 → 点「抽取」（信号 → prep.on_lottery_draw）→ 点「完成」
@@ -91,15 +94,27 @@ func _open_lottery() -> void:
 
 
 func _make_wishes() -> void:
-	var k1: Array = (_lw.get("_cards1") as Dictionary).keys()
-	var k2: Array = (_lw.get("_cards2") as Dictionary).keys()
-	if k1.is_empty() or k2.is_empty():
-		print("!! 池子是空的，许愿点不到（cards1=%d cards2=%d）" % [k1.size(), k2.size()])
+	# 池子已合并成一栏（2026-10-31 用户纠正）⇒ 只有一个 `_cards`，
+	# 键是 `ship_key#star`（同名 ★1/★2 必须能分开，见 eve_lottery.gd 顶注）。
+	var cards: Dictionary = _lw.get("_cards")
+	if cards.is_empty():
+		print("!! 池子是空的，许愿点不到（cards=%d）" % cards.size())
 		return
+	# 挑第一张 ★1（池子顺序：一星 32 张在前、二星 12 张在后）
+	var picked := ""
+	for id in cards.keys():
+		if String(id).ends_with("#1"):
+			picked = String(id)
+			break
+	if picked == "":
+		print("!! 池子里没有 ★1 卡")
+		return
+	var parts := picked.split("#")
 	# 走玩家通道（PanelContainer 的 gui_input），不是直接改字段
-	_lw.call("_on_card_input", _click(), 1, k1[0])
-	_lw.call("_on_card_input", _click(), 2, k2[0])
-	print("许愿 = %s" % str(_lw.call("current_wishes")))
+	_lw.call("_on_card_input", _click(), StringName(parts[0]), int(parts[1]))
+	var w: Dictionary = _lw.call("current_wish")
+	print("许愿 = %s ★%d · 池内卡数 %d（44 = 32 一星 + 12 二星）"
+			% [String(w.get("key", "")), int(w.get("star", 0)), cards.size()])
 
 
 func _draw() -> void:
@@ -107,11 +122,16 @@ func _draw() -> void:
 
 
 ## 手工喂一条「命中许愿」的结果（只为截图看金色那行字）。
+##
+## ⚠️ 它只验「金色命中那行字画得对不对」，不冒充真实抽取逻辑
+##    （真实逻辑由 verify_run 的 `_t_inferno_lottery` 用同种子对账）。
 func _fake_hit_shot() -> void:
-	var wish: StringName = (_lw.call("current_wishes") as Array)[0]
-	var ship := EveShipDatabase.by_id(String(wish))
+	var wish: Dictionary = _lw.call("current_wish")
+	var wkey: StringName = wish.get("key", &"")
+	var wstar := int(wish.get("star", 1))
+	var ship := EveShipDatabase.by_id(String(wkey))
 	_hud.call("show_lottery_result", [
-		{"ok": true, "star": 1, "ship_key": wish,
+		{"ok": true, "star": wstar, "ship_key": wkey,
 			"name": String(ship.get("name", "?")), "cost": int(ship.get("cost", 3)),
 			"hit": true, "reward": int(ship.get("cost", 3)), "placed": "bench"},
 		{"ok": true, "star": 2, "ship_key": &"moa", "name": "巨鸟级", "cost": 3,
