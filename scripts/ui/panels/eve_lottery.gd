@@ -117,6 +117,31 @@ const TAG_EW := 1
 const TAG_LOGI := 2
 const TAG_ORDER := [TAG_PLAIN, TAG_EW, TAG_LOGI]
 
+## ══════════════════════════════════════════════════════════════════
+##  ★★ 2026-11-01（用户：「战列这里不对，该按照攻击 防御 加强来分，再辅以种族」）
+## ══════════════════════════════════════════════════════════════════
+## 战列那一行原来和别的档一样按"势力成行"排（一族一行），玩家看不出攻击/防御的差别。
+## 改成**先按定位拆块、块内再按防御 + 种族**。
+##
+## 数据实测（12 艘战列，`EveShipDatabase.role_tag()` 五档互斥口径）：
+##   攻击型 4（乌鸦 / 万王宝座 / 狂暴 / 灾难）
+##   防御型 4（毒蝎 / 多米尼克斯 / 台风 / 末日沙场）
+##   加强型 4（鹏鲲 / 亥伯龙神 / 死亡漩涡 / 地狱天使 —— 即 `REINFORCED_BATTLESHIP`）
+##   ⇒ **4+4+4 = 三块**，与 3 费那三块同宽同构，8 列网格自动对齐。
+##
+## ⚠️ 判据走 `EveShipDatabase.role_tag()`，⛔ **不要读表里的 `role` 列**：
+##    那一列只有攻击/防御/后勤三种，把"加强型"读没了（加强型在表里标的是"防御型"）。
+## ⚠️ 只对 **cost ≥ 5** 生效：3 费按定位分会碎成 4 块（攻击 3 / 防御 1 / 电子战 4 / 后勤 4），
+##    块宽参差，那才是真的乱。3 费维持"电子战 / 后勤 单独成块"的老口径 ——
+##    那一档玩家的痛点是"想找特殊船"，不是"想看攻防"。
+const ROLE_SPLIT_MIN_COST := 5
+const ROLE_SPLIT_ORDER: Array[StringName] = [
+	&"attack", &"defense", &"command", &"logistics", &"ew",
+]
+## 块内按防御排：盾抗在前、甲抗在后（与 `FACTION_ORDER` 同一个理由 ——
+## 这两族的防御类型是全族统一的，按它排 ⇒ 2 行块的"上排盾、下排甲"自然成立）。
+const DEFENSE_ORDER := ["盾抗", "甲抗"]
+
 ## 显示名取词（与商店卡 / 羁绊窗同一口径）。
 const TERMS := preload("res://scripts/core/eve_terms.gd")
 
@@ -360,14 +385,70 @@ static func _sort_ships(ships: Array) -> Array:
 	return out
 
 
+## 块内排序：防御（盾抗 → 甲抗）为主键，势力为次键。
+##
+## 为什么主键是防御而不是势力：块折成 2 行之后，"行"才是第一眼看到的东西。
+## 按防御排 ⇒ 4 张一块时**上排全盾抗、下排全甲抗**，一眼就知道哪两条怕什么。
+## 若按势力排，上排会是"加达里+米玛塔尔"（都是盾抗），效果相同；
+## 但一旦出现同族两张且跨防御的情况（战列加强型就有），按势力排会把
+## 盾抗和甲抗混进同一行 —— 那种块整个看板都会读不出来。
+static func _sort_by_defense(ships: Array) -> Array:
+	var out: Array = []
+	for def in DEFENSE_ORDER:
+		for fac in FACTION_ORDER:
+			for d in ships:
+				var s: Dictionary = d
+				if String(s.get("defense_type", "")) != def:
+					continue
+				if String(s.get("faction_cn", "")) != fac:
+					continue
+				out.append(s)
+	# 兜底：没登记防御/势力的新船按原序补在末尾，⛔ 绝不丢卡
+	for d in ships:
+		if not out.has(d):
+			out.append(d)
+	return out
+
+
+## 一档定位 → 4 个字的卡面短标签（`·攻击` / `·防御` / `·加强` / `·电子` / `·后勤`）。
+##
+## ⚠️ 卡面只有 94px 可用宽，`ROLE_LABELS` 是"攻击型 / 防御型 / 加强型"三字，
+##    加个点就是 4 字 = 36px，会把派系名挤到截断（`sub` 是 EXPAND_FILL + clip）。
+##    ⇒ 这里用**两字**（·攻击 / ·防御 /·加强），语义不丢，省 9px。
+##    ⛔ 别把三个字直接塞进卡面。
+static func _role_short(tag: StringName) -> String:
+	match tag:
+		&"attack": return "攻击"
+		&"defense": return "防御"
+		&"command": return "加强"
+		&"logistics": return "后勤"
+		&"ew": return "电子"
+		_: return ""
+
+
 ## 一条费用带 → 若干「组」，每组内部已排好序、可以直接切块。
 ##
-## · ★1：拆成 常规 / 电子战 / 后勤 三组（空组不产出）；
-## · ★2：不拆，整带一组 —— 一族正好 3 条巡洋，一族一行最好比价。
+## 三种口径，按优先级：
+##  ① ★2 段：整带一组（一族正好 3 条巡洋，一族一行最好比价）；
+##  ② ★1 且 cost ≥ `ROLE_SPLIT_MIN_COST`（战列）：按**定位**拆（攻击/防御/加强），
+##     块内按防御+种族排 —— 见 `ROLE_SPLIT_ORDER` 的顶注；
+##  ③ 其余 ★1：拆成 常规 / 电子战 / 后勤 三组（空组不产出）。
 static func _section_groups(ships: Array, star: int) -> Array:
 	var out: Array = []
 	if star >= 2:
 		out.append(_sort_ships(ships))
+		return out
+	if ships.is_empty():
+		return out
+	var cost := int((ships[0] as Dictionary).get("cost", 0))
+	if cost >= ROLE_SPLIT_MIN_COST:
+		for tag in ROLE_SPLIT_ORDER:
+			var bucket: Array = []
+			for d in ships:
+				if EveShipDatabase.role_tag(String((d as Dictionary).get("ship_key", ""))) == tag:
+					bucket.append(d)
+			if not bucket.is_empty():
+				out.append(_sort_by_defense(bucket))
 		return out
 	for tag in TAG_ORDER:
 		var bucket: Array = []
@@ -401,7 +482,7 @@ func _fill_grid(pool: Array) -> void:
 		c.queue_free()
 	_cards.clear()
 
-	_pool_head.text = "候选池 · 共 %d 艘　｜　同级一行 · 一块两行 · 电子战/后勤单独成块 · 全表同一条列网格　｜　青边 ★1 · 金边 ★2" \
+	_pool_head.text = "候选池 · 共 %d 艘　｜　同级一行 · 一块两行 · 战列按攻击/防御/加强分块 · 其余按电子战/后勤分块 · 全表同一列网格　｜　青边 ★1 · 金边 ★2" \
 			% pool.size()
 
 	var stars := _bucket_stars(pool)
@@ -608,6 +689,26 @@ func _build_card(ship: Dictionary, star: int) -> Dictionary:
 		lg.size_flags_horizontal = Control.SIZE_SHRINK_END
 		lg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		sub_row.add_child(lg)
+
+	# ★★ 2026-11-01（用户：「战列这里不对，该按照攻击 防御 加强来分」）：
+	#   战列那一档的**分块依据就是定位**（见 `ROLE_SPLIT_ORDER` 顶注），
+	#   卡面不标的话，玩家只看到"三块，不知道按什么分的"。
+	#
+	# ⚠️ 只在 cost ≥ `ROLE_SPLIT_MIN_COST` 时加：
+	#    3 费的卡面上已经挂着 电子战/后勤 标签，再塞一个定位标签必然挤掉派系名
+	#    （那两项在抽奖池里是选牌的唯一依据，不能截）。
+	# ⚠️ 用两字短标签（`_role_short`），⛔ 别塞 `ROLE_LABELS` 的三字全称。
+	if int(ship.get("cost", 0)) >= ROLE_SPLIT_MIN_COST:
+		var rtag := EveShipDatabase.role_tag(String(ship.get("ship_key", "")))
+		var short := _role_short(rtag)
+		if short != "":
+			var rl := Label.new()
+			rl.text = "·" + short
+			rl.add_theme_color_override("font_color", EveShipDatabase.role_color(rtag))
+			FONT.fs(rl, 9)
+			rl.size_flags_horizontal = Control.SIZE_SHRINK_END
+			rl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			sub_row.add_child(rl)
 
 	return {"root": card, "name": nm, "sub": sub, "star": star}
 

@@ -670,6 +670,28 @@ const ROLE_LABELS := {
 	&"command": "加强型",
 }
 
+## 档位 → 识别色（★ 2026-11-01：抽奖池卡面的定位标签要上色，抽出来当唯一真源）。
+##
+## ⚠️ 与 `EveTraitTable.EW_COLOR` / `LOGI_COLOR` **同值但不同源**：
+##    那两个是**羁绊**的颜色（电子战 / 后勤羁绊），这里是**定位**的颜色。
+##    眼下 ew / logistics 两档的值刻意取得一模一样 —— 玩家看到的"紫色 = 电子战"
+##    在卡面和羁绊窗里必须是同一个紫，⛔ 别让两处漂移。
+##
+## 选色理由：加强型取战场金（唯一的"顶级"档），攻击型取警示红、防御型取护盾蓝 ——
+## 三档在深底卡面上要**一眼分得开**，别用同色系的三档灰。
+const ROLE_COLORS := {
+	&"attack": Color(0.90, 0.45, 0.42),
+	&"defense": Color(0.45, 0.68, 0.92),
+	&"logistics": Color(0.52, 0.86, 0.68),
+	&"ew": Color(0.66, 0.55, 0.95),
+	&"command": Color(0.95, 0.78, 0.35),
+}
+
+
+## 档位 → 识别色。未知档返回中性灰（⛔ 不返回白：白色在卡面上会抢标题）。
+static func role_color(tag: StringName) -> Color:
+	return ROLE_COLORS.get(tag, Color(0.6, 0.65, 0.68))
+
 
 ## 一艘船的定位档。未知 id 返回 `&""`。
 static func role_tag(ship_id: String) -> StringName:
