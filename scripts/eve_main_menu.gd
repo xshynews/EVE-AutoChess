@@ -331,6 +331,10 @@ var _codex: Control = null
 ##   ⚠️ 文本为空时整行隐藏 —— 平时玩家看到的还是干净的主界面，
 ##      只有「正在下载 / 已就绪重启生效 / 校验失败」时才有话说。
 var _update_tag: Label = null
+## ★ 2026-11-01 鸣谢名单：版本号上方按钮 + 右侧独立面板。
+##   ⚠️ 只建一次，之后靠 `visible` 切换（与版权声明面板同口径，避免闪烁 / 丢引用）。
+var _ack_panel: PanelContainer = null
+var _ack_btn: Button = null
 
 
 func _ready() -> void:
@@ -392,6 +396,7 @@ func _ready() -> void:
 	_build_modes()
 	_build_strips()
 	_build_credits_panel()
+	_build_ack_panel()
 	# ★ 2026-10-10 设置窗**最后建** —— Godot 里后加的子节点画在上面，
 	#   建早了会被模式按钮 / 难度卡片盖住（底图那处踩过同一个坑）。
 	#   ⚠️ 它挂在 `_content` 上 ⇒ 坐标即基准区坐标，跟着内容一起居中。
@@ -869,8 +874,8 @@ func _build_version_tag() -> void:
 	utag.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
 	utag.offset_left = -460.0
 	utag.offset_right = -56.0
-	utag.offset_top = -74.0
-	utag.offset_bottom = -50.0
+	utag.offset_top = -98.0
+	utag.offset_bottom = -74.0
 	utag.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	utag.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	utag.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -883,6 +888,23 @@ func _build_version_tag() -> void:
 		EveUpdater.changed.connect(_refresh_update_tag)
 	_refresh_update_tag()
 
+	# ── 「鸣谢名单」按钮（版本号正上方，紧挨着）──
+	# ★ 2026-11-01：点开右侧独立的鸣谢名单面板（与版权声明面板同位置 / 同尺寸）。
+	var ack_btn := Button.new()
+	ack_btn.name = "AckBtn"
+	ack_btn.text = T.t("MENU_ACK", "鸣谢名单")
+	BTN_THEME.apply(ack_btn, "plain")
+	FONT.fs(ack_btn, 12)
+	ack_btn.custom_minimum_size = Vector2(84, 26)
+	ack_btn.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	ack_btn.offset_left = -170.0
+	ack_btn.offset_right = -56.0
+	ack_btn.offset_top = -74.0
+	ack_btn.offset_bottom = -50.0
+	ack_btn.pressed.connect(_on_ack_pressed)
+	_content.add_child(ack_btn)
+	_ack_btn = ack_btn
+
 
 ## 把热更状态同步到那一行小字。空文本 = 隐藏（绝大多数时候应该隐藏）。
 func _refresh_update_tag() -> void:
@@ -891,6 +913,24 @@ func _refresh_update_tag() -> void:
 	var s := String(EveUpdater.status_text)
 	_update_tag.text = s
 	_update_tag.visible = s != ""
+
+
+## 「鸣谢名单」按钮：开 / 关同一扇面板。打开时把版权声明面板与难度卡片区让位收掉，避免盖住面板。
+func _on_ack_pressed() -> void:
+	if _ack_panel == null:
+		return
+	var open := not _ack_panel.visible
+	_ack_panel.visible = open
+	if open:
+		if _credits_panel != null:
+			_credits_panel.visible = false
+		if _strip_row != null:
+			_strip_row.visible = false
+		if _codex_btn != null:
+			_codex_btn.visible = false
+	else:
+		# 关闭时交还 _refresh 复原常态布局（非版权模式才显示 strips / 图鉴按钮）
+		_refresh()
 
 
 ## 当前选中的是不是「版权声明」这一项。
@@ -990,6 +1030,205 @@ func _build_credits_panel() -> void:
 		col.add_child(_vspace(16))
 
 	_content.add_child(_credits_panel)
+
+
+## 鸣谢名单面板（右侧，与版权声明面板同位置 / 同尺寸）。
+## 名单较长 ⇒ 正文包一层 `ScrollContainer` 滚动，避免撑爆面板高度。
+##
+## ⚠️ 只建一次、之后靠 `visible` 切换（见 `_ack_panel` 说明）。
+func _build_ack_panel() -> void:
+	_ack_panel = PanelContainer.new()
+	_ack_panel.name = "Ack"
+	# ★ 2026-10-31 重做（用户：「太没意思了，丑得要死」）：
+	#   ① 带图标 + 大标题的抬头（hero）
+	#   ② 「—— 标题 ——」居中分段标题
+	#   ③ 名单从单列长列表改成 4 列居中网格（大幅缩短、更好扫读）
+	#   ④ 「2024」用金色强调的感谢语
+	#   ⑤ 底部两小节并排
+	#   ⚠️ 只换排版：配色仍取本文件 C_* 口径、字体仍走 FONT.fs、直角铁律不变。
+	_ack_panel.position = Vector2(STRIP_POS.x, 240.0)
+	_ack_panel.size = Vector2(CREDITS_W, 600.0)
+	_ack_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_ack_panel.add_theme_stylebox_override("panel", _strip_style(false, true))
+	_ack_panel.visible = false
+
+	var mn := MarginContainer.new()
+	mn.add_theme_constant_override("margin_left", 40)
+	mn.add_theme_constant_override("margin_right", 40)
+	mn.add_theme_constant_override("margin_top", 30)
+	mn.add_theme_constant_override("margin_bottom", 28)
+	_ack_panel.add_child(mn)
+
+	# 内容若超面板高度 ⇒ 滚动兜底（禁横向滚动；正常应一屏内，不出滚动条）。
+	var sc := ScrollContainer.new()
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sc.mouse_filter = Control.MOUSE_FILTER_STOP
+	mn.add_child(sc)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 0)
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# [PITFALL] ScrollContainer 不会自动把子节点撑满宽度：子节点最小宽 < 视口时
+	#   会缩在左边（旧版靠名单 Label 的 custom_minimum_size 硬撑才满）。
+	#   改成网格后最小宽只剩 ~480，必须显式 EXPAND_FILL 才会铺满面板。
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(col)
+
+	# ── ① 抬头：图标（勋章式细框）+ 大标题 + 拉宽字距副标，整组居中 ──
+	var hero := HBoxContainer.new()
+	hero.alignment = BoxContainer.ALIGNMENT_CENTER
+	hero.add_theme_constant_override("separation", 16)
+	hero.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var frame := PanelContainer.new()
+	var fsb := StyleBoxFlat.new()
+	fsb.bg_color = Color(0.075, 0.105, 0.125, 0.92)
+	fsb.border_color = Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.55)
+	fsb.set_border_width_all(1)
+	fsb.set_corner_radius_all(0)          # [NOTE] 直角铁律
+	fsb.set_content_margin_all(4)
+	frame.add_theme_stylebox_override("panel", fsb)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var icon_tex := load("res://assets/icon/ic_launcher_xxxhdpi.png") as Texture2D
+	if icon_tex != null:
+		var tex := TextureRect.new()
+		tex.texture = icon_tex
+		tex.custom_minimum_size = Vector2(46, 46)
+		tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		frame.add_child(tex)
+		hero.add_child(frame)
+
+	var tv := VBoxContainer.new()
+	tv.add_theme_constant_override("separation", 3)
+	tv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	tv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tv.add_child(_label("鸣谢", 26, C_TEXT_HI))
+	# [NOTE] Label 无 letter-spacing 主题项 ⇒ 用小字号 + 手工空格拉字距。
+	tv.add_child(_label("A C K N O W L E D G E M E N T S", 9, Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.82)))
+	hero.add_child(tv)
+	col.add_child(hero)
+
+	col.add_child(_vspace(12))
+	col.add_child(_ack_rule(C_ACCENT, 0.45))
+	col.add_child(_vspace(18))
+
+	# ── ② 分段标题 + ③ 4 列居中网格 ──────────────────────────────
+	col.add_child(_ack_section("爱发电贡献人员", true))
+	col.add_child(_vspace(10))
+
+	var names := PackedStringArray([
+		"Archer家今天的番", "Nafix", "次元旅行家", "我要潜行", "龙飞云",
+		"星空", "龙飞云", "爱发电用户_KEh6", "覅是", "呆头鸭",
+		"爱发电用户_01677", "国服手游玫瑰瀚海", "我要潜行", "铭丞志宇", "伪画师",
+		"流光叶卡", "爱发电用户_afa09", "死海咸鸽", "爱发电用户_fexm", "爱发电用户_83b2e",
+		"hppct", "零星之心", "爱发电用户_BaMv", "我是扁苹", "爱发电用户_e33cf",
+		"They call me...Specter", "爱发电用户_vVb6", "thcy_awa", "梧桐无栖", "爱发电用户_19a36",
+		"哈伦QAQ·哈哈哈?_?", "叶灵络", "81192", "爱发电用户_KG5B", "梧桐无栖",
+		"thcy_awa", "叶灵络", "They call me...Specter", "梧桐无栖", "81192",
+		"EVE Online", "铭丞志宇", "青轩の猫",
+	])
+	var grid := GridContainer.new()
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 9)
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for i in names.size():
+		var nl := _label(names[i], 12, C_TEXT)
+		nl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		nl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		grid.add_child(nl)
+	# 补齐空位让 4 列对称（43 ⇒ 44），避免末行单挂一个显得歪。
+	while grid.get_child_count() % grid.columns != 0:
+		var pad := _label("", 12, C_TEXT)
+		pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		grid.add_child(pad)
+	col.add_child(grid)
+
+	# ── ④ 括号注 + 金色强调的 2024 感谢语 ────────────────────────
+	col.add_child(_vspace(14))
+	col.add_child(_ack_rule(C_SEP, 1.0))
+	col.add_child(_vspace(12))
+	var note := _label("（感谢上述人员在2024年为我们提供资金支持）", 10, C_DIM)
+	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	note.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_child(note)
+	col.add_child(_vspace(10))
+	# 原文逐字保留，只把「2024」拆出来染金 ⇒ 不改文案、只加强调。
+	var frow := HBoxContainer.new()
+	frow.add_theme_constant_override("separation", 0)
+	frow.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	frow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frow.add_child(_label("感谢", 13, C_TEXT_HI))
+	frow.add_child(_label("2024", 13, C_GOLD))
+	frow.add_child(_label("年为制作EVE自走棋付出过努力与智慧的所有人", 13, C_TEXT_HI))
+	col.add_child(frow)
+
+	# ── ⑤ 底部两小节并排（动画制作支持 / 测试支持）─────────────────
+	col.add_child(_vspace(18))
+	# [WHY] 原版用 EXPAND_FILL 把两节拉满整行 ⇒ 名字靠左、列宽是弹性的、
+	#   两节间距随面板/分辨率一直变大（用户：「没锁死、会一直增长」）。
+	#   改为「固定列宽 + 整体居中 + 名字居中」，与上面 4 列网格一样锁死。
+	var pair := HBoxContainer.new()
+	pair.alignment = BoxContainer.ALIGNMENT_CENTER
+	pair.add_theme_constant_override("separation", 56)
+	pair.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	pair.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var pair_cols := [
+		["感谢以下人员为游戏动画制作提供支持", "吴良    雪奈川"],
+		["感谢以下人员为游戏测试提供支持", "Aliya    Tαoうぎ    小香"],
+	]
+	for pc in pair_cols:
+		var sec := VBoxContainer.new()
+		sec.add_theme_constant_override("separation", 0)
+		sec.custom_minimum_size = Vector2(340, 0)   # 定宽 = 「锁死」，不随宽度增长
+		sec.add_child(_ack_section(String(pc[0]), false))
+		sec.add_child(_vspace(6))
+		var nml := _label(String(pc[1]), 12, C_TEXT)
+		nml.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		nml.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sec.add_child(nml)
+		pair.add_child(sec)
+	col.add_child(pair)
+
+	_content.add_child(_ack_panel)
+
+
+## 鸣谢面板的强调细线（1px、直角、横向铺满）。
+func _ack_rule(col: Color, alpha: float) -> ColorRect:
+	var ln := ColorRect.new()
+	ln.color = Color(col.r, col.g, col.b, alpha)
+	ln.custom_minimum_size = Vector2(0, 1)
+	ln.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return ln
+
+
+## 鸣谢面板的分段标题：「—— 标题 ——」居中 + 两侧青色细短线。
+## ⚠️ 只服务鸣谢面板；版权面板仍是原来的纯文字小标题（不动它）。
+func _ack_section(title: String, with_rule: bool) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 12)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if with_rule:
+		var l1 := _ack_rule(C_SEP, 1.0)
+		l1.custom_minimum_size = Vector2(48, 1)
+		l1.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(l1)
+	var lb := _label(title, 13, C_ACCENT)
+	lb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(lb)
+	if with_rule:
+		var l2 := _ack_rule(C_SEP, 1.0)
+		l2.custom_minimum_size = Vector2(48, 1)
+		l2.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(l2)
+	return row
 
 
 func _build_modes() -> void:
@@ -1324,13 +1563,21 @@ func _refresh() -> void:
 			_codex_btn.visible = false
 		if _credits_panel != null:
 			_credits_panel.visible = true
+		# ★ 2026-11-01：版权声明面板出现时，把鸣谢名单面板让位收掉（同一位置，避免重叠）。
+		if _ack_panel != null:
+			_ack_panel.visible = false
 		return
-	_strip_row.visible = true
+	# ★ 鸣谢名单面板打开时同样收掉卡片区（与版权声明同款），避免盖住面板
+	if _ack_panel != null and _ack_panel.visible:
+		_strip_row.visible = false
+	else:
+		_strip_row.visible = true
 	if _credits_panel != null:
 		_credits_panel.visible = false
 	# ★ 图鉴按钮只在「任务关卡」显示（放难度卡片正下方，别的模式不占版面）
 	if _codex_btn != null:
-		_codex_btn.visible = (String(_content_id()) == "campaign")
+		var ack_open2 := _ack_panel != null and _ack_panel.visible
+		_codex_btn.visible = (not ack_open2) and (String(_content_id()) == "campaign")
 
 	var cards := _cards_of(_mode_idx)
 	# 先按模式定好「列数 + 卡片尺寸」，再让 `_make_strip` 去建 ——
