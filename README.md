@@ -22,6 +22,25 @@
 
 最新版见 [**Releases**](https://github.com/xshynews/EVE-AutoChess/releases)：Windows 单文件 exe + Android apk（arm64-v8a）。
 
+> **装一次就够**：从 V0.14.10 起客户端支持热更新，脚本 / 数值 / 界面的改动会在启动时自动下载并生效，**不需要重新下载安装包**。
+
+## 热更新（Hot Update）
+
+客户端内置了基于 PCK 覆盖的热更（`scripts/core/eve_updater.gd`，autoload `EveUpdater`）：
+
+1. 启动时拉取一份几百字节的版本清单，比对 `code`，有新版本就下载补丁包（**约 1 MB**）；
+2. 下载完成后先校验 **SHA256**，校验不过直接丢弃 —— 半个包挂上去等于启动即崩；
+3. 校验通过才 `ProjectSettings.load_resource_pack()` 挂进 `user://update.pck`，覆盖 `res://` 里的同名资源，**逻辑、界面、数值一起生效**；
+4. 全程不阻塞启动：服务器挂了 / 网络断了 / 下载失败都只是「这次不更新」，照常用本地版本进游戏；
+5. **自愈**：挂载前记一次启动计数，连续 3 次进不到主菜单就认定这个包有毒，自动删包回退。
+
+**能热更什么**：`scripts/`（逻辑与界面）、`data/`（数值表）、i18n 文案 —— 每次都是**全量快照**，不做增量（`load_resource_pack` 是叠加语义，删掉的文件不会消失）。
+
+**不能热更什么**：美术资源（模型 / 贴图 / 音频，占整包约 300 MB）和引擎本体（exe / Android 的 libgodot）—— 这类更新仍需重新安装整包。
+
+补丁包挂在 GitHub Releases 的 `hotfix-*` 标签下，客户端按「加速站 → 自建节点」顺序多源回退下载；清单与发布流程见 [`docs/联机与热更部署.md`](./docs/联机与热更部署.md)，打包脚本是 `tools/publish_hotfix.sh`。
+
+
 ## 如何运行 / 构建
 
 1. 安装 [Godot 4.7.2](https://godotengine.org/)。
