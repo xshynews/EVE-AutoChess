@@ -19,6 +19,28 @@ extends "res://scripts/ui/eve_window.gd"
 
 var _rows: Array[Dictionary] = []
 
+## ── 「装甲墙」状态行（炼狱 BOSS 关专用）────────────────────────────
+##
+## ★★ 2026-11-01（用户定案，A 项「让它可见」）：
+##   改造前这个机制在界面上**一个字都没有** —— 玩家看到自己 333 DPS 打出 33，
+##   屏幕上没有任何东西告诉他"因为你破甲只有 4.25"。用户原话：
+##   「被削可以接受，被削了还不知道为什么才叫恶心」。
+##
+## ⚠️ 玩家看到的词是「装甲墙」不是「壁垒」：用户 2026-11-01 明确说「壁垒这个词有点恶心」。
+##    代码里仍叫 barrier —— 那是给读代码的人看的，跟玩家文案无关。
+## ⚠️ 平时 `visible = false` ⇒ 不占行高，其余难度/节点的窗口高度一像素不变。
+var _barrier_row: Control = null
+var _barrier_name: Label = null
+var _barrier_bar: _SynBar = null
+var _barrier_num: Label = null
+## ⚠️ 色块要单独存一份 StyleBoxFlat 引用：改 `PanelContainer` 的 `bg_color`
+##    拿不到实例（`get_theme_stylebox` 返回的是副本），改不进去。
+var _barrier_chip_sb: StyleBoxFlat = null
+
+## 装甲墙配色：未穿透 = 警告橙，已穿透 = 青（与 HUD 主色一致）。
+const BARRIER_WARN := Color(0.98, 0.63, 0.28)
+const BARRIER_DONE := Color(0.36, 0.88, 0.78)
+
 
 func _ready() -> void:
 	window_title = "舰队构成"
@@ -29,6 +51,12 @@ func _ready() -> void:
 
 func _build_contents() -> void:
 	content.add_theme_constant_override("separation", 2)
+
+	# ★ 2026-11-01：装甲墙行压在**最上面** —— 它在 BOSS 关是这一屏里最该先看到的
+	#   信息（"我还差多少"），而羁绊明细是常驻参考。默认隐藏，见 `set_barrier()`。
+	_barrier_row = _build_barrier_row()
+	content.add_child(_barrier_row)
+	_barrier_row.visible = false
 
 	for g in EveTraitTable.GROUPS:
 		var key: StringName = g["key"]
@@ -106,6 +134,106 @@ func _build_row(group: StringName, member: String, label: String, color: Color) 
 		"root": root, "group": group, "member": member,
 		"bar": bar, "ratio": ratio, "name": name_label,
 	}
+
+
+## 装甲墙行：结构与羁绊行一致（色块 / 名称 / 条 / 数字），但数据**不查羁绊表**
+## —— 它读的是 `EveRunState.armor_break_power()` 的结果，由 HUD 从外部喂进来。
+##
+## ⚠️ 不复用 `_build_row()`：那个函数要 `set_ticks_for(GROUPS, group)` 和
+##    `tooltip_for()`，两者都依赖"这个 group 在羁绊表里"这个前提，装甲墙不在表里。
+func _build_barrier_row() -> HBoxContainer:
+	var root := HBoxContainer.new()
+	root.add_theme_constant_override("separation", 5)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var chip := PanelContainer.new()
+	chip.custom_minimum_size = Vector2(12, 12)
+	chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var chip_sb := StyleBoxFlat.new()
+	chip_sb.bg_color = BARRIER_WARN
+	chip_sb.border_color = Color(1, 1, 1, 0.22)
+	chip_sb.set_border_width_all(1)
+	chip_sb.set_corner_radius_all(0)
+	chip_sb.content_margin_left = 3
+	chip_sb.content_margin_right = 3
+	chip_sb.content_margin_top = 3
+	chip_sb.content_margin_bottom = 3
+	chip.add_theme_stylebox_override("panel", chip_sb)
+	_barrier_chip_sb = chip_sb
+	var inner := ColorRect.new()
+	inner.color = Color(0.016, 0.027, 0.035, 0.72)
+	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	chip.add_child(inner)
+	root.add_child(chip)
+
+	_barrier_name = Label.new()
+	_barrier_name.text = "装甲墙"
+	_barrier_name.add_theme_color_override("font_color", BARRIER_WARN)
+	FONT.fs(_barrier_name, 11)
+	_barrier_name.custom_minimum_size = Vector2(58, 0)
+	_barrier_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_barrier_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_barrier_name.mouse_filter = Control.MOUSE_FILTER_PASS
+	root.add_child(_barrier_name)
+
+	_barrier_bar = _SynBar.new()
+	_barrier_bar.fill_color = BARRIER_WARN
+	_barrier_bar.custom_minimum_size = Vector2(0, 6)
+	_barrier_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_barrier_bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_barrier_bar.mouse_filter = Control.MOUSE_FILTER_PASS
+	root.add_child(_barrier_bar)
+
+	_barrier_num = Label.new()
+	_barrier_num.text = "0/6"
+	_barrier_num.add_theme_color_override("font_color", BARRIER_WARN)
+	FONT.fs(_barrier_num, 10)
+	_barrier_num.custom_minimum_size = Vector2(26, 0)
+	_barrier_num.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_barrier_num.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_barrier_num.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_barrier_num)
+
+	return root
+
+
+## 刷新装甲墙状态。`on = false` 时整行隐藏（不占高）。
+##
+## power = 当前破甲强度，need = 门槛，mult = 敌方受到的伤害倍率。
+##
+## ⚠️ `mult` 是**已经算好的**结果，不在这里反推 —— 曲线在
+##    `EveRunState.barrier_mult_for()` 里，UI 只负责显示，
+##    ⛔ 别把曲线抄一份到这里（两处一定会漂）。
+func set_barrier(power: float, need: float, mult: float, on: bool) -> void:
+	if _barrier_row == null or _barrier_bar == null:
+		return
+	_barrier_row.visible = on
+	if not on:
+		return
+	var pierced := power >= need
+	var col := BARRIER_DONE if pierced else BARRIER_WARN
+	_barrier_bar.pct = clampf(power / maxf(0.001, need), 0.0, 1.0)
+	_barrier_bar.fill_color = col
+	_barrier_bar.active = pierced
+	_barrier_bar.queue_redraw()
+	if _barrier_chip_sb != null:
+		_barrier_chip_sb.bg_color = col
+	_barrier_name.add_theme_color_override("font_color", col)
+	_barrier_num.add_theme_color_override("font_color", col)
+	_barrier_num.text = "已破" if pierced else "%.1f/%.0f" % [power, need]
+	var tip := "装甲墙：敌方全体受到的伤害 ×%.2f\n" % mult
+	if pierced:
+		tip += "已穿透 —— 破甲强度 %.1f ≥ %.0f，打满伤害。\n" % [power, need]
+	else:
+		tip += "未穿透 —— 破甲强度 %.1f，门槛 %.0f。\n" % [power, need]
+	tip += ("破甲强度 = 上场舰船里**同一势力**的艘数 + 其余每艘算 0.5；\n"
+			+ "对应势力凑到 4 艘羁绊再 +1。\n"
+			+ "⚠️ 与武器类型无关，四个势力是同一把尺子。")
+	_barrier_row.tooltip_text = tip
+	_barrier_name.tooltip_text = tip
+	_barrier_bar.tooltip_text = tip
+	_barrier_num.tooltip_text = tip
 
 
 ## 喂一支舰队进来刷新。ships 里每个元素只要有 traits 就行（EveShip / Dictionary 皆可）

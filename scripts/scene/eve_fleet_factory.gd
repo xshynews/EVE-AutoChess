@@ -172,9 +172,12 @@ func build_enemy(run: EveRunState) -> Array[EveShip]:
 	if jam > 0.0:
 		for s in out:
 			s.cycle_scale(1.0 + jam)
-	# ★ 2026-10-24：炼狱 BOSS 的「壁垒」—— 玩家没凑出钥匙时，敌方全体只吃 10% 伤害。
+	# ★ 2026-11-01：炼狱 BOSS 的「装甲墙」—— 按玩家舰队的**同势力专注度**打折，
+	#   倍率是**连续的**（`barrier_mult_for()`：破甲 4 → ×0.59、5 → ×0.78、6 → ×1.0）。
+	#   ⚠️ 2026-10-24 ~ 11-01 之间这里是二元开关（0.1 / 1.0），已被用户否掉：
+	#      「差 0.5 和差 5.0 结果一模一样」是那个机制最难受的地方。
 	# ⚠️ 乘在**受击侧**（`ship.incoming_mult`），不改敌方的输出 ——
-	#    壁垒是「打不动」，不是「它打你更疼」。
+	#    装甲墙是「打不动」，不是「它打你更疼」。
 	var barrier := run.boss_barrier_mult()
 	if barrier < 1.0:
 		for s in out:

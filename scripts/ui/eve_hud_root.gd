@@ -1171,6 +1171,16 @@ func set_fleet(ships: Array, fleet_is_demo: bool = false) -> void:
 		dossier_window.set_fleet(ships)
 
 
+## 装甲墙状态（炼狱 BOSS 关）—— 由 `battle_scene._refresh_barrier_ui()` 喂。
+##
+## ★★ 2026-11-01（用户定案，A 项）：这个机制以前在界面上完全不显示。
+## ⚠️ 参数是**算好的数值**而不是 run 对象：羁绊窗不该知道 `EveRunState` 的存在，
+##    否则"UI 读业务对象"这条线一破，下次谁都能从面板里摸局内状态。
+func set_barrier(power: float, need: float, mult: float, on: bool) -> void:
+	if synergy_window and synergy_window.has_method("set_barrier"):
+		synergy_window.set_barrier(power, need, mult, on)
+
+
 func append_log(entry) -> void:
 	if log_window and log_window.has_method("append_entry"):
 		log_window.append_entry(entry)

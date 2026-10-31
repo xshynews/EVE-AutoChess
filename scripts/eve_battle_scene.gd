@@ -756,6 +756,7 @@ func begin_prep() -> void:
 	hud.show_entry(run.node_index, run.node_type(), run.entry_line())
 	hud.set_loss_cost(run.loss_preview())
 	hud.set_fleet(_own_ships)
+	_refresh_barrier_ui()
 	# ★ 联机事件回合没有战斗 ⇒ 按钮换成「进入下一回合」（直接推进，不开打）。
 	if versus != null and versus.round_kind() == EveMatchState.RoundKind.CAROUSEL:
 		hud.set_start_button(T.t("PREP_NEXT_ROUND", "▶ 进入下一回合"), true)
@@ -855,6 +856,7 @@ func _respawn_own_fleet() -> void:
 
 	hud.set_fleet(_own_ships)
 	hud.set_loss_cost(run.loss_preview())
+	_refresh_barrier_ui()
 	_log_synergies()
 	if _roster_signature() != _last_roster_sig:
 		_last_roster_sig = _roster_signature()
@@ -1348,6 +1350,20 @@ func _on_run_log(text: String, category: StringName) -> void:
 # ══════════════════════════════════════════════════════════════════
 
 ## 经济 / 等级 / 信标 / 上场上限 / 备战席 → HUD
+## 装甲墙状态行（炼狱 BOSS 关）—— 只在第 15 关出现，其余节点/难度隐藏。
+##
+## ★★ 2026-11-01（用户定案，A 项）：改造前这个机制在界面上**零提示**，
+##   玩家只能看到自己的伤害莫名其妙变成十分之一。
+## ⚠️ 判定"要不要显示"的三个条件缺一不可：本档声明了 armor_pierce、
+##    当前节点是 boss、hud 已经建好。前两个读 `run`，第三个判空。
+func _refresh_barrier_ui() -> void:
+	if hud == null or run == null:
+		return
+	var on := run.node_type() == &"boss" and run.key_mechanic() == "armor_pierce"
+	hud.set_barrier(run.armor_break_power(), run.ARMOR_BREAK_NEED,
+			run.boss_barrier_mult(), on)
+
+
 func _refresh_run_ui() -> void:
 	if run == null:
 		return
