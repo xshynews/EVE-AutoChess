@@ -1266,6 +1266,26 @@ func _t_battleship_rework() -> void:
 	_expect(is_equal_approx(float(hp_full[&"shield"]), 900.0),
 			"★★ 穿盾但甲/结构已空：伤害回落到护盾（%.0f）" % float(hp_full[&"shield"]))
 
+	# ── ⑤ 吨位压制：小打大伤害打折、大打小/同级不打折（2026-10-31 玩家反馈）──
+	#
+	# 玩家原话：「护卫打战巡和战列的伤害也高。2 个小护卫能 6 秒干掉满血战列」。
+	# 根因是「命中之后不按吨位削伤害」（命中率那一层不动 —— 护卫打谁 100% 是对的）。
+	# ⚠️ 这里守的是**单调性与边界**，不是具体数值：改档位时不该顺带把方向改反。
+	var p_same := EveCombatCore.class_penetration(3, 3)
+	var p_down := EveCombatCore.class_penetration(5, 1)   # 战列打护卫：目标更小
+	var p_g1 := EveCombatCore.class_penetration(1, 2)
+	var p_g2 := EveCombatCore.class_penetration(1, 3)
+	var p_g4 := EveCombatCore.class_penetration(1, 5)     # 护卫打战列：最极端
+	_expect(is_equal_approx(p_same, 1.0), "★ 同吨位不削伤害（%.2f）" % p_same)
+	_expect(is_equal_approx(p_down, 1.0), "★ 大打小不削伤害（%.2f）" % p_down)
+	_expect(p_g1 > p_g2 and p_g2 > p_g4,
+			"★ 吨位差越大削得越狠（1→2 %.2f > 1→3 %.2f > 1→5 %.2f）"
+			% [p_g1, p_g2, p_g4])
+	_expect(p_g4 <= 0.55, "★ 1 费打 5 费最多只落 %.0f%% 伤害" % (p_g4 * 100.0))
+	# 边界：吨位差超出表长时不能数组越界（战列是最高档，但表将来可能加长）
+	_expect(is_equal_approx(EveCombatCore.class_penetration(1, 9), p_g4),
+			"★ 超出表长的吨位差钳到最后一档（不越界）")
+
 
 ## ★★ 2026-10-29（用户：「加强型单独加一个出现概率减少，不能和普通的战列
 ## 一个出现概率」→ 口径「普通 10% 的话加强型至少 7% 左右」）：权重 0.7。

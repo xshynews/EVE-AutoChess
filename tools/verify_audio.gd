@@ -46,6 +46,7 @@ func run_all() -> void:
 	_variant_no_repeat_test()
 	_random_isolation_test()
 	_missing_source_count_test()
+	_countdown_volume_test()
 	_hit_layer_test()
 	_salvo_burst_test()
 	_sfx_switch_test()
@@ -423,6 +424,48 @@ func _random_isolation_test() -> void:
 	_ok("global RNG post-audio untouched (isolated RNG)",
 			post2 == post_ctrl)
 	a.queue_free()
+
+
+## ★ 2026-10-31（玩家：「开战倒计时 最后 5 秒 给提示音吧」）：
+##   「响了」和「听得见」是两件事。实测素材电平（ffmpeg volumedetect）：
+##     tick_01 mean −8.5 dB · tick_urgent_01 mean −14.0 dB · phase_prep_bgm mean −13.8 dB
+##   ⇒ 最后 5 秒本该更强调的音色**反而轻 5.5 dB**，被 BGM 完全盖住。
+##   修法是逐次给 `volume_db` 增益；本用例守的就是「增益真的写进 player」。
+##
+## ⚠️ 不能用 `_amb_players[0]`：`_pick_player` 会跳过正在播的那个，
+##    第二次播放可能落在另一个 player 上 —— 那样断言会随机的红/绿。
+func _countdown_volume_test() -> void:
+	var a := _make_audio()
+	var fs := _fake_stream()
+	a._amb_bank = {"tick": [fs], "tick_urgent": [fs],
+		"count_3": [fs], "count_2": [fs], "count_1": [fs]}
+	a.play_tick(8)
+	var normal := _max_amb_db(a)
+	_reset_amb_db(a)
+	a.play_tick(5)
+	var urgent := _max_amb_db(a)
+	_reset_amb_db(a)
+	a.play_countdown(3)
+	var voice := _max_amb_db(a)
+	a.queue_free()
+	_ok("普通滴答不额外增益（%.1f dB）" % normal, is_zero_approx(normal))
+	_ok("★ 最后 5 秒滴答被顶到 %.1f dB（> 普通 %.1f）" % [urgent, normal],
+			urgent >= normal + 6.0)
+	_ok("★ 读秒语音同样补偿（%.1f dB）" % voice, voice >= normal + 6.0)
+
+
+## 清掉池里所有 player 的增益，避免上一声的残留让下一声的读数虚高。
+## ⚠️ 不清的话「读秒语音」会读到 5 秒滴答留下的 7.5 dB —— 断言照样绿，但测的不是它。
+func _reset_amb_db(a: EveAudio) -> void:
+	for p in a._amb_players:
+		p.volume_db = 0.0
+
+
+func _max_amb_db(a: EveAudio) -> float:
+	var m := -999.0
+	for p in a._amb_players:
+		m = maxf(m, float(p.volume_db))
+	return m
 
 
 func _missing_source_count_test() -> void:

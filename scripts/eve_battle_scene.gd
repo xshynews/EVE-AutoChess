@@ -1468,6 +1468,14 @@ func _on_start_battle_requested() -> void:
 ## ⚠️ 准备阶段的最后 3 秒换成 `play_countdown`（3 / 2 / 1）：
 ##    滴答和读秒是**两件事** —— 滴答是「还在等」，读秒是「马上开打」，
 ##    音色必须分开，否则玩家分不出 5 秒和 2 秒的区别。
+##
+## ★★ 2026-10-31（玩家：「开战倒计时 最后 5 秒 给提示音吧」）：
+##    实测（`tools/probe_prep_countdown_audio`）**每秒都在响、0 次缺源**，
+##    所以玩家听到的不是「没响」而是「太小」—— 三个音源的电平是
+##    tick −8.5dB / tick_urgent −14.0dB / BGM −13.8dB，最后 5 秒那个音色
+##    反而比普通滴答轻 5.5dB，被 BGM 整个盖住。
+##    ⇒ 修在音频层（`EveAudio.TICK_URGENT_DB` / `COUNT_VOICE_DB` 的增益补偿），
+##      ⛔ 不要在这里再叠一层音量，否则两个旋钮互相抵消、下次没人找得到。 
 func _tick_countdown_sfx() -> void:
 	var sec := hud.stage_seconds_left()
 	if sec <= 0:

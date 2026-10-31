@@ -975,6 +975,13 @@ func _fire_once(ship: EveShip, target: EveShip) -> void:
 	#      （电子战削「谁打的」，壁垒改「谁挨的」），顺序不影响结果，
 	#      但读代码的人要能分清 —— ⛔ 别合并成一个字段。
 	raw_damage *= ship.outgoing_mult
+	# ★ 2026-10-31（玩家反馈：「2 个小护卫能 6 秒干掉满血战列」）：
+	#   **吨位压制** —— 小口径打大吨位的伤害折扣。命中率不动（护卫打谁都是 100%，
+	#   这是对的），削的是「打进装甲之后还剩多少」。说明与取值口径见
+	#   `EveCombatCore.CLASS_PENETRATION` 的顶注。
+	#   ⚠️ 位置在 `incoming_mult` 之前：两者一个按「谁打的」、一个按「谁挨的」，
+	#     顺序不影响结果，但分成两行写是为了让下一处改动找得到落点。
+	raw_damage *= EveCombatCore.class_penetration(ship.cost, target.cost)
 	# ★ 2026-10-24：机制壁垒（炼狱 BOSS）—— 未破解时整艘船吃 10% 伤害。
 	#   与抗性分开乘：抗性按伤害类型逐层算，壁垒是整船的机制护盾。
 	raw_damage *= target.incoming_mult

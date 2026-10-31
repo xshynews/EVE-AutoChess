@@ -692,12 +692,30 @@ func play_phase(phase: int) -> void:
 
 
 ## 准备阶段的倒计时滴答。`seconds_left` 用来分档：
-## 最后 5 秒音调更高、更急（云顶同款提示）。
+## 最后 5 秒换更急的音色，并**顶音量**。
+##
+## ★★ 2026-10-31（玩家：「开战倒计时 最后 5 秒 给提示音吧」）：
+##   真相不是「没响」，是**响了听不见**。实测三个音源的电平（ffmpeg volumedetect）：
+##     tick_01        mean −8.5 dB · max −1.2     ← 10~6 秒用
+##     tick_urgent_01 mean −14.0 dB · max −4.5    ← 5~4 秒用，**比普通 tick 还轻 5.5 dB**
+##     phase_prep_bgm mean −13.8 dB · max −1.7    ← 同时还在放
+##   ⇒ 本想「最后 5 秒更强调」，实际素材电平更低，0.17 秒的短促点击被 BGM 整个盖住，
+##     玩家听到的就是「最后一秒突然一声 count，前面没提示」。
+##   ⇒ 用**增益补偿**把它顶上来（不换素材：换素材要重录，且短音本身是对的）。
+## ⚠️ 补偿量按实测差值给，不是随手加：要让 tick_urgent 与普通 tick 至少打平，
+##    再加 2 dB 当「紧迫感」；改素材的话这两个常量要重新量。
+const TICK_URGENT_DB := 7.5
+## 读秒语音更轻（count_3 实测 mean −16.5 dB）—— 三声 count 是全流程最关键的提示，
+## 被音乐盖住等于没有。给同样的量级。
+const COUNT_VOICE_DB := 7.0
+
 func play_tick(seconds_left: int) -> void:
 	if sfx_off():
 		return
-	var key := "tick_urgent" if seconds_left <= 5 else "tick"
-	if _play_from(_amb_bank, key, _amb_players, 1.0, 1.0, false):
+	var urgent := seconds_left <= 5
+	var key := "tick_urgent" if urgent else "tick"
+	var vol := TICK_URGENT_DB if urgent else 0.0
+	if _play_from(_amb_bank, key, _amb_players, 1.0, 1.0, false, vol):
 		_count["amb"] += 1
 	else:
 		_note_missing(key)
@@ -711,11 +729,11 @@ func play_countdown(n: int) -> void:
 	if sfx_off():
 		return
 	var key := "count_%d" % clampi(n, 1, 3)
-	if _play_from(_amb_bank, key, _amb_players, 1.0, 1.0, false):
+	if _play_from(_amb_bank, key, _amb_players, 1.0, 1.0, false, COUNT_VOICE_DB):
 		_count["amb"] += 1
 		return
 	# 没有 count_N 就退到通用滴答；连滴答也没有才算真的缺
-	if _play_from(_amb_bank, "tick", _amb_players, 1.0, 1.0, false):
+	if _play_from(_amb_bank, "tick", _amb_players, 1.0, 1.0, false, COUNT_VOICE_DB):
 		_count["amb"] += 1
 		return
 	_note_missing(key)
@@ -946,16 +964,20 @@ func _throttle(key: String, window: float, burst: int = 1) -> bool:
 ##    轮转在池满时会打断某个还没放完的音；
 ##    「找当前最闲的」让长音自然占住自己的 player。
 func _play_from(bank: Dictionary, key: String, pool: Array[AudioStreamPlayer],
-		pitch_min: float, pitch_max: float, jitter: bool) -> bool:
+		pitch_min: float, pitch_max: float, jitter: bool,
+		vol_db: float = 0.0) -> bool:
 	var list: Array = bank.get(key, [])
 	if list.is_empty():
 		return false
 	var p := _pick_player(pool)
 	if p == null:
 		return false
+	# ★ 2026-10-31：逐次写 `volume_db`（含 0.0）。⛔ 不要写成「只有非 0 才设」——
+	#   池里的 player 会被反复复用，残留的增益会让下一声（比如 phase_prep）莫名变大。
+	p.volume_db = vol_db
+	p.stream = list[_pick_variant(key, list.size())]
 	# ⚠️ 独立 RNG：挑变体与音高抖动都走 _rng，不碰全局 randi()/randf_range，
 	#    否则会让战斗 sim 的随机序列被音效打乱（验收用随机隔离测试守这条）。
-	p.stream = list[_pick_variant(key, list.size())]
 	p.pitch_scale = _rng.randf_range(pitch_min, pitch_max) if jitter else 1.0
 	p.play()
 	return true

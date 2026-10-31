@@ -80,7 +80,7 @@ const TRAIT_AB_PROBE := false
 ##      纯火力参考队用来回答「满档电子队到底追不追得上常规队」。
 ##
 ##    ⛔ 它不改任何生产表，只临时写 `is_ew` / `ew_lock_reduce` / `jam_chance`。
-const EW_PROBE := true
+const EW_PROBE := false
 
 const COL_STEP := 8000.0
 const ROW_STEP := 6000.0
