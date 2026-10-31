@@ -11,7 +11,13 @@ extends RefCounted
 const FACTION := ["艾玛", "加达里", "盖伦特", "米玛塔尔"]
 const WEAPON := ["激光炮", "混合炮", "射弹炮", "导弹"]
 const DEFENSE := ["甲抗", "盾抗"]
-const TIERS := { "faction": [2, 4], "weapon": [3, 6], "defense": [3, 6] }
+## ⚠️ 这份表必须和 `EveTraitTable.GROUPS` 的 `tiers` 一致 ——
+##    AI 靠它判断「还差几艘到下一档」。两边漂移不会报错，
+##    只会让 AI 在错误的艘数上收手或继续买（表现为"AI 莫名其妙不补船"）。
+##    ★ 2026-10-31：武器/防御 3,6 → 2,4,6（同 `EveTraitTable`，见那里的设计说明）。
+##    ⚠️ AI **不追** 后勤/电子战（那两条没进本表）—— 这是既有行为，不是遗漏：
+##       改了会让 AI 的买船策略整体变强，属于平衡改动，得单独评估。
+const TIERS := { "faction": [2, 4], "weapon": [2, 4, 6], "defense": [2, 4, 6] }
 
 var difficulty := "normal"
 

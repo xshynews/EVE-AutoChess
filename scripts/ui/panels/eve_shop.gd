@@ -352,6 +352,30 @@ func _build_card() -> Dictionary:
 	ew_tag.visible = false
 	name_row.add_child(ew_tag)
 
+	# ★ 2026-10-31（用户：「后勤有没有落在商店的卡牌面上？确定一下」）：
+	#   确认结果 —— **没有**，之前只贴了电子战。这里补上，版式与电子战标签完全对称。
+	#   ⚠️ 一艘船可以同时是电子战 + 后勤（如鱼鹰级？不是；但表里允许），
+	#      所以两个标签是**并列**不是互斥，各占独立 Label。
+	var logi_tag := Label.new()
+	logi_tag.text = TERMS.trait_member(&"logi", "后勤")
+	logi_tag.add_theme_color_override("font_color", EveTraitTable.LOGI_COLOR)
+	FONT.fs(logi_tag, 8)
+	logi_tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	logi_tag.visible = false
+	name_row.add_child(logi_tag)
+
+	# ★ 2026-10-31（超频精英货架）：★2 必须写在卡面上。
+	#   超频满档后货架全是 ★2，但价格只有一星价 —— 不标星级玩家会以为
+	#   「为什么这艘巡洋这么贵/这么便宜」，也看不出自己赚到了什么。
+	#   ⚠️ 位置固定在名称右侧、费用左侧，金色（与费用同色系但更亮）。
+	var star_tag := Label.new()
+	star_tag.text = ""
+	star_tag.add_theme_color_override("font_color", C_GOLD)
+	FONT.fs(star_tag, 9)
+	star_tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	star_tag.visible = false
+	name_row.add_child(star_tag)
+
 	var cost := Label.new()
 	cost.text = "0"
 	cost.add_theme_color_override("font_color", C_GOLD)
@@ -379,7 +403,8 @@ func _build_card() -> Dictionary:
 	col.add_child(pad)
 
 	return {"root": card, "top": top, "art": art,
-			"name": nm, "cost": cost, "stat": stat, "ew": ew_tag}
+			"name": nm, "cost": cost, "stat": stat,
+			"ew": ew_tag, "logi": logi_tag, "star": star_tag}
 
 
 ## 设置 5 张卡的报价。offers 的元素是 EveShipDatabase 出来的 Dictionary
@@ -411,6 +436,8 @@ func _fill_card(w: Dictionary, offer, index: int) -> void:
 	var cost: Label = w["cost"]
 	var stat: Label = w["stat"]
 	var ew_tag: Label = w["ew"]
+	var logi_tag: Label = w["logi"]
+	var star_tag: Label = w["star"]
 
 	# ★ 2026-10-01：买走的槽位是**空 Dictionary**（不补货）。
 	#   显示一张压暗的空卡而不是直接隐藏 —— 隐藏会让商店看起来"少了一格"，
@@ -423,6 +450,8 @@ func _fill_card(w: Dictionary, offer, index: int) -> void:
 		cost.text = "—"
 		stat.text = ""
 		ew_tag.visible = false
+		logi_tag.visible = false
+		star_tag.visible = false
 		art.accent = Color(0.35, 0.42, 0.46)
 		return
 	root.visible = true
@@ -460,11 +489,28 @@ func _fill_card(w: Dictionary, offer, index: int) -> void:
 	#   `d` 是船表 Dictionary，`is_ew_ship()` 认它的 `ship_key`；
 	#   打捞来的「修复品」同样带 ship_key ⇒ 一条分支就够，不用另写。
 	ew_tag.visible = EveTraitTable.is_ew_ship(d)
+	# 后勤标签同理（用户：「后勤有没有落在商店的卡牌面上？确定一下」——
+	#   确认之前没有，本次补上，判据走公开入口 `is_logi_ship`）。
+	logi_tag.visible = EveTraitTable.is_logi_ship(d)
+
+	# ★ 2026-10-31（超频精英货架）：★2 及以上必须在卡面标出来，否则玩家
+	#   完全看不出「超频买到了什么」。普通货架的报价没有 `star` 键 ⇒ 默认 1、
+	#   标签隐藏，行为与改动前一致。
+	var star := clampi(int(d.get("star", 1)), 1, EveRunState.MAX_STAR)
+	star_tag.visible = star > 1
+	star_tag.text = "★%d" % star
+	# 星级对战力是 ×1.8^(star-1)（`EveRunState.STAR_MULT`）——
+	# 卡面必须显示**实际战力**，否则 ★2 巡洋写着 35 攻、打出来 63，
+	# 玩家会以为数值是假的。⚠️ 别在这里另写 1.8：读常量。
+	var stat_mul := pow(EveRunState.STAR_MULT, float(star - 1))
+	var atk_show := int(round(float(d.get("attack", 0)) * stat_mul))
+	var def_raw := float(d.get("shield", 0)) if is_shield else float(d.get("armor_struct", 0))
+	var def_show := int(round(def_raw * stat_mul))
 	stat.text = T.t("SHOP_CARD_STAT", "%s · %s\n攻 %d　%s %d") % [
 		TERMS.weapon(wid), TERMS.defense(did),
-		int(d.get("attack", 0)),
+		atk_show,
 		(T.t("SHOP_DEF_SHIELD", "盾") if is_shield else T.t("SHOP_DEF_ARMOR", "甲")),
-		int(d.get("shield", 0)) if is_shield else int(d.get("armor_struct", 0)),
+		def_show,
 	]
 
 

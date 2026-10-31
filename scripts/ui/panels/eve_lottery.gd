@@ -301,6 +301,20 @@ func _build_card(ship: Dictionary, star: int) -> Dictionary:
 		ew.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		sub_row.add_child(ew)
 
+	# ★ 2026-10-31：后勤标签（与电子战完全对称，判据走公开入口）。
+	#   ⚠️ 卡宽 106px，两个标签同时出现会挤掉派系名 —— 这是**有意的取舍**：
+	#      派系名上面那张卡在羁绊窗/档案里都查得到，而「这条船属于哪条羁绊」
+	#      在抽奖池里是选牌的唯一依据。`sub` 已 EXPAND_FILL + clip_text，
+	#      被压缩的只会是派系名，标签保完整（SHRINK_END）。
+	if EveTraitTable.is_logi_ship(ship):
+		var lg := Label.new()
+		lg.text = "·" + TERMS.trait_member(&"logi", "后勤")
+		lg.add_theme_color_override("font_color", EveTraitTable.LOGI_COLOR)
+		FONT.fs(lg, 9)
+		lg.size_flags_horizontal = Control.SIZE_SHRINK_END
+		lg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sub_row.add_child(lg)
+
 	return {"root": card, "name": nm, "sub": sub, "star": star}
 
 

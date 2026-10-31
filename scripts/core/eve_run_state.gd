@@ -784,6 +784,13 @@ func roll_shop() -> void:
 ## 两步：① 按当前档位的概率表摇出费用档；② 在该费用档里等概率取一艘船。
 func _roll_one() -> Dictionary:
 	_build_pools()
+	# ★★ 2026-10-31（用户定案）：超频到顶（第二次超频）后，货架切成「精英货」。
+	#   理由（用户原话）：「如果升6级第二次是超频，那品质就得升级一下，
+	#   商店页刷新将将只有巡洋以上的二星舰船，全部巡洋以上吨位的舰船的二星，
+	#   然后价格全部按一星舰船计价，不然超频没有意义」。
+	#   ⚠️ **不分难度**：这是超频机制本身的价值，四档都要给。
+	if _shop_elite():
+		return _roll_elite()
 	var odds: Array = SHOP_ODDS[shop_tier()]
 	var total := 0
 	for v in odds:
@@ -803,6 +810,61 @@ func _roll_one() -> Dictionary:
 		return {}
 	# ★ 2026-10-29：走 `pick_from_pool`（加强型战列权重 0.35，其余等价）。
 	return EveShipDatabase.pick_from_pool(pool, rng)
+
+
+## 精英货架是否生效 —— 条件：满级 **且** 超频到顶（两次超频都点完）。
+##
+## ⚠️ 用 `overtier >= MAX_TIER - MAX_LEVEL`（= 2）而不是 `== 2`：
+##    以后若把 MAX_TIER 往上抬，这里会自动跟着走，不会「超频了但货架没变」。
+## ⚠️ 用 `shop_tier() >= MAX_TIER` 表达同一件事会更好读，但 `shop_tier()` 会被
+##    `clampi` 压到 8 —— level 5 + overtier 2 也是 8。**必须两个条件同时成立**，
+##    ⛔ 别偷懒只判 shop_tier()。
+func _shop_elite() -> bool:
+	return level >= MAX_LEVEL and overtier >= MAX_TIER - MAX_LEVEL
+
+
+## 精英货：只在**巡洋以上**（cost 3/4/5）里摇，固定 ★2，**价格按一星计**。
+##
+##   · 星级：`d["star"] = 2` —— 战斗侧 `×1.8^(star-1)` 会把它算成 1.8 倍属性。
+##   · 价格：**直接沿用船表的 `cost`（一星价），⛔ 不乘 3^(star-1)**。
+##     这就是用户要的「按一星舰船计价」。
+##     ⚠️ 因此这类船的**卖价必须按实付返还**，否则「买 3 卖 9」能无限刷钱 ——
+##        见 `sell_value()` 里 `paid` 字段那一整套说明。
+func _roll_elite() -> Dictionary:
+	# 权重沿用当前档位（8 档 = [15,22,28,20,15] ⇒ 巡洋 28 / 战巡 20 / 战列 15）。
+	# 不另造一张表：玩家在超频前后看到的"贵船占比"变化因此是可解释的。
+	var odds: Array = SHOP_ODDS[shop_tier()]
+	var buckets: Array = []
+	var total := 0
+	for c in range(3, 6):
+		var idx := c - 1
+		var w := int(odds[idx]) if idx < odds.size() else 0
+		if w <= 0:
+			continue
+		if (_pools.get(c, []) as Array).is_empty():
+			continue
+		buckets.append({"cost": c, "w": w})
+		total += w
+	if total <= 0:
+		# 池子异常（理论上不会）：退回普通抽取，⛔ 不返回空 —— 那会让货架整排空卡。
+		return EveShipDatabase.pick_from_pool(_pools.get(3, []), rng)
+	var r := rng.randi_range(1, total)
+	var cost := 3
+	var acc := 0
+	for b in buckets:
+		acc += int(b["w"])
+		if r <= acc:
+			cost = int(b["cost"])
+			break
+	var row := EveShipDatabase.pick_from_pool(_pools.get(cost, []), rng)
+	if row.is_empty():
+		return {}
+	# ⚠️ `pick_from_pool` 返回的是**池里的那一份**（引用，不是拷贝）。
+	#    就地改 `star` 会污染 `_pools` ⇒ 之后所有普通抽取都变成 2 星。
+	#    必须 duplicate 一份再改。
+	var d: Dictionary = (row as Dictionary).duplicate()
+	d["star"] = 2
+	return d
 
 
 ## 买第 index 个槽位。返回 {"ok": bool, "reason": String, "data": Dictionary}
@@ -856,8 +918,16 @@ func buy(index: int) -> Dictionary:
 
 	coin -= cost
 	# 星级取报价自带的（普通货架没有 star 键 → 默认 ★1；
-	# 打捞来的修复品可能是敌方编组的星级，这里一并继承）。
-	var entry := _make_entry(StringName(d.get("ship_key", &"")), int(d.get("star", 1)))
+	# 打捞来的修复品可能是敌方编组的星级，这里一并继承；
+	# 超频满档的精英货是 ★2 但**只收一星价**）。
+	var star_bought := int(d.get("star", 1))
+	var entry := _make_entry(StringName(d.get("ship_key", &"")), star_bought)
+	# ★ 2026-10-31：★2 却只付了 `cost`（一星价）⇒ 记下实付，
+	#   卖价才不会按 3 倍返还（那 = 买 3 卖 9，无限刷钱）。详见 `sell_value()`。
+	#   ⚠️ 打捞品（`is_salvage`）不记：它走的是"打捞费已付 + 取货免费"那条账，
+	#      卖价仍沿用原公式，行为与改动前完全一致。
+	if not is_salvage and star_bought > 1:
+		entry["paid"] = cost
 	bench.append(entry)
 	# ★ 2026-10-01 用户定稿：买走的那格**留空**，不立刻补新船。
 	#
@@ -1667,6 +1737,28 @@ func _merge_once() -> bool:
 	for i in take_bench:
 		_merge_buffs_into(merged_buffs, bench[i].get("buffs", {}))
 
+	# ★ 2026-10-31：实付累加 —— 材料里只要有一张带 `paid`（精英货 ★2 是一星价买的），
+	#   合成品也必须是"实付口径"，否则「两张精英 2★ + 一张普通 2★ 合出 3★，
+	#   按 9 倍卖」又是一条刷钱路（成本 3+3+9=15，卖出 27）。
+	#   ⚠️ 没有 `paid` 的材料用 `sell_value()` 取它的原价 —— 恰好就是
+	#      「3^(star-1) 张原价」，和原公式同值，所以普通材料合出来
+	#      和不加这段完全一样（不会因浮点/取整产生 1 币漂移）。
+	#   ⚠️ 必须在删除材料**之前**收集（下面 drop_field / drop_bench 会清空数组）。
+	var paid_total := 0
+	var any_paid := false
+	for i in take_field:
+		if field[i].has("paid"):
+			any_paid = true
+			paid_total += int(field[i]["paid"])
+		else:
+			paid_total += sell_value(field[i])
+	for i in take_bench:
+		if bench[i].has("paid"):
+			any_paid = true
+			paid_total += int(bench[i]["paid"])
+		else:
+			paid_total += sell_value(bench[i])
+
 	# 倒序删除（先删大下标，免得前面的下标失效）
 	var drop_field: Array[int] = take_field.duplicate()
 	drop_field.sort()
@@ -1683,6 +1775,8 @@ func _merge_once() -> bool:
 	merged["cell"] = inherited
 	if not merged_buffs.is_empty():
 		merged["buffs"] = merged_buffs
+	if any_paid:
+		merged["paid"] = paid_total
 	if keep_in_field:
 		field.append(merged)
 	else:
@@ -1783,7 +1877,21 @@ func recall_to_bench(field_index: int) -> Dictionary:
 ## ⚠️ 口径：合成品按 **3^(star-1) 张原价**返还 ——
 ##    2★ 是 3 张 1★ 合成的，所以退 3 倍；3★ 是 9 张，退 9 倍。
 ##    这样「合成"然后再卖」不亏不赚，玩家不会因为怕亏而不敢合成。
+##
+## ★★ 2026-10-31（精英货架）：**实际付过钱的船按实付返还**。
+##
+##   超频满档后商店卖的是「★2 巡洋，按一星计价」。如果卖价还按
+##   `cost × 3^(star-1)` 算，就是：花 3 买进、卖 9 ⇒ **每次刷新白赚 6**，
+##   而刷新本身只花 2 —— 这是能无限印钞的死洞（不是"略赚"，是"无脑刷"）。
+##
+##   ⇒ 引入 `paid` 字段（可选）：**玩家实际为这艘船花掉的星币总额**。
+##      · 精英货买入时 = 一星价（`_buy` 里写）
+##      · 三连合成时 = 三张材料的实付之和（`_merge_once` 里累加）
+##      · 没有这个字段的老船（普通货 / 打捞品）走原公式，行为**完全不变**
+##    这样「买 → 卖」始终不赚不亏，与原公式的语义（合成不亏）一致。
 func sell_value(entry: Dictionary) -> int:
+	if entry.has("paid"):
+		return maxi(0, int(entry["paid"]))
 	var key := String(entry.get("ship_key", ""))
 	var d := EveShipDatabase.by_id(key)
 	var cost := int(d.get("cost", 1))
