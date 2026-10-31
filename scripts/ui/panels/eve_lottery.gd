@@ -23,10 +23,10 @@ extends "res://scripts/ui/eve_window.gd"
 ##   若拿 `ship_key` 当键，后写的一张卡会把前一张覆盖掉 ⇒ 池子里少 12 张，
 ##   而且点同名另一张会高亮错卡。所以键必须带星级。
 ##
-## ── 星级怎么区分（矩阵里混排）────────────────────────────────────
+## ── 星级怎么区分（混排在一屏里）──────────────────────────────────
 ##   原来是一栏一张平铺网格，星级只能靠卡面分辨。现在**★2 单独成一段**
 ##   压在池子最下面（用户 2026-11-01 的要求），段头是金色分隔线；
-##   段内仍按同样的「费用行 × 定位列」排，所以位置一眼可预期。
+##   段内沿同一条排版规则往下排，所以位置一眼可预期。
 ##   ★1 用青色边（C_ACCENT）、★2 用金色边（C_GOLD），名字前面还有 `★n`。
 ##   ⚠️ 别再靠"名字后加个 2"之类的隐晦手段 —— 二星船名和一星一模一样，
 ##      玩家一眼扫过去分不出来，就会许错愿。
@@ -36,47 +36,65 @@ signal draw_requested(wish_key: StringName, wish_star: int)
 ## 抽完点「完成」—— 场景据此推进节点
 signal finished()
 
-const CARD_W := 100.0
+const CARD_W := 106.0
 const CARD_H := 44.0
 
 ## ══════════════════════════════════════════════════════════════════
-##  「同级一行 · 同定位一列」的矩阵排版
+##  「同级一行 · 一块两行 · 同族一列」的池子排版
 ## ══════════════════════════════════════════════════════════════════
-##  ★ 2026-11-01（用户）：「抽船那个事件，在选船的时候，因为太多，不太好选，
-##    建议做做分类，同级的一行，同定位的一列，二星的在下面」。
+##  ★★ 2026-11-01（用户转来玩家画的排布示意图，定案）：
+##     「这个表是玩家建议的排序方式，好好阅读，好好理解一下，按玩家给的方式排出来」。
 ##
-##  行 = 费用档（3 费巡洋 / 4 费战巡 / 5 费战列）；★2 单独成一段放最下面；
-##  列 = 定位（攻击型 / 防御型 / 后勤）。
+##  图上那几条规矩（照做，别再自己加戏）：
+##    ① **同级一行**：3 费 / 4 费 / 5 费 各占一条横带，★2 单独一段压在最下面；
+##    ② **一块两行**：卡片不再铺成一条长龙，而是折成「2 行」的小块；
+##    ③ **同族一列**：块内按势力排，同一族的船落进同一列；
+##       盾抗族（加达里 / 米玛塔尔）在前、甲抗族（盖伦特 / 艾玛）在后 ——
+##       于是每块的「列」天然就是防御类型（见 `FACTION_ORDER` 的注释）。
 ##
-##  ⚠️ 定位用 **`role_id`（attack/defense/logi）** 分组，⛔ 不认中文名
-##     —— 与全工程同一条红线（见 `EveCombatIds` 顶注）。
-##     ⛔ 别改用图鉴那套五档（含电子战 / 加强型）：那五档是**互斥**口径
-##     （电子战船从「攻击型 / 防御型」里扣掉），拿来做列会得到 5 列，
-##     而 5 列 × 两行卡 ≈ 1090px，塞不进 970px 的内容区 —— 只能退化成
-##     每列 1 张卡宽、竖向堆 4 层，整池高度翻倍。三列是这个窗口装得下
-##     且信息量最大的分法。电子战/后勤标签仍在卡面上单独标（正交信息）。
+##  ★1 段比图上多一条，但图里 3 费那三块就是这个意思：
+##    **按标签拆组** —— 常规 / 电子战 / 后勤 各成一块。特殊船单独挑出来，
+##    想找"能打电子战的那几条"不用在 12 张里挨个扫。
+##    ⚠️ ★2 段**不拆**标签：12 艘巡洋每族正好 3 条（常规 / 电子战 / 后勤各一），
+##       一族一行反而更好比价 —— 图的下半段正是这么排的。
 ##
-##  ⚠️ 列宽**固定**、不随内容长短伸缩：格内卡片按 `POOL_CELL_ROWS` 行折行，
-##     于是每个费用档正好两行卡、行高一致。列宽取「该列最挤那档」所需宽度
-##     （目前是 5 费防御型 8 艘 ⇒ 4 个子列），空出来的格子留白 ——
-##     宁可留白也不能让列宽逐行变化，那样「同定位一列」当场就散了。
-const POOL_CELL_ROWS := 2
+##  ⚠️ 一块 = `BLOCK_ROWS` 行 × 最多 `BLOCK_MAX_COLS` 列；超了就 **均分**
+##     （8 张 → 4+4，12 张 → 6+6）。⛔ 别让最后一块只剩一两张：
+##     同一档两块宽窄不一，整张表当场就散了（图里 4 费 / 5 费 都是均分的）。
+
+## 一块固定 2 行；最多 3 列（= 6 张）。改这两个数等于改整张表的骨架。
+const BLOCK_ROWS := 2
+const BLOCK_MAX_COLS := 3
+const BLOCK_MAX := BLOCK_ROWS * BLOCK_MAX_COLS
+## 块内卡片间距
 const POOL_GAP := 6
-## 三个定位列之间的间距（比格内间距大，用来把「列」切出来）
-const POOL_BAND_GAP := 14
+## 同一标签组内，块与块之间
+const BLOCK_GAP := 18
+## 标签组之间（常规 ↔ 电子战 ↔ 后勤）。必须明显大于 `BLOCK_GAP`，
+## 否则三块会连成一片，"特殊船被单独挑出来了"这件事就看不出来。
+const TAG_GAP := 40
+## 费用带之间（3 费 ↔ 4 费 ↔ 5 费 ↔ ★2 段）
+const SECTION_GAP := 12
 ## 左侧费用栏宽度：竖排「3 费 / 巡洋」两行
 const POOL_GUTTER := 42.0
 ## 费用档 → 吨位简称（与图鉴顶部「吨位」筛选 chip 同一套说法）
 const COST_SHORT := {3: "巡洋", 4: "战巡", 5: "战列"}
-## 列的固定顺序（与图鉴「定位」一行的先后一致）
-const ROLE_ORDER := [&"attack", &"defense", &"logi"]
-## 列标题色：攻击橙 / 防御蓝 / 后勤绿 —— 全是 `EveWindow` 既有语义色，
-## 不新造颜色（它们本来就是「火力 / 护盾 / 修复」的通用语义）。
-const ROLE_COLORS := {
-	&"attack": Color(0.88, 0.52, 0.30),
-	&"defense": Color(0.35, 0.70, 0.90),
-	&"logi": Color(0.52, 0.76, 0.55),
-}
+
+## 势力顺序：**盾抗族先、甲抗族后**。
+##
+## ⚠️ 这不是随手排的：加达里 / 米玛塔尔 全族盾抗，盖伦特 / 艾玛 全族甲抗
+##    （见 `EveShipTable` 的 `defense` 列，52 艘无一例外）。
+##    按这个顺序落进 2 列的块里 ⇒「同一列 = 同一种防御」自动成立，
+##    玩家扫一眼就知道"右边这列全是甲抗"。
+## ⛔ 别改成拼音序 / 中文序（那正好是 加→盖→米→艾，盾甲会混列）；
+##    ⛔ 也别按 `role` 排 —— 定位是另一条正交信息，卡面上没有它。
+const FACTION_ORDER := ["加达里", "米玛塔尔", "盖伦特", "艾玛"]
+
+## 标签三档：块的先后顺序（★1 段），也是族内的列序（★2 段）。
+const TAG_PLAIN := 0
+const TAG_EW := 1
+const TAG_LOGI := 2
+const TAG_ORDER := [TAG_PLAIN, TAG_EW, TAG_LOGI]
 
 ## 显示名取词（与商店卡 / 羁绊窗同一口径）。
 const TERMS := preload("res://scripts/core/eve_terms.gd")
@@ -193,7 +211,7 @@ func _build_pool() -> Control:
 	widen_scrollbar(scroll)
 
 	_pool_box = VBoxContainer.new()
-	_pool_box.add_theme_constant_override("separation", POOL_GAP)
+	_pool_box.add_theme_constant_override("separation", SECTION_GAP)
 	_pool_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(_pool_box)
 	return col_box
@@ -267,57 +285,94 @@ static func _card_id(key: StringName, star: int) -> String:
 
 # ------------------------------------------------------------------ 矩阵排版
 
-## 池子 → 三层分组：`{star: {cost: {role_id: [ship...]}}}`
+## 池子 → `{star: {cost: [ship...]}}`。只分桶、不改序。
 ##
-## ⚠️ 只分组、不改序：同一格内的卡片保持池子原序（权威表按族排，
-##    所以同一族的船会挨在一起 —— 这是玩家本来就熟悉的顺序）。
-## ⚠️ 池子里出现没登记的 `role_id` 时**归到第一列**，⛔ 绝不丢卡：
-##    少一张卡 = 玩家许不到那个愿望，而且界面上完全看不出来少了什么。
-func _group_pool(pool: Array) -> Dictionary:
+## ⚠️ 这里**不做排序**（排序全交给 `_sort_ships()`）；保持入参原序，
+##    是为了让每个桶的并集必然 == 池子本身 —— 分桶丢卡是这类重排最常见的错。
+static func _bucket_stars(pool: Array) -> Dictionary:
 	var stars := {}
 	for d in pool:
 		var ship: Dictionary = d
 		var star := clampi(int(ship.get("star", 1)), 1, 3)
 		var cost := int(ship.get("cost", 0))
-		var rid := StringName(ship.get("role_id", &""))
-		if rid == &"":
-			# 老存档 / 未来新增定位没登记 ⇒ 退回按中文查一次，再兜底到第一列
-			rid = EveCombatIds.role_id_of(String(ship.get("role", "")))
-		if rid == &"":
-			rid = StringName(ROLE_ORDER[0])
 		if not stars.has(star):
 			stars[star] = {}
 		var by_cost: Dictionary = stars[star]
 		if not by_cost.has(cost):
-			by_cost[cost] = {}
-		var by_role: Dictionary = by_cost[cost]
-		if not by_role.has(rid):
-			by_role[rid] = []
-		(by_role[rid] as Array).append(ship)
+			by_cost[cost] = []
+		(by_cost[cost] as Array).append(ship)
 	return stars
 
 
-## 每列要几个子列 = 「该列最挤那档的艘数 / `POOL_CELL_ROWS`」向上取整。
+## 一条船属于哪一档标签。
 ##
-## ★ 这保证**任何**费用档都正好 `POOL_CELL_ROWS` 行卡 ⇒ 所有行等高，
-##   网格看起来是规整的表格（这是「好选」的关键，不是装饰）。
-func _role_sub_cols(stars: Dictionary) -> Dictionary:
-	var max_n := {}
-	for star in stars:
-		for cost in (stars[star] as Dictionary):
-			for rid in (stars[star][cost] as Dictionary):
-				var n: int = ((stars[star][cost][rid]) as Array).size()
-				max_n[rid] = maxi(int(max_n.get(rid, 0)), n)
-	var out := {}
-	for rid in ROLE_ORDER:
-		var n: int = int(max_n.get(rid, 0))
-		out[rid] = maxi(1, int(ceil(float(n) / float(POOL_CELL_ROWS))))
+## ⚠️ 判据**只认羁绊表的公开入口**（`is_ew_ship` / `is_logi_ship`），
+##    ⛔ 不在这里另抄一份船名表 —— 电子战名单是会变的（`EW_SHIP_KEYS` 是唯一真源）。
+static func _tag_of(ship: Dictionary) -> int:
+	if EveTraitTable.is_ew_ship(ship):
+		return TAG_EW
+	if EveTraitTable.is_logi_ship(ship):
+		return TAG_LOGI
+	return TAG_PLAIN
+
+
+## 组内排序：势力（盾抗族 → 甲抗族）为主键，标签（常规 → 电子战 → 后勤）为次键。
+##
+## ⚠️ 用「按桶取」而不是 `sort_custom`：Godot 的数组排序**不稳定**，
+##    同族同标签的两条船顺序会随机翻 —— 同一张表每次打开都不一样，
+##    玩家会以为卡在跳。
+static func _sort_ships(ships: Array) -> Array:
+	var out: Array = []
+	for fac in FACTION_ORDER:
+		for tag in TAG_ORDER:
+			for d in ships:
+				var s: Dictionary = d
+				if String(s.get("faction_cn", "")) != fac:
+					continue
+				if _tag_of(s) != tag:
+					continue
+				out.append(s)
+	# 兜底：势力没登记的新船（以后扩表）按原序补在末尾，⛔ 绝不丢卡
+	for d in ships:
+		if not out.has(d):
+			out.append(d)
 	return out
 
 
-## 一个定位格子的宽度（子列数 × 卡宽 + 格内间距）
-static func _cell_width(sub_cols: int) -> float:
-	return float(sub_cols) * CARD_W + float(maxi(0, sub_cols - 1)) * float(POOL_GAP)
+## 一条费用带 → 若干「组」，每组内部已排好序、可以直接切块。
+##
+## · ★1：拆成 常规 / 电子战 / 后勤 三组（空组不产出）；
+## · ★2：不拆，整带一组 —— 一族正好 3 条巡洋，一族一行最好比价。
+static func _section_groups(ships: Array, star: int) -> Array:
+	var out: Array = []
+	if star >= 2:
+		out.append(_sort_ships(ships))
+		return out
+	for tag in TAG_ORDER:
+		var bucket: Array = []
+		for d in ships:
+			if _tag_of(d) == tag:
+				bucket.append(d)
+		if not bucket.is_empty():
+			out.append(_sort_ships(bucket))
+	return out
+
+
+## 一组 → 若干块。每块 `BLOCK_ROWS` 行、最多 `BLOCK_MAX_COLS` 列，超了均分。
+##
+## 例：4 张 → [4]（2 列）｜8 张 → [4, 4]（各 2 列）｜12 张 → [6, 6]（各 3 列）。
+static func _chunk(ships: Array) -> Array:
+	var n := ships.size()
+	if n <= 0:
+		return []
+	var blocks := int(ceil(float(n) / float(BLOCK_MAX)))
+	var per := int(ceil(float(n) / float(blocks)))
+	var out: Array = []
+	var i := 0
+	while i < n:
+		out.append(ships.slice(i, mini(i + per, n)))
+		i += per
+	return out
 
 
 func _fill_grid(pool: Array) -> void:
@@ -325,38 +380,22 @@ func _fill_grid(pool: Array) -> void:
 		c.queue_free()
 	_cards.clear()
 
-	var stars := _group_pool(pool)
-	var sub_cols := _role_sub_cols(stars)
-	var cell_w := {}
-	for rid in ROLE_ORDER:
-		cell_w[rid] = _cell_width(int(sub_cols.get(rid, 1)))
-
-	_pool_head.text = "候选池 · 共 %d 艘　｜　行 = 费用档　列 = 定位　｜　青边 ★1 · 金边 ★2（二星巡洋）" \
+	_pool_head.text = "候选池 · 共 %d 艘　｜　同级一行 · 一块两行 · 同族一列（盾抗族在前）· 电子战/后勤单独成块　｜　青边 ★1 · 金边 ★2" \
 			% pool.size()
 
-	# ① 列标题（三个定位）—— 与下面的行用同一套列宽，所以能对齐
-	_pool_box.add_child(_build_col_header(cell_w))
-
-	# ② ★1：每个费用档一行
-	var s1: Dictionary = stars.get(1, {})
-	for cost in _sorted_costs(s1):
-		_pool_box.add_child(_build_cost_row(cost, s1[cost], sub_cols, cell_w))
-
-	# ③ ★2：单独一段放最下面（用户原话「二星的在下面」）
-	var s2: Dictionary = stars.get(2, {})
-	if not s2.is_empty():
-		_pool_box.add_child(_section_divider("★2 二星巡洋 · 许愿命中返星币"))
-		for cost in _sorted_costs(s2):
-			_pool_box.add_child(_build_cost_row(cost, s2[cost], sub_cols, cell_w))
-
-	# ④ 未来若出现 ★3（或更高）：接着往下排，⛔ 不静默丢卡
-	for star in stars.keys():
-		if int(star) <= 2:
-			continue
-		_pool_box.add_child(_section_divider("★%d" % int(star)))
-		var sx: Dictionary = stars[star]
-		for cost in _sorted_costs(sx):
-			_pool_box.add_child(_build_cost_row(cost, sx[cost], sub_cols, cell_w))
+	var stars := _bucket_stars(pool)
+	var star_keys := stars.keys()
+	star_keys.sort()
+	for sk in star_keys:
+		var star := int(sk)
+		# ★2 起单独成段、压在最下面（用户原话「二星的在下面」），
+		# 未来若出现 ★3 也照这个规矩往下接，⛔ 不静默丢卡
+		if star >= 2:
+			_pool_box.add_child(_section_divider(
+					"★2 二星巡洋 · 许愿命中返星币" if star == 2 else "★%d" % star))
+		var by_cost: Dictionary = stars[sk]
+		for cost in _sorted_costs(by_cost):
+			_pool_box.add_child(_build_cost_row(star, int(cost), by_cost[cost]))
 
 
 ## 费用键升序（3 费 → 5 费）。Dictionary 的 key 顺序不保证，必须显式排。
@@ -366,33 +405,10 @@ static func _sorted_costs(by_cost: Dictionary) -> Array:
 	return ks
 
 
-## 列标题行：左侧空出费用栏，三个定位各占一格宽度并居中。
-func _build_col_header(cell_w: Dictionary) -> Control:
+## 一条费用带 = 左侧「3 费 / 巡洋」+ 若干标签组，每组再折成 2 行的小块。
+func _build_cost_row(star: int, cost: int, ships: Array) -> Control:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", POOL_BAND_GAP)
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var gutter := Control.new()
-	gutter.custom_minimum_size = Vector2(POOL_GUTTER, 0)
-	gutter.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_child(gutter)
-	for rid in ROLE_ORDER:
-		var l := Label.new()
-		l.text = String(EveCombatIds.ROLE_LABEL.get(rid, String(rid)))
-		var col: Color = ROLE_COLORS.get(rid, C_TEXT_DIM)
-		l.add_theme_color_override("font_color", col)
-		FONT.fs(l, 10)
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		l.custom_minimum_size = Vector2(float(cell_w.get(rid, CARD_W)), 0)
-		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_child(l)
-	return row
-
-
-## 一个费用档 = 左边「3 费 / 巡洋」+ 三个定位格（格内卡片折行）
-func _build_cost_row(cost: int, by_role: Dictionary,
-		sub_cols: Dictionary, cell_w: Dictionary) -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", POOL_BAND_GAP)
+	row.add_theme_constant_override("separation", BLOCK_GAP)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var tag := Label.new()
@@ -405,42 +421,36 @@ func _build_cost_row(cost: int, by_role: Dictionary,
 	tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(tag)
 
-	for rid in ROLE_ORDER:
-		var ships: Array = by_role.get(rid, [])
-		var cell: Control
-		if ships.is_empty():
-			# 空列（4 费 / 5 费没有后勤船）也要占住列宽，否则后面的列会往左缩，
-			# 整张表就歪了。留一个极淡的「—」说明"这档本来就没有"，
-			# ⛔ 别只留白：玩家会以为是没渲染出来。
-			cell = _empty_cell(float(cell_w.get(rid, CARD_W)))
-		else:
-			cell = _build_role_cell(ships, int(sub_cols.get(rid, 1)))
-			cell.custom_minimum_size = Vector2(float(cell_w.get(rid, CARD_W)), 0)
-		row.add_child(cell)
+	var groups := _section_groups(ships, star)
+	for gi in groups.size():
+		if gi > 0:
+			# 组间距只能靠 spacer 撑：HBox 的 `separation` 是全局的，
+			# 只有塞一个空控件才能"在这一处"拉开。
+			# ⚠️ spacer 两侧各还有一个 `BLOCK_GAP` 的 separation，必须减掉，
+			#    否则 `TAG_GAP` 就不是眼睛看到的那条缝（会多出 2×BLOCK_GAP）。
+			var sp := Control.new()
+			sp.custom_minimum_size = Vector2(float(maxi(0, TAG_GAP - BLOCK_GAP * 2)), 0)
+			sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			row.add_child(sp)
+		for block in _chunk(groups[gi]):
+			row.add_child(_build_block(block))
 	return row
 
 
-## 空定位格：一个居中、极淡的破折号（占满该列宽度）
-func _empty_cell(w: float) -> Control:
-	var l := Label.new()
-	l.text = "—"
-	l.add_theme_color_override("font_color", C_TEXT_FAINT)
-	FONT.fs(l, 10)
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	l.custom_minimum_size = Vector2(w, CARD_H)
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return l
-
-
-## 一个定位格：`sub_cols` 列、最多 `POOL_CELL_ROWS` 行的卡片网格
-func _build_role_cell(ships: Array, sub_cols: int) -> Control:
-	var cell := GridContainer.new()
-	cell.columns = maxi(1, sub_cols)
-	cell.add_theme_constant_override("h_separation", POOL_GAP)
-	cell.add_theme_constant_override("v_separation", POOL_GAP)
-	cell.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+## 一块 = `BLOCK_ROWS` 行的卡片网格。列数 = ceil(张数 / 2)：
+## 4 张 → 2 列 × 2 行；6 张 → 3 列 × 2 行。
+##
+## ⚠️ `columns` 必须显式给：GridContainer 默认 1 列，忘了设就会竖成一条线
+##    ——「一块两行」会当场失效，而且缩略图里非常像"卡片掉了一列"，很难一眼看出。
+func _build_block(ships: Array) -> Control:
+	var cols := int(ceil(float(ships.size()) / float(BLOCK_ROWS)))
+	var grid := GridContainer.new()
+	grid.columns = maxi(1, cols)
+	grid.add_theme_constant_override("h_separation", POOL_GAP)
+	grid.add_theme_constant_override("v_separation", POOL_GAP)
+	grid.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	grid.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	for d in ships:
 		var ship: Dictionary = d
 		var key := StringName(ship.get("ship_key", &""))
@@ -448,9 +458,9 @@ func _build_role_cell(ships: Array, sub_cols: int) -> Control:
 		var w := _build_card(ship, star)
 		var root: PanelContainer = w["root"]
 		root.gui_input.connect(_on_card_input.bind(key, star))
-		cell.add_child(root)
+		grid.add_child(root)
 		_cards[_card_id(key, star)] = w
-	return cell
+	return grid
 
 
 ## 分段标题（★2 那一段）：两条细线夹一行金字，与鸣谢面板的段头同版式。
