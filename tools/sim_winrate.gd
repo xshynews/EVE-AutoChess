@@ -54,6 +54,10 @@ const KEY_DEBUG := false
 ##      战列对轰 42.7s、BOSS 37.1s —— 因为探针阵容里的战列全是攻击型，血量没动。
 const TTK_PROBE := false
 
+## ★ 2026-10-31：TTK 系数敏感度扫描（见 `_ttk_sweep` 顶注）。
+##    true = 只跑扫描：3 个场景 × 5 组系数，回答「再加伤害还能换几秒」。
+const TTK_SWEEP := false
+
 ## ⚠️ 临时诊断开关（2026-10-26）：新羁绊「电子战 / 后勤」的加成值多少胜率。
 ##    true = 只跑 `_trait_ab_experiment()`：把**倍率**从编队成本里剥出来单独量化 ——
 ##      电子战：同一支 6 船队，敌方开火间隔 ×1.00 / 1.05 / 1.10 / 1.15
@@ -62,6 +66,21 @@ const TTK_PROBE := false
 ##    ⛔ 它**不改任何生产表**，只在这里临时乘倍率。
 ##    ⚠️ 结论已抄进 `EveTraitTable.EFFECTS` 的注释里；要复测就把下面打开。
 const TRAIT_AB_PROBE := false
+
+## ⚠️ 临时诊断开关（2026-10-31）：电子战**重做后**的 A/B。
+##    true = 只跑 `_ew_ab_experiment()`。
+##
+##    重做内容（用户定案）：减伤从「敌方全体开火变慢」改成「电子船锁定谁就削谁」，
+##    并给每艘电子船加「每 5 秒掷一次、命中 10 秒不能开火」的干扰。
+##
+##    对照维度：
+##      · 编队：2 / 4 / 6 艘电子船（正好对应 2 / 4 / 6 档）+ 一支纯火力参考队
+##      · 强度：关闭 / 旧档 / 新档 / 新档+干扰
+##    ⇒ 同一支编队内部比，能单独量出「羁绊收益」；
+##      纯火力参考队用来回答「满档电子队到底追不追得上常规队」。
+##
+##    ⛔ 它不改任何生产表，只临时写 `is_ew` / `ew_lock_reduce` / `jam_chance`。
+const EW_PROBE := true
 
 const COL_STEP := 8000.0
 const ROW_STEP := 6000.0
@@ -90,12 +109,23 @@ func _ready() -> void:
 		_ttk_experiment()
 		get_tree().quit()
 		return
+	if TTK_SWEEP:
+		print("\n" + "=".repeat(84))
+		print("⑤ TTK 系数敏感度扫描（叠在生产系数 1.20 / 0.85 之上）")
+		print("=".repeat(84))
+		_ttk_sweep()
+		get_tree().quit()
+		return
 	if BOSS_PROBE:
 		_boss_experiment()
 		get_tree().quit()
 		return
 	if TRAIT_AB_PROBE:
 		_trait_ab_experiment()
+		get_tree().quit()
+		return
+	if EW_PROBE:
+		_ew_ab_experiment()
 		get_tree().quit()
 		return
 	if ANTI_SWARM_PROBE:
@@ -427,6 +457,171 @@ func _trait_ab_experiment() -> void:
 			print("     维修 ×%.2f / 间隔 ×%.2f  胜 %2d/%d · 存活 %.1f/%d · 我挨伤 %.0f · 我输出 %.0f"
 					% [v.x, v.y, wins, plays, alive / float(plays), keys.size(),
 						taken / float(plays), dealt / float(plays)])
+
+
+## ★★ 2026-10-31（用户定案）电子战重做的 A/B。
+##
+## 为什么探针里**另存一份档位数值**：这一轮比的是「旧档 vs 新档」，
+## 而旧档已经从 `eve_trait_table.gd` 删掉了 —— 不抄一份就没法做对照。
+## ⚠️ 生产代码读的是 trait table，**不读这里**，两边不同步不影响游戏；
+##    但下次再调档时，先改 trait table，再回来同步这两个表（否则对照会失真）。
+##
+## ★ 2026-10-31 第二轮：`EW_NEW` 跟着生产表提到 30/30/40，
+##   第一轮的 20/20/40 留成 `EW_R20` 做对照 —— 用户拍板「按建议落地」时，
+##   要有数字能回答「提到 30% 到底换回了几个百分点」。
+##   ⚠️ `EW_NEW` **必须**与 `eve_trait_table.gd` 的 ew 档位逐字一致。
+const EW_NEW := {
+	0: {"reduce": 0.0, "cycle": 0.0},
+	2: {"reduce": 0.30, "cycle": 0.0},
+	4: {"reduce": 0.30, "cycle": 0.10},
+	6: {"reduce": 0.40, "cycle": 0.20},
+}
+## 第一轮（2026-10-31 上午）的 20/20/40，留作对照。
+const EW_R20 := {
+	0: {"reduce": 0.0, "cycle": 0.0},
+	2: {"reduce": 0.20, "cycle": 0.0},
+	4: {"reduce": 0.20, "cycle": 0.10},
+	6: {"reduce": 0.40, "cycle": 0.20},
+}
+const EW_OLD := {
+	0: {"reduce": 0.0, "cycle": 0.0},
+	2: {"reduce": 0.0, "cycle": 0.05},
+	4: {"reduce": 0.0, "cycle": 0.10},
+	6: {"reduce": 0.0, "cycle": 0.15},
+}
+
+func _ew_ab_experiment() -> void:
+	print("\n" + "=".repeat(92))
+	print("③ 电子战重做 A/B —— 同一编队内比强度，另设纯火力队做天花板参考")
+	print("=".repeat(92))
+	print("口径：40 种子 × 3 节点（N8/N13/N15）= 120 局/格；敌方编组与缩放沿用节点表")
+	var seeds := 40
+	var nodes := [8, 13, 15]
+	# ⚠️ 6 艘上限，总费用尽量对齐（电子船便宜，这是它的定位，不强行拉平）
+	var comps := [
+		{"name": "2 电子 · 2 档", "n": 2, "cost": 10,
+			"keys": ["condor", "tristan", "punisher", "rifter", "caracal", "thorax"]},
+		{"name": "4 电子 · 4 档", "n": 4, "cost": 10,
+			"keys": ["condor", "tristan", "slasher", "executioner", "caracal", "thorax"]},
+		{"name": "6 电子 · 6 档", "n": 6, "cost": 10,
+			"keys": ["condor", "tristan", "slasher", "executioner", "moa", "vexor"]},
+		{"name": "纯火力 · 参考", "n": 0, "cost": 12,
+			"keys": ["punisher", "rifter", "kestrel", "caracal", "thorax", "rupture"]},
+	]
+	var variants := [
+		{"id": "off", "desc": "关闭（基线）"},
+		{"id": "old", "desc": "旧档：全体间隔 +5/10/15%"},
+		{"id": "r20", "desc": "新档·第一轮"},
+		{"id": "new", "desc": "新档·本轮（生产值）"},
+		{"id": "jam", "desc": "新档·本轮 + 单船干扰"},
+	]
+	for comp in comps:
+		var n := int(comp["n"])
+		var tier_old: Dictionary = EW_OLD[n]
+		var tier_new: Dictionary = EW_NEW[n]
+		var tier_r20: Dictionary = EW_R20[n]
+		print("\n【%s】%d 费 · %s" % [String(comp["name"]), int(comp["cost"]),
+				", ".join(PackedStringArray(comp["keys"]))])
+		var base_wins := -1
+		for v in variants:
+			var vid := String(v["id"])
+			var reduce := 0.0
+			var cycle := 0.0
+			var jam := false
+			match vid:
+				"old":
+					reduce = float(tier_old["reduce"])
+					cycle = float(tier_old["cycle"])
+				"r20":
+					reduce = float(tier_r20["reduce"])
+					cycle = float(tier_r20["cycle"])
+				"new":
+					reduce = float(tier_new["reduce"])
+					cycle = float(tier_new["cycle"])
+				"jam":
+					reduce = float(tier_new["reduce"])
+					cycle = float(tier_new["cycle"])
+					jam = true
+			var wins := 0
+			var plays := 0
+			var taken := 0.0
+			var dealt := 0.0
+			var alive := 0.0
+			var secs := 0.0
+			for ni in nodes:
+				for k in seeds:
+					var r := _ew_case(int(ni), comp["keys"], reduce, cycle, jam,
+							3100 + int(ni) * 100 + k)
+					plays += 1
+					wins += 1 if int(r["winner"]) == 0 else 0
+					taken += float(r["enemy_damage"])
+					dealt += float(r["own_damage"])
+					alive += float(r["alive"])
+					secs += float(r["time"])
+			if base_wins < 0:
+				base_wins = wins
+			var delta := wins - base_wins if vid != "off" else 0
+			print("   %-22s [减伤%2.0f%% 间隔+%2.0f%%] 胜 %2d/%d (%+.0f%%) · 存活 %.1f/6 · 我挨伤 %.0f · 我输出 %.0f · 平均 %.1fs"
+					% [String(v["desc"]), reduce * 100.0, cycle * 100.0,
+						wins, plays, float(delta) * 100.0 / float(maxi(1, plays)),
+						alive / float(plays), taken / float(plays), dealt / float(plays),
+						secs / float(plays)])
+
+
+## 一格 = 同一编队 × 同一强度 × 一个种子。
+## ⚠️ 电子战字段**直接写**在 `EveShip` 上，不走工厂 ——
+##    工厂的入口要一个真实的 `EveRunState`（要凑羁绊、要上场名单），
+##    探针里只想控制「减伤 / 间隔 / 干扰」这三个旋钮。
+func _ew_case(node_idx: int, keys: Array, reduce: float, enemy_cycle: float,
+		jam: bool, seed_v: int) -> Dictionary:
+	var row: Dictionary = NODE.by_index(node_idx)
+	var fac := FACTORY.new()
+	var own: Array = []
+	var id := 1
+	for key in keys:
+		var s = DB.instantiate_by_id(String(key), 0, id)
+		id += 1
+		if s == null:
+			continue
+		fac.apply_doctrine(s)
+		if EveTraitTable.EW_SHIP_KEYS.has(String(key)):
+			s.is_ew = true
+			s.ew_lock_reduce = reduce
+			if jam:
+				s.jam_chance = EveShip.jam_chance_for_class(s.ship_class)
+			s.jam_timer = EveShip.JAM_CYCLE
+		own.append(s)
+	var enemy: Array = []
+	for sid in COMPS.ship_ids(String(row.get("comp", ""))):
+		var e = DB.instantiate_by_id(String(sid), 1, id)
+		id += 1
+		if e == null:
+			continue
+		RUN.apply_enemy_scaling(e, 1, float(row.get("scale", 1.0)))
+		fac.apply_doctrine(e)
+		if enemy_cycle > 0.0:
+			e.cycle_scale(1.0 + enemy_cycle)
+		enemy.append(e)
+	var dz := _deploy_z(own, enemy)
+	_place_own(own, dz[0], own.size())
+	_place_enemy(enemy, dz[1])
+	var sim = SIM.new()
+	sim.setup(_typed(own), _typed(enemy))
+	sim.set_seed(seed_v)
+	var limit := float(row.get("time", 45.0))
+	sim.set_time_limit(limit)
+	_run_sim(sim, limit)
+	var own_dmg := 0.0
+	var enemy_dmg := 0.0
+	var alive := 0
+	for s in own:
+		own_dmg += s.damage_dealt
+		if s.alive:
+			alive += 1
+	for s in enemy:
+		enemy_dmg += s.damage_dealt
+	return {"winner": sim.winner_team, "time": sim.elapsed, "alive": alive,
+			"own_damage": own_dmg, "enemy_damage": enemy_dmg}
 
 
 func _trait_ab_case(node_idx: int, keys: Array, enemy_cycle: float,
@@ -901,7 +1096,8 @@ func _ttk_experiment() -> void:
 	print("\n" + "=".repeat(84))
 	print("④ TTK 体检：一场战斗几秒打完（抗性归零 + 战列舰重做之后）")
 	print("=".repeat(84))
-	print("  每格 12 局固定种子；「渐增前」= 在时限 60% 处（伤害开始放大）之前就打完")
+	print("  每格 12 局固定种子；「渐增前」= 在时限 %.0f%% 处（伤害开始放大）之前就打完"
+			% (SIM.SUDDEN_DEATH_FRACTION * 100.0))
 	var seeds := 12
 	var cruisers := ["omen", "caracal", "drake", "punisher", "rifter", "condor"]
 	var cases: Array = [
@@ -970,7 +1166,7 @@ func _ttk_report(spec: Dictionary, seeds: int, old_resists: bool) -> Dictionary:
 			foe_wins += 1
 		if t > limit:
 			over += 1
-		if t <= limit * 0.60:
+		if t <= limit * SIM.SUDDEN_DEATH_FRACTION:
 			before_sd += 1
 	var sorted := times.duplicate()
 	sorted.sort()
@@ -981,6 +1177,51 @@ func _ttk_report(spec: Dictionary, seeds: int, old_resists: bool) -> Dictionary:
 		print("\n【%s】时限 %.0fs" % [String(spec["name"]), limit])
 		print("   %s" % _ttk_line(payload))
 	return payload
+
+
+## ★ 2026-10-31（用户定案后追加）：TTK 系数**敏感度扫描**。
+##
+## 为什么需要它：把生产系数改成（伤害 ×1.20 / 血量 ×0.85）之后实测，
+## 单机场景 37.7s → 17.1s（−55%），但**联机对轰只从 43.1s → 39.8s（−8%）**。
+## 差这么多说明「伤害 ÷ 血量」不是唯一瓶颈：
+##   · 单机是「我方碾压敌方」，伤害一涨就快速收割；
+##   · 联机镜像对轰双方同时受益，而且时间大量花在**打不中**
+##     （命中率 = 角速度驱动，见 `EveCombatCore.turret_chance_to_hit`），
+##     堆伤害的边际收益会衰减。
+## ⇒ 这个扫描量的是「再加一倍伤害，到底能换回几秒」，用来决定该往哪加码。
+func _ttk_sweep() -> void:
+	var combos := [
+		["现状（生产 1.20 / 0.85）", 1.0, 1.0],
+		["伤害再 ×1.15", 1.15, 1.0],
+		["伤害再 ×1.35", 1.35, 1.0],
+		["伤害再 ×1.35 + 血再 ×0.90", 1.35, 0.90],
+		["伤害再 ×1.60", 1.60, 1.0],
+	]
+	var seeds := 8
+	var specs := [
+		{"name": "联机 6v6 巡洋镜像", "limit": 60.0,
+			"own": ["omen", "caracal", "drake", "punisher", "rifter", "condor"],
+			"stars": [2, 2, 2, 2, 2, 2],
+			"foe": ["omen", "caracal", "drake", "punisher", "rifter", "condor"],
+			"foe_star": 2, "mirror": true},
+		{"name": "联机 3 战列对轰", "limit": 60.0,
+			"own": ["raven", "megathron", "apocalypse", "omen", "caracal", "drake"],
+			"stars": [2, 2, 2, 2, 2, 2],
+			"foe": ["raven", "megathron", "apocalypse", "omen", "caracal", "drake"],
+			"foe_star": 2, "mirror": true},
+		{"name": "单机 N8 中期", "node": 8, "limit": 60.0,
+			"own": ["omen", "caracal", "drake", "punisher", "rifter", "condor"],
+			"stars": [2, 2, 2, 2, 2, 2]},
+	]
+	for spec in specs:
+		print("\n【%s】%d 局/格" % [String(spec["name"]), seeds])
+		for c in combos:
+			var t := 0.0
+			for k in seeds:
+				var r := _ttk_case(spec, 4200 + k * 977, false,
+						float(c[1]), float(c[2]))
+				t += float(r["elapsed"])
+			print("   %-32s 平均 %.1fs" % [String(c[0]), t / float(seeds)])
 
 
 func _ttk_line(p: Dictionary) -> String:
@@ -1026,7 +1267,8 @@ func _pct(arr: Array, q: float) -> float:
 
 ## 单局：我方 = 真实编制链，敌方 = 节点表编组（或显式给出）。
 ## `old_resists` = 把双方三层抗性临时回填 0.45，只用于「改前」对照。
-func _ttk_case(spec: Dictionary, seed_v: int, old_resists: bool) -> Dictionary:
+func _ttk_case(spec: Dictionary, seed_v: int, old_resists: bool,
+		dmg_extra: float = 1.0, hp_extra: float = 1.0) -> Dictionary:
 	var run: Node = RUN.new()
 	run.set_difficulty("simple")
 	run.start_run(seed_v)
@@ -1062,6 +1304,16 @@ func _ttk_case(spec: Dictionary, seed_v: int, old_resists: bool) -> Dictionary:
 		for s in own + enemy:
 			for layer in [&"shield", &"armor", &"hull"]:
 				s.resists[layer] = PackedFloat32Array([0.45, 0.45, 0.45, 0.45])
+	# ★ 2026-10-31：系数扫描用的**额外**缩放（叠在生产系数之上）。
+	#   ⚠️ 只给探针用，⛔ 别把这套搬进生产代码 —— 生产只有一个旋钮
+	#      （`EveShipDatabase.TTK_DAMAGE_MULT / TTK_HP_MULT`）。
+	if not is_equal_approx(dmg_extra, 1.0) or not is_equal_approx(hp_extra, 1.0):
+		for s in own + enemy:
+			if not is_equal_approx(dmg_extra, 1.0):
+				s.warhead_scale(dmg_extra)
+			if not is_equal_approx(hp_extra, 1.0):
+				s.layer_hp_adjust({&"shield": hp_extra, &"armor": hp_extra,
+						&"hull": hp_extra}, {})
 	var dz := _deploy_z(own, enemy)
 	_place_own(own, dz[0], own.size())
 	# `mirror` = 敌方按我方站位**镜像**摆（联机对局两边都是玩家编制，
@@ -1631,10 +1883,10 @@ func _maybe_refresh(run) -> void:
 	for d in run.offers:
 		if not (d is Dictionary) or (d as Dictionary).is_empty():
 			continue
-		if int(d.get("faction", -1)) == want_fac and int(d.get("cost", 1)) >= 2:
+		if int(d.get("faction", -1)) == want_fac and EveRunState.offer_tier(d as Dictionary) >= 2:
 			has_good = true
 		if want_def != &"" and StringName(d.get("defense_id", &"")) == want_def \
-				and int(d.get("cost", 1)) >= 3:
+				and EveRunState.offer_tier(d as Dictionary) >= 3:
 			has_good = true
 	for d in run.offers:
 		if not (d is Dictionary) or (d as Dictionary).is_empty():

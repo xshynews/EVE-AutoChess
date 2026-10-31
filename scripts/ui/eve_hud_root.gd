@@ -178,6 +178,8 @@ var pause_veil: Control = null
 var bench_rail: EveBenchRail          ## 备战席轨道（非窗口）
 ## 伤害数字层（阶段 D）—— 屏幕空间的飘字，压在所有窗口之上、幽灵之下。
 var damage_feed: Control = null
+## ★ 2026-10-30：战斗播报条（中央靠上 3 行）。与飘字分属两层，见脚本顶注。
+var damage_band: Control = null
 ## 节点进场词横幅（阶段 C 收尾）—— 同样压在所有窗口之上、飘字之下。
 var entry_banner: Control = null
 
@@ -260,6 +262,7 @@ const BENCH_SCRIPT := preload("res://scripts/ui/panels/eve_bench.gd")
 const AUGMENTS_SCRIPT := preload("res://scripts/ui/panels/eve_augments.gd")
 const EVENT_SCRIPT := preload("res://scripts/ui/panels/eve_event.gd")
 const DAMAGE_FEED_SCRIPT := preload("res://scripts/ui/eve_damage_feed.gd")
+const DAMAGE_BAND_SCRIPT := preload("res://scripts/ui/eve_damage_feed_band.gd")
 ## 节点进场词横幅（阶段 C 收尾）—— 瞬时元素，见 eve_entry_banner.gd 的口径说明
 const ENTRY_BANNER_SCRIPT := preload("res://scripts/ui/eve_entry_banner.gd")
 const SETTINGS_SCRIPT := preload("res://scripts/ui/panels/eve_settings.gd")
@@ -424,6 +427,14 @@ func _build_layout() -> void:
 	damage_feed = DAMAGE_FEED_SCRIPT.new()
 	damage_feed.name = "DamageFeed"
 	add_child(damage_feed)
+
+	# ★ 2026-10-30：**战斗播报条**（屏幕中央靠上，3 行滚动）。
+	#   与上面的飘字是两层东西：飘字跟着船走、播报条按时间排队。
+	#   ⚠️ 加在飘字之后 ⇒ 万一重叠，播报条压在数字上面：
+	#      「谁打谁」这句结论比单次伤害数字更该被读到。
+	damage_band = DAMAGE_BAND_SCRIPT.new()
+	damage_band.name = "DamageBand"
+	add_child(damage_band)
 
 	# ⑫ 节点进场词横幅（阶段 C 收尾）
 	#
@@ -805,10 +816,14 @@ func _refresh_rect_tbl() -> void:
 		# ⚠️ 增益窗默认隐藏：不占位 ⇒ 装备栏能吃到 300（否则白留 168px 空档）。
 		#    `set_augments()` 会触发 refresh_layout，所以显隐变化后表会重算。
 		var aug_on := augments_window != null and augments_window.visible
-		# ★ 高度不再写死：按两扇窗**真实内容最小高度**排（字号档一变，常量就失效）
-		# 手机左列是固定槽位布局：外框尺寸不再由内容最小尺寸反推。
-		# 内容宿主会在槽位内裁剪，避免首次排版或字号变化把装备栏顶穿。
-		_rect_tbl = mobile_rects(_last_design, _safe_left(), aug_on)
+		# ★ 2026-10-30（玩家反馈）：「事件变多了，事件栏位没变多，多于 3 个不显示」。
+		#   真凶就是这里 —— 以前不带 `aug_need`，`mobile_rects` 只能回落到
+		#   `MOBILE_AUG_H`=158（正好 3 行），第 4 行被内容宿主裁掉。
+		#   现在把增益窗自己算的 `content_need_h()` 传进去，槽位随条数长。
+		var aug_need := 0.0
+		if aug_on and augments_window.has_method("content_need_h"):
+			aug_need = float(augments_window.call("content_need_h"))
+		_rect_tbl = mobile_rects(_last_design, _safe_left(), aug_on, 0.0, aug_need)
 	elif _compact:
 		_rect_tbl = compact_rects(_last_design)
 	else:
@@ -1405,6 +1420,19 @@ func pop_damage(screen_pos: Vector2, damage: float, quality: int, hit: bool) -> 
 func clear_damage() -> void:
 	if damage_feed and damage_feed.has_method("clear"):
 		damage_feed.call("clear")
+	# ★ 2026-10-30：播报条与飘字同一时刻清（重开 / 进准备阶段），
+	#   否则上一局的战报会挂在新一局的布阵台上面。
+	if damage_band and damage_band.has_method("clear"):
+		damage_band.call("clear")
+
+
+## 战斗播报：播一条「谁对谁打了多少 / 破了哪层」。
+##
+## `kind` = &"hit" / &"pierce" / &"shield" / &"armor" / &"kill"
+## `mine` = true 我方造成（亮蓝），false 我方承受（红）
+func push_damage_line(amount: int, mine: bool, kind: StringName, target_name: String) -> void:
+	if damage_band and damage_band.has_method("push"):
+		damage_band.call("push", amount, mine, kind, target_name)
 
 
 # ------------------------------------------------------------------ 节点进场词横幅（阶段 C 收尾）

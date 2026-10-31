@@ -53,12 +53,7 @@ func build_own(run: EveRunState, team: int = 0) -> Array[EveShip]:
 		if ship == null:
 			continue
 		next_id += 1
-		ship.star = star
-		if star > 1:
-			var m := pow(EveRunState.STAR_MULT, float(star - 1))
-			ship.warhead_scale(m)
-			ship.armor_scale(m)
-			_star_scale_repair(ship, m)
+		apply_star(ship, star)
 		apply_doctrine(ship)
 		out.append(ship)
 		idx_map.append(i)
@@ -70,7 +65,53 @@ func build_own(run: EveRunState, team: int = 0) -> Array[EveShip]:
 	run.apply_events_to(out)
 	# 逐艘的**永久**增益（武器调校 / 结构加固）—— 走 idx_map，不能用 out[i]↔field[i]
 	run.apply_field_buffs_to(out, idx_map)
+	# ★ 2026-10-31：电子战落点（锁定减伤 + 干扰），必须在羁绊之后
+	_apply_ew(out, run.ew_lock_reduce())
 	return out
+
+
+## ★★ 2026-10-31（用户定案）：电子战的**落点** —— 重现 EVE 的锁定机制。
+##
+## 给电子船写两样东西，**来源不同、⛔ 别合并**：
+##   · `ew_lock_reduce` ← 羁绊档位（2/4 艘 = 30%，6 艘 = 40%，见 `eve_trait_table.gd`）
+##                        效果 = 它**正锁定的那一艘**输出 ×(1−该值)
+##   · `jam_chance`     ← **舰种**（护卫 5% / 巡洋 10%），与羁绊等级无关，可叠加
+##                        效果 = 每个干扰周期独立掷一次，命中 ⇒ 目标 10 秒不能开火
+##
+## ⚠️ 减伤**不在这里乘**，只写字段：锁定关系每 tick 都变（换目标 / 目标被打死），
+##    真正的乘法在 `EveBattleSimulator._ew_step()` 里逐帧重算。
+##    在这里乘一次的话，玩家一换目标就永远消不掉旧目标的减伤。
+##
+## ⚠️ `jam_chance` 给**双方**（对称）：PvP 里两支舰队都走这条链，
+##    只给我方会让先手方白拿一个机制。敌方编组本来就有 8 艘电子船
+##    （`eve_enemy_plans.gd`），不给字段等于「同样的船敌方是白板」。
+##
+## ⚠️ 只有电子船才有 jam ⇒ 非电子船 `jam_chance = 0`，模拟器里一刀拦掉。
+func _apply_ew(out: Array[EveShip], lock_reduce: float) -> void:
+	for s in out:
+		if not EveTraitTable.EW_SHIP_KEYS.has(String(s.ship_key)):
+			continue
+		s.is_ew = true
+		s.ew_lock_reduce = lock_reduce
+		s.jam_chance = EveShip.jam_chance_for_class(s.ship_class)
+		# 开局先攒一个周期：第一发干扰在 JAM_CYCLE 秒后才掷，
+		# 避免开局瞬间就有人被哑火（玩家还没看懂发生了什么）。
+		s.jam_timer = EveShip.JAM_CYCLE
+
+
+## 按编组自己的电子船数量算**这一支舰队**的电子战档位（PvP 对手用）。
+##
+## ⚠️ 与 `EveRunState.ew_lock_reduce()` 的区别：那个读的是「玩家自己的 run」，
+##    这个只数传入的舰队 —— PvP 里对手的 run 不在这台机器上。
+static func ew_lock_reduce_of(fleet: Array[EveShip]) -> float:
+	var n := 0
+	for s in fleet:
+		if EveTraitTable.EW_SHIP_KEYS.has(String(s.ship_key)):
+			n += 1
+	var t := EveTraitTable.tier_of(&"ew", "电子战", n)
+	if t.is_empty():
+		return 0.0
+	return float((t.get("apply", {}) as Dictionary).get("ew_lock_reduce", 0.0))
 
 
 ## 按**外部名单**建一支舰队（真联机用：对手的编制是网络送来的）。
@@ -88,16 +129,13 @@ func build_from_entries(entries: Array, team: int, with_traits: bool = true) -> 
 		if ship == null:
 			continue
 		next_id += 1
-		ship.star = star
-		if star > 1:
-			var m := pow(EveRunState.STAR_MULT, float(star - 1))
-			ship.warhead_scale(m)
-			ship.armor_scale(m)
-			_star_scale_repair(ship, m)
+		apply_star(ship, star)
 		apply_doctrine(ship)
 		out.append(ship)
 	if with_traits and not out.is_empty():
 		EveRunState.apply_fleet_traits(out)
+	# ★ 2026-10-31：PvP 对手的电子战档位按**它自己的编组**算（run 不在这台机器上）
+	_apply_ew(out, ew_lock_reduce_of(out))
 	last_idx_map = []
 	return out
 
@@ -113,7 +151,13 @@ func build_enemy(run: EveRunState) -> Array[EveShip]:
 		if ship == null:
 			continue
 		next_id += 1
-		EveRunState.apply_enemy_scaling(ship, 1, run.enemy_scale())
+		# ★ 2026-10-30：BOSS 节点的主坦（cost ≥ 5 的加强型战列）额外吃一层 `bs_damp`。
+		#   只作用于那一艘：玩家卡住的是「打不动主坦」，不是前排清不掉。
+		#   其余节点 `bs_damp` 缺省 1.0 ⇒ 这一行对前 14 关是空操作。
+		var sc := run.enemy_scale()
+		if int(d.get("cost", 1)) >= 5:
+			sc *= run.boss_bs_damp()
+		EveRunState.apply_enemy_scaling(ship, 1, sc)
 		apply_doctrine(ship)
 		out.append(ship)
 	# ★ 2026-10-23：困难 / 炼狱档，敌方也吃自己的羁绊。
@@ -135,7 +179,49 @@ func build_enemy(run: EveRunState) -> Array[EveShip]:
 	if barrier < 1.0:
 		for s in out:
 			s.incoming_mult = barrier
+	# ★ 2026-10-31：电子战落到**敌方**这一侧。
+	#   ⚠️ 档位按敌方编组自己数（`ew_lock_reduce_of`），不读玩家的 run ——
+	#      读玩家的 run 会让「我方凑了 6 艘电子船」变成「敌方也能削我们」，
+	#      那是把玩家自己攒的羁绊反过来打自己。
+	#   ⚠️ 敌方电子船照样会掷干扰（jam 是对称机制），移速/火力不受影响。
+	_apply_ew(out, ew_lock_reduce_of(out))
 	return out
+
+
+## 星级缩放的**唯一实现**（`build_own` / `build_from_entries` / `build_preview` 共用）。
+##
+## ⚠️ 2026-10-30：抽出来是因为**第三处**要用了（档案窗点备战席的船）——
+##    同一段「星级 = 攻击/装甲/后勤各乘 STAR_MULT^(star-1)」原本在
+##    `build_own` 与 `build_from_entries` 里各抄了一份，再抄第三份必然分叉：
+##    症状是「备战席点开是 ★1 的攻击力，上场后变 ★★」，玩家会以为数值在漂。
+static func apply_star(ship: EveShip, star: int) -> void:
+	ship.star = star
+	if star <= 1:
+		return
+	var m := pow(EveRunState.STAR_MULT, float(star - 1))
+	ship.warhead_scale(m)
+	ship.armor_scale(m)
+	_star_scale_repair(ship, m)
+
+
+## 单条 entry → **展示用** EveShip。给「点备战席的船 → 右上档案窗」用。
+##
+## ⚠️ 备战席的船是**纯数据**（`{"ship_key","star"}`，见 `EveRunState.bench`）：
+##    它没有 3D 实体，也不在 `_own_ships` 里 ⇒ 3D 拾取永远点不中它，
+##    而档案窗的 `set_ship()` 只吃 `EveShip`。所以这里现造一个**一次性**实例。
+##    ⛔ 别把它塞进 `_own_ships` / `all_owned()`：那会让它被当成在场单位
+##      计进羁绊，也会被模拟器拿去打。
+##
+## ⚠️ **只做星级缩放，不叠羁绊 / 事件 / 逐艘增益** —— 那三样都是「在场上才成立」
+##    的加成，备战的船还没上场。档案窗自己会写「本舰未上场，不计入」。
+## ⚠️ `id` 给 0：不参与战斗，不需要唯一 id（`next_id` 也不占号）。
+func build_preview(entry: Dictionary) -> EveShip:
+	var key := String(entry.get("ship_key", ""))
+	var ship := EveShipDatabase.instantiate_by_id(key, 0, 0)
+	if ship == null:
+		return null
+	apply_star(ship, int(entry.get("star", 1)))
+	return ship
 
 
 ## ★★ 2026-10-28（用户：「2星后勤肯定要涨维修量啊，所以也按比例涨」）：
@@ -161,11 +247,31 @@ static func _star_scale_repair(ship: EveShip, m: float) -> void:
 ## 这里只处理一个例外：射程极远的船如果也去贴身，它的射程优势就白给了。
 ## 所以远程船强制拉开，其余保持吨位默认。
 static func apply_doctrine(ship: EveShip) -> void:
+	# ★ 2026-10-30（玩家反馈 / 用户定案）：
+	#   ①「后勤船放在后排，射程同步吨位」→ 后排由模拟器的 `LAYER_BACK` 站位负责；
+	#      **姿态**这一层后勤必须一律「保持距离」——护卫级后勤的吨位默认是环绕，
+	#      绕起来就贴着敌人修血，等于把唯一的续航送进敌阵。
+	#   ②「电子战和普通型采取环绕」→ 护卫 / 驱逐级明确给 ORBIT
+	#      （巡洋以上仍走下面的远程规则：环绕对他们自己是纯亏，见该规则注释）。
+	var tag := EveShipDatabase.role_tag(String(ship.ship_key))
+	if tag == &"logistics" or ship.is_logistics_unit():
+		ship.stance = EveCombatCore.Stance.KEEP
+	elif tag == &"ew" and ship.ship_class <= EveShip.Class.DESTROYER:
+		ship.stance = EveCombatCore.Stance.ORBIT
 	if ship.optimal_range >= 20000.0 and ship.stance == EveCombatCore.Stance.ORBIT:
 		# 巡洋级射程 + 环绕 = 自废武功（自己转向慢，绕起来打不中别人）
 		ship.stance = EveCombatCore.Stance.KEEP
 	# 交战距离兜底：不能小于 2km（不然会撞在一起）
 	ship.desired_range = maxf(2000.0, ship.desired_range)
+
+	# ★ 2026-10-31（用户定案）：给装备槽**定长度**（按吨位，空槽 = {}）。
+	# ⚠️ 放在这里而不是各条造队链，是因为 `apply_doctrine` 是唯一公共入口：
+	#    我方 / 敌方 / PvP / 档案预览四条链都调用它 ⇒ 只写一处，四条都对齐。
+	#    ⛔ 少写一条链的症状是「那支舰队的船一格装备都装不上」，
+	#    而且不会报错（数组长度 0，`resize` 之前永远是空的）。
+	var n_slots := EveRunState.equip_slots_for_cost(ship.cost)
+	if ship.equips.size() != n_slots:
+		ship.equips.resize(n_slots)
 
 
 ## 舰队名单（用于「上场 N／M 艘」日志）。

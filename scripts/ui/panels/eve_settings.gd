@@ -115,10 +115,21 @@ func _is_battle() -> bool:
 func _is_menu() -> bool:
 	return profile == PROFILE_MENU
 
-## ⚠️ DEBUG-ONLY: 调试期加币按钮，发布时**必须删除**。
-##   加 300 星币让玩家在不动现有结构的前提下快速测试经济路径
+## ⚠️ DEBUG-ONLY: 调试期加币按钮。
+##
+## ★ 2026-10-30（用户定案）：「以后导出的都带 debug，把那个加星币的选项加回来，
+##   直到我要你取消」。
+##   ⇒ 开关不再是 `OS.has_feature("release")`（那个由导出配置决定，改起来要动预设），
+##     而是**这一个常量**：`true` = 正式包也建这块；用户说取消时把它翻成 `false` 即可。
+##   ⛔ 别再把它绑回 release 特征 —— 两边会打架，而且线上包里到底有没有、谁都说不准。
+const SHOW_DEBUG_COINS := true
+
+## 加币按钮的档位（点一下直接 +N 星币）。
+const DEBUG_COIN_STEPS: Array[int] = [100, 300, 999]
+
+## 加 300 星币让玩家在不动现有结构的前提下快速测试经济路径
 ##   （买经验、超频、刷新、打捞都更顺）。
-##   删的时候一并删：① 本 signal ② 本组按钮构建块 ③ eve_hud_root 里的 connect
+##   彻底删的时候一并删：① 本 signal ② 本组按钮构建块 ③ eve_hud_root 里的 connect
 ##   ④ eve_battle_scene 里的 handler（如果加了）⑤ `add_coins_requested` 的所有 grep 引用。
 signal add_coins_requested(amount: int)
 signal closed()
@@ -712,9 +723,11 @@ func _sec_action(t: VBoxContainer, with_back := true) -> void:
 		t.add_child(back_row)
 
 
-## ⑦ 系统（DEBUG 默认折叠）—— **只有战场有**（发布版整块不建）。
+## ⑦ 系统（DEBUG 默认折叠）—— **只有战场有**。
+##   ★ 2026-10-30：门禁从 `not OS.has_feature("release")` 改成常量 `SHOW_DEBUG_COINS`
+##     ⇒ 导出包（含 release）也有这块，直到用户说取消。
 func _sec_debug(t: VBoxContainer) -> void:
-	if not (_is_battle() and not OS.has_feature("release")):
+	if not (_is_battle() and SHOW_DEBUG_COINS):
 		return
 	t.add_child(make_divider())
 	t.add_child(make_group_header(T.t("SET_GROUP_SYSTEM", "系统  SYSTEM")))
@@ -732,7 +745,7 @@ func _sec_debug(t: VBoxContainer) -> void:
 	var dbg := HBoxContainer.new()
 	dbg.add_theme_constant_override("separation", 5)
 	dbg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	for amt in [100, 300, 999]:
+	for amt in DEBUG_COIN_STEPS:
 		var b := _mk_btn(T.t("SET_DEBUG_COINS", "+%d 星币") % amt)
 		b.pressed.connect(func(a = amt): add_coins_requested.emit(a))
 		dbg.add_child(b)

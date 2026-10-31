@@ -79,6 +79,33 @@ const START_GOLD := 5
 const START_BEACON := 100
 const SHOP_SLOTS := 5
 const BENCH_SLOTS := 8
+
+# ══════════════════════════════════════════════════════════════════
+#  装备（2026-10-31 用户定案）
+# ══════════════════════════════════════════════════════════════════
+#
+#  用户原话：「装备携带量，护卫驱逐一个，巡洋战巡两个，战列3个。
+#    我在研究装备长啥样了，背包先定8个，但我感觉不是很够，
+#    以后会研究装备合成路线的。」
+#
+#  ⇒ 槽位按**吨位**给（不看星级、不看羁绊）：
+#       护卫(1费) / 驱逐(2费) = 1 格
+#       巡洋(3费) / 战巡(4费) = 2 格
+#       战列(5费)             = 3 格
+#  ⇒ 背包固定 8 格（`EQUIP_BAG_SIZE`）。用户已经预判「不太够」，
+#    做合成路线时这里要跟着改 —— 所以**别把 8 写死在 UI 里**，读这个常量。
+#
+# ⚠️ 物品属性表**还没定**（用户在设计中）。这一版只落三样东西：
+#    ① 槽位容量（`equip_slots_for_cost`）—— UI / 掉落 / 验收的共同依据
+#    ② 背包与增减（`bag` / `grant_equip` / `take_equip_at`）
+#    ③ 掉落管道（`roll_equip` 产出**结构正确**的占位物）
+#  ⛔ 别在这里编装备数值 —— 等用户的物品表到了再填 `apply_equips()`。
+## 每格能放几件（键 = `cost`，也就是吨位档 1~5）
+const EQUIP_SLOTS_BY_COST := {1: 1, 2: 1, 3: 2, 4: 2, 5: 3}
+## 背包格数
+const EQUIP_BAG_SIZE := 8
+## 打捞时掉装备的概率（用户定：5%）
+const EQUIP_SALVAGE_CHANCE := 0.05
 const BASE_INCOME := 5
 const INTEREST_STEP := 10
 const INTEREST_MAX := 5
@@ -271,6 +298,17 @@ var bench: Array[Dictionary] = []
 ##    2026-09-20 起不再有任何「自动上场」。理由见 buy() 与本文件
 ##    「已删除：auto_deploy()」那一节。
 var field: Array[Dictionary] = []
+
+## ★ 2026-10-31（用户定案）：背包装备（≤ `EQUIP_BAG_SIZE`）。
+##
+## 元素结构（**占位口径**，等物品表定了按表填）：
+##   {"id": StringName, "name": String, "tier": int, "icon": StringName, "color": Color}
+##
+## ⚠️ 装备挂在**背包**里，不是挂在船上 —— 玩家自己把背包里的拖到船上。
+##    船身上的槽位是 `EveShip.equips`（每艘 length = `equip_slots_for_cost(cost)`）。
+##    两条是**独立**的容器：背包满了掉落会被拒（`grant_equip` 返回 false），
+##    但不会顶掉已装在船上的东西。
+var bag: Array[Dictionary] = []
 ## 商店 5 个槽位。元素 = EveShipDatabase 的派生 Dictionary（已售出的槽位会被立刻重摇）
 var offers: Array = []
 
@@ -285,6 +323,11 @@ var event_picks: Array[StringName] = []
 ## 事件选完同一帧就会 `advance()` 推进节点，货架会被普通 `roll_shop()` 覆盖
 ## （见 `free_advanced_roll()` 顶注）。⇒ 登记成计数，等货架定型后统一落地。
 var _pending_advanced_roll: int = 0
+
+## ★ 2026-10-30：事件「黑市情报」追加的「本批船半价」。
+## 与 `_pending_advanced_roll` 同一次刷新、同一个落地时机（货架定型之后）——
+## 半价的是**那一批货**，不是「之后所有货」。
+var _pending_half_price: bool = false
 
 ## ★ 2026-10-28 事件「打捞折扣」的生效区间（**节点号闭区间**，0 = 未生效）。
 ##
@@ -539,6 +582,7 @@ func start_run(p_seed: int = 0) -> void:
 	last_won = true
 	boss_attempts = 0
 	_pending_advanced_roll = 0
+	_pending_half_price = false
 	salvage_discount_from = 0
 	salvage_discount_to = 0
 	bench.clear()
@@ -608,6 +652,7 @@ func to_dict() -> Dictionary:
 		"shop_locked": shop_locked,
 		"last_won": last_won, "boss_attempts": boss_attempts,
 		"pending_advanced_roll": _pending_advanced_roll,
+		"pending_half_price": _pending_half_price,
 		"salvage_discount_from": salvage_discount_from,
 		"salvage_discount_to": salvage_discount_to,
 		"event_clock_override": _event_clock_override,
@@ -653,6 +698,7 @@ func from_dict(d: Dictionary) -> bool:
 	last_won = bool(d.get("last_won", true))
 	boss_attempts = maxi(0, int(d.get("boss_attempts", 0)))
 	_pending_advanced_roll = maxi(0, int(d.get("pending_advanced_roll", 0)))
+	_pending_half_price = bool(d.get("pending_half_price", false))
 	salvage_discount_from = maxi(0, int(d.get("salvage_discount_from", 0)))
 	salvage_discount_to = maxi(0, int(d.get("salvage_discount_to", 0)))
 	_event_clock_override = maxi(0, int(d.get("event_clock_override", 0)))
@@ -1104,6 +1150,24 @@ func salvage_order(idxs: Array = []) -> Dictionary:
 	repair_queue.append_array(out)
 	log_event.emit("打捞下单：%s −%d ◆ · 下节点到账（顶掉 %d 个货位）"
 			% [", ".join(names), paid, bought.size()], &"salvage")
+
+	# ★ 2026-10-31（用户定案）：打捞**有 5% 概率**额外掉一件装备。
+	#   ⚠️ 每次**成功下单**掷一次，不是每艘掷一次 —— 一次勾 5 艘的期望掉落
+	#      必须等于勾 1 艘，否则「多勾多掉」会变成鼓励拆单的无意义操作。
+	#   ⚠️ 掷在**扣费之后**：这是「捞着捞着翻出个好东西」的惊喜，
+	#      不是失败补偿 ⇒ 不中也不该退钱、不该垫概率。
+	#   ⚠️ 背包满 ⇒ 直接丢弃（与精英/BOSS 掉落同口径），并明说，
+	#      否则玩家会怀疑「是不是掉了但没显示」。
+	var salvage_equip := {}
+	if rng.randf() < EQUIP_SALVAGE_CHANCE:
+		salvage_equip = roll_equip(rng, 1)
+		if grant_equip(salvage_equip):
+			log_event.emit("打捞时翻出了装备：%s（背包 %d/%d）"
+					% [String(salvage_equip["name"]), bag_used(), EQUIP_BAG_SIZE], &"salvage")
+		else:
+			salvage_equip = {}
+			log_event.emit("背包已满（%d/%d），打捞出的装备被丢弃" % [EQUIP_BAG_SIZE, EQUIP_BAG_SIZE], &"hint")
+
 	changed.emit()
 	return {
 		"ok": true, "reason": "", "bought": bought, "skipped": skipped,
@@ -1249,6 +1313,21 @@ static func _as_ship_dict(e) -> Dictionary:
 ##
 ## 签名兼容：`destroyed` 不传 / 元素是派生 Dictionary 时，
 ## 星级一律取 1（无证据 ⇒ 不假装知道），不会崩。
+## 本节点必掉的装备（返回 {} = 不掉）。
+##
+## 用户定案（2026-10-31）：**精英怪和 BOSS 必掉**。档位跟着节点走：
+##   精英 → tier 2 · BOSS → tier 3 · 其余节点 → 不掉。
+## ⚠️ 判据用 `node_type()`（走节点表的 `type`），⛔ 不要用 `node_index` 硬编码 ——
+##    节点表以后加/删精英关时，硬编码会静默错位（`BOSS_INDEXES` 已经有这个隐患）。
+func _node_equip_drop(won: bool) -> Dictionary:
+	if not won:
+		return {}
+	var t := node_type()
+	if t != &"elite" and t != &"boss":
+		return {}
+	return roll_equip(rng, 3 if t == &"boss" else 2)
+
+
 func _set_wreck_from(destroyed: Array, sources: Array = [],
 		power_scale: float = 1.0) -> void:
 	wrecks.clear()
@@ -1787,6 +1866,73 @@ func bench_used() -> int:
 
 
 # ══════════════════════════════════════════════════════════════════
+#  装备（2026-10-31 用户定案）
+# ══════════════════════════════════════════════════════════════════
+#
+#  三条硬规则（都要先读 `EQUIP_SLOTS_BY_COST` 的顶注）：
+#    · 槽位按**吨位**给，不看星级 —— 2★ 护卫仍然是 1 格
+#    · 背包 8 格，满了掉落**直接丢弃**（不顶替已装的），并记一条日志
+#    · 物品属性表待定 ⇒ `roll_equip` 只产出占位物，`apply_equips` 里明确空实现
+
+## 这艘船能装几件装备（入参是 `cost`，也就是吨位档 1~5）。
+##
+## ⚠️ 越界一律夹到合法档位：`cost` 在程序临时造的船上可能是 0 或 6，
+##    夹紧比让 `get()` 返回 null 再从 int(null) 崩掉要好。
+static func equip_slots_for_cost(cost: int) -> int:
+	return int(EQUIP_SLOTS_BY_COST.get(clampi(cost, 1, 5), 1))
+
+
+## 背包里已放几件
+func bag_used() -> int:
+	return bag.size()
+
+
+## 背包是否已满
+func bag_full() -> bool:
+	return bag.size() >= EQUIP_BAG_SIZE
+
+
+## 往背包里放一件。满了返回 false（**不顶替、不覆盖** —— 玩家自己整理）。
+func grant_equip(item: Dictionary) -> bool:
+	if item.is_empty() or bag_full():
+		return false
+	bag.append(item)
+	changed.emit()
+	return true
+
+
+## 取走背包第 i 件（越界返回 {}）。
+func take_equip_at(i: int) -> Dictionary:
+	if i < 0 or i >= bag.size():
+		return {}
+	var it: Dictionary = bag[i]
+	bag.remove_at(i)
+	changed.emit()
+	return it
+
+
+## 掷一件装备（占位实现）。
+##
+## ⚠️ **物品表还没定**（用户 2026-10-31：「我在研究装备长啥样了」）——
+##    这里只保证**结构正确 + 名字可读**，好让 UI / 掉落 / 存档先跑通。
+##    物品表到位后，把函数体换成「按 tier 权重查表」，其余调用点一行都不用改。
+## ⚠️ `tier` 决定强度档次：普通节点 1、精英 2、BOSS 3、打捞 1。
+static func roll_equip(rng: RandomNumberGenerator, tier: int = 1) -> Dictionary:
+	# 占位名池：等物品表到了由它替换。命名刻意做成「未定名」的样子，
+	# 免得测试截图里的假名字被当成真装备。
+	var pool := ["装备·未定 A", "装备·未定 B", "装备·未定 C", "装备·未定 D"]
+	var nm := String(pool[rng.randi_range(0, pool.size() - 1)])
+	return {
+		"id": StringName("placeholder_%d" % rng.randi_range(1000, 9999)),
+		"name": nm,
+		"tier": clampi(tier, 1, 3),
+		# ⛔ TODO(用户物品表)：换真图标。`plus` 是现有安全值，不会缺资源。
+		"icon": &"plus",
+		"color": Color(0.55, 0.85, 1.0),
+	}
+
+
+# ══════════════════════════════════════════════════════════════════
 #  羁绊（阶段 B3）
 # ══════════════════════════════════════════════════════════════════
 #
@@ -1829,6 +1975,24 @@ func enemy_cycle_pct() -> float:
 			continue
 		var apply: Dictionary = a.get("apply", {})
 		out = maxf(out, float(apply.get("enemy_cycle_pct", 0.0)))
+	return out
+
+
+## 电子战：**被电子船锁定的那一艘**，输出要乘的衰减比例（0.3 = 削 30%）。
+## 档位取值见 `eve_trait_table.gd`：2/4 艘 = 0.30，6 艘 = 0.40。
+##
+## ★ 2026-10-31 新增。与 `enemy_cycle_pct()` 同一条羁绊、两个不同的落点：
+##   · `enemy_cycle_pct` → 敌方**全体**开火变慢（在 `build_enemy` 里一次性乘进去）
+##   · `ew_lock_reduce`  → 只削「电子船当前锁定的目标」（每 tick 在模拟器里重算）
+## ⚠️ 取值用 `maxf` 而不是相加：同一档位里只有一条生效，
+##    相加是给「多来源同类加成」留的口子，目前没有这种来源。
+func ew_lock_reduce() -> float:
+	var out := 0.0
+	for a in active_synergies():
+		if StringName(a["group"]) != &"ew":
+			continue
+		var apply: Dictionary = a.get("apply", {})
+		out = maxf(out, float(apply.get("ew_lock_reduce", 0.0)))
 	return out
 
 
@@ -1936,6 +2100,12 @@ static func _apply_synergy(ship: EveShip, apply: Dictionary) -> void:
 	if apply.has("repair_pct") or apply.has("repair_cycle_pct"):
 		ship.repair_scale(1.0 + float(apply.get("repair_pct", 0.0)),
 				1.0 - float(apply.get("repair_cycle_pct", 0.0)))
+	# ★ 2026-10-31：电子战（锁定减伤）—— 只**记字段**，真正的乘法在模拟器里
+	#   对「它当前锁定的目标」做（`EveBattleSimulator._ew_step`）。
+	#   ⚠️ `is_ew` / `jam_chance` 不在这里补：干扰与羁绊**无关**（单艘电子船自带），
+	#      由 `EveFleetFactory._apply_ew()` 统一写，否则 PvP 对手那条链会漏。
+	if apply.has("ew_lock_reduce"):
+		ship.ew_lock_reduce = maxf(ship.ew_lock_reduce, float(apply["ew_lock_reduce"]))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1974,13 +2144,16 @@ func can_pick_event(id: StringName) -> bool:
 ##   ② 再落「一次性」效果（星币 / 经验 / 信标）
 ##   ③ 再写日志（add_xp 可能触发升级日志，晚写会被插到前面去）
 ##   ④ 最后 changed.emit()（HUD 重刷）
-## `target` 只有「需要选船」的选项才会用到（武器调校 / 结构加固），
+## `target` 只有「需要选船」的选项才会用到（武器调校 / 结构加固 / 双舰强化），
 ## 传的是**那一条 entry 本体**（`field_entries()` / `bench_entries()` 里的元素）。
+## `target2` 只给「选 2 艘」的选项（`pick_count: 2`）用第二艘。
 ## 没给目标时**直接拒绝**（返回 {}），不静默落地一个"全队生效"的假效果。
-func apply_event(id: StringName, target: Dictionary = {}) -> Dictionary:
+func apply_event(id: StringName, target: Dictionary = {},
+		target2: Dictionary = {}) -> Dictionary:
 	if not can_pick_event(id):
 		return {}
 	var opt := EveEventTable.by_id(id)
+	var need_n := int(opt.get("pick_count", 1))
 
 	# ── 需要选船的：先校验目标，再落增益 ──
 	# ⚠️ 校验放在 `event_picks.append` **之前** —— 否则选了个空目标却已经
@@ -1988,7 +2161,17 @@ func apply_event(id: StringName, target: Dictionary = {}) -> Dictionary:
 	if bool(opt.get("pick_ship", false)):
 		if target.is_empty():
 			return {}
-		_bump_entry_buff(target, opt.get("ship_apply", {}))
+		if need_n >= 2 and target2.is_empty():
+			return {}
+		var star_up := int(opt.get("star_up", 0))
+		if star_up > 0:
+			# ★ 2026-10-30「双舰强化」：直接抬星级，不加 buff 字典
+			#   （buff 是百分比加成，星级是 STAR_MULT 的整数倍 —— 两套口径别混）。
+			_bump_entry_star(target, star_up)
+			if not target2.is_empty():
+				_bump_entry_star(target2, star_up)
+		else:
+			_bump_entry_buff(target, opt.get("ship_apply", {}))
 
 	event_picks.append(id)
 
@@ -2019,6 +2202,10 @@ func apply_event(id: StringName, target: Dictionary = {}) -> Dictionary:
 	if bool(opt.get("free_advanced_roll", false)):
 		free_advanced_roll()
 		parts.append("免费高级刷新（保底 1 艘 cost ≥ 3）")
+	# ★ 2026-10-30：「本批半价」跟着同一次高级刷新走（见 `_apply_advanced_roll_guarantee`）。
+	if bool(opt.get("roll_half_price", false)):
+		_pending_half_price = true
+		parts.append("本批船半价")
 	# ★ 2026-10-28 事件「打捞折扣」：从**下一节点**起算 N 个节点。
 	#   ⚠️ 事件选完会立刻 `advance()`（node_index +1）⇒ 若这里写成「当前节点起算」，
 	#      实际生效区间就会整体早一格，"未来三个回合"变成"包含本回合"。
@@ -2028,8 +2215,28 @@ func apply_event(id: StringName, target: Dictionary = {}) -> Dictionary:
 		salvage_discount_from = base + 1
 		salvage_discount_to = base + dr
 		parts.append("未来 %d 回合打捞费：我方与敌方均 1/4 船价" % dr)
+	# ★ 2026-10-31（用户定案）：事件「补给舱」—— 随机给 N 件装备。
+	#   ⚠️ 逐件 `grant_equip`，满了就停（不是先判容量再全给）——
+	#      否则「剩 1 格却掉进 2 件」会变成「一件都不给」。
+	var eq_n := int(opt.get("equip_drop", 0))
+	if eq_n > 0:
+		var eq_got := 0
+		for _i in eq_n:
+			if grant_equip(roll_equip(rng, 2)):
+				eq_got += 1
+		if eq_got > 0:
+			parts.append("获得 %d 件装备" % eq_got)
+		if eq_got < eq_n:
+			parts.append("背包已满，%d 件被丢弃" % (eq_n - eq_got))
 	if bool(opt.get("pick_ship", false)) and not target.is_empty():
-		parts.append("%s 永久强化" % _entry_name(target))
+		var star_up2 := int(opt.get("star_up", 0))
+		if star_up2 > 0 and not target2.is_empty():
+			parts.append("%s / %s 各 +%d 星"
+					% [_entry_name(target), _entry_name(target2), star_up2])
+		elif star_up2 > 0:
+			parts.append("%s +%d 星" % [_entry_name(target), star_up2])
+		else:
+			parts.append("%s 永久强化" % _entry_name(target))
 
 	log_event.emit("事件增益「%s」—— %s" % [String(opt.get("name", id)),
 			", ".join(parts) if not parts.is_empty()
@@ -2117,6 +2324,18 @@ func free_advanced_roll() -> void:
 	changed.emit()
 
 
+## 货架上这一格的**原始档次**（`cost` 的本义：几费船）。
+##
+## ⚠️⚠️ 2026-10-30 新增。事件「黑市情报」会把报价里的 `cost` 直接覆写成半价，
+##    但那只是**价钱**变了，船的档次没有变。
+##    ⇒ 任何「是不是高级船 / 够不够 3 费」的判断，一律走这里，
+##       ⛔ 不要再裸读 `d.get("cost")` —— 那会被半价批次骗过去。
+##      （踩过：黑市保底放了艘 4 费船，紧接着半价批把它写成 2 费，
+##        验收按 `cost >= 3` 判定 ⇒ 保底看起来"失效"，实际货架上就是艘 4 费船。）
+static func offer_tier(d: Dictionary) -> int:
+	return int(d.get("cost_base", d.get("cost", 1)))
+
+
 ## 把「保底 1 艘 cost ≥ 3」落到**当前**货架上（占最左的非打捞槽位）。
 ##
 ## ⚠️ 用**事后替换**而不是「重摇到满足为止」：商店 1 级时 cost ≥ 3 的概率是 0，
@@ -2134,7 +2353,8 @@ func _apply_advanced_roll_guarantee() -> bool:
 	if target < 0:
 		return false
 	var cur = offers[target]
-	var cur_cost := int((cur as Dictionary).get("cost", 1)) if cur is Dictionary else 0
+	# ⚠️ 读**档次**而不是 `cost` —— 货架刚被半价批改过时，`cost` 已经不等于档次了
+	var cur_cost := offer_tier(cur as Dictionary) if cur is Dictionary else 0
 	if cur_cost >= 3:
 		return false                                  # 已经满足保底，不动它
 	var cand: Array = []
@@ -2146,6 +2366,41 @@ func _apply_advanced_roll_guarantee() -> bool:
 	offers[target] = EveShipDatabase.pick_from_pool(cand, rng)
 	log_event.emit("黑市情报：高级刷新落地（保底 1 艘 cost ≥ 3）", &"economy")
 	return true
+
+
+## ★ 2026-10-30 事件「黑市情报」：把**本批**货架全部改成半价。
+##
+## 做法是直接改报价里的 `cost`（原值留在 `cost_base` 里备查），而不是另开一个
+## 「半价集合」—— 因为 `cost` 是商店卡面、买入扣费、出售返还**共用的那一个字段**，
+## 另开一份就必然出现「卡面显示 1 费、买的时候扣 2 费」这类双口径漂移。
+## ⚠️ 打捞品（`from_node` 标记）跳过：它的价钱在结算页付过，取货本来就是 0。
+func _apply_half_price_batch() -> void:
+	var n := 0
+	for i in offers.size():
+		if salvage_slots.has(i):
+			continue
+		var raw = offers[i]
+		if raw == null or not (raw is Dictionary) or (raw as Dictionary).is_empty():
+			continue
+		var o: Dictionary = raw
+		if not o.has("cost_base"):
+			o["cost_base"] = int(o.get("cost", 1))
+		o["cost"] = maxi(1, int(floor(float(int(o["cost_base"])) * 0.5)))
+		n += 1
+	if n > 0:
+		offers_changed.emit()
+		log_event.emit("黑市情报：本批 %d 艘船半价（费用向下取整，最低 1）" % n, &"economy")
+
+
+## 给一条 entry 抬星级（事件「双舰强化」用）。最高 `MAX_STAR`。
+##
+## ⚠️ 只改 entry 的 `star` —— 舰队是**每回合从 entry 重建**的
+##    （`EveFleetFactory.build_own` 按 star 走 `STAR_MULT^Δ`），
+##    所以不需要在这里碰任何舰船实例。
+func _bump_entry_star(e: Dictionary, n: int) -> void:
+	if e.is_empty() or n == 0:
+		return
+	e["star"] = clampi(int(e.get("star", 1)) + n, 1, MAX_STAR)
 
 
 ## 事件带来的「每节点收入」增量
@@ -2308,6 +2563,18 @@ func enemy_scale() -> float:
 	var n := current_node()
 	var base := float(n.get("scale", 1.0)) if not n.is_empty() else 1.0
 	return base * float(enemy_tier_row().get("scale", 1.0))
+
+
+## ★ 2026-10-30：BOSS 主坦（cost ≥ 5 的加强型战列）的**额外**数值系数。
+##
+## 真源 = `EveNodeTable.ROWS[].bs_damp`（目前只有第 15 关写了 0.78）。
+## ⚠️ 乘在 `enemy_scale()` **之外**、且只给 cost ≥ 5 的那一艘（调用点见
+##    `EveFleetFactory.build_enemy`）—— 整节点一起削会把 BOSS 战的编排削没。
+func boss_bs_damp() -> float:
+	var n := current_node()
+	if n.is_empty():
+		return 1.0
+	return clampf(float(n.get("bs_damp", 1.0)), 0.3, 1.0)
 
 
 ## 本节点的进场词（唯一真源 = EveNodeTable.ROWS[].line）。
@@ -2494,6 +2761,21 @@ func resolve_battle(winner_team: int, destroyed: Array = [],
 			log_event.emit("我方 %d 艘被击毁，已移出编队（%s）—— 可在结算页付费打捞"
 					% [lost_names.size(), ", ".join(lost_names)], &"damage")
 
+	# ★ 2026-10-31（用户定案）：精英 / BOSS 战**必掉**一件装备。
+	#   ⚠️ 只在**赢**的时候掉：打输连残骸都要花钱捞，再送装备等于奖励失败。
+	#   ⚠️ 普通 battle 节点不掉 —— 用户只点名了「精英怪和 BOSS 必掉」，
+	#      其余两个渠道是「事件」与「打捞 5%」，三个渠道互不重叠。
+	var eq_drop := _node_equip_drop(won)
+	if not eq_drop.is_empty():
+		if grant_equip(eq_drop):
+			log_event.emit("获得装备：%s（背包 %d/%d）"
+					% [String(eq_drop["name"]), bag_used(), EQUIP_BAG_SIZE], &"economy")
+		else:
+			# ⚠️ 满了就是丢弃，**不顶替**背包里已有的 —— 让玩家自己整理，
+			#    否则「背包满了」会变成「莫名其妙少了一件我想要的」。
+			log_event.emit("背包已满（%d/%d），装备 %s 被丢弃"
+					% [EQUIP_BAG_SIZE, EQUIP_BAG_SIZE, String(eq_drop["name"])], &"hint")
+
 	phase = Phase.RESOLVE
 	phase_changed.emit(phase)
 	changed.emit()
@@ -2546,6 +2828,11 @@ func advance() -> void:
 		_pending_advanced_roll = 0
 		if _apply_advanced_roll_guarantee():
 			offers_changed.emit()
+	# ★ 2026-10-30：半价跟同一次黑市刷新一起落地（顺序在保底之后 ——
+	#   保底会**替换**最左那一格，先标半价再替换就会漏掉那一艘）。
+	if _pending_half_price:
+		_pending_half_price = false
+		_apply_half_price_batch()
 	log_event.emit("节点 %d／%d · %s · %s"
 			% [node_index, EveNodeTable.TOTAL, stage_label(), entry_line()], &"hint")
 
@@ -2558,7 +2845,7 @@ func _finish(cleared: bool) -> void:
 	ending = Ending.CLEARED if cleared else Ending.EVACUATED
 	phase = Phase.ENDING
 	if cleared:
-		log_event.emit("全部 %d 个节点通过 —— 遥望边境已肃清" % EveNodeTable.TOTAL, &"economy")
+		log_event.emit("全部 %d 个节点通过 —— 守卫成功，增援已到" % EveNodeTable.TOTAL, &"economy")
 	else:
 		log_event.emit("信标归零 —— 撤离（止步于节点 %d／%d）"
 				% [node_index, EveNodeTable.TOTAL], &"damage")

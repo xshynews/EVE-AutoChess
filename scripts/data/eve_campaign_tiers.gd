@@ -238,7 +238,10 @@ const DIFFICULTIES: Array = [
 		#   以及 BOSS 的 armor_pierce 壁垒（只能靠一整类穿甲体系破解，
 		#   见 EveRunState.ARMOR_BREAK_WEIGHT：导弹 / 射弹炮 / 混合炮 / 激光羁绊）。
 		"loss_curve": [0, 5, 7, 0, 11, 12, 13, 15, 18, 0, 19, 21, 23, 0, 38],
-		"scale": 1.40,
+		# ★ 2026-10-30（玩家反馈 / 用户定案）：1.40 → **1.30**。
+		#   玩家原话：「炼狱 8 关之后根本没法打」。8 关后正好是
+		#   `loss_curve` 从 0 跳到 11 的那一段 ⇒ 敌方数值再乘 1.4 就是雪崩。
+		"scale": 1.30,
 		"ai_level": 3,
 		"enemy_traits": true,
 		"enemy_formation": true,

@@ -218,10 +218,12 @@ func _t_r05_black_market_pending() -> void:
 	st.advance()          # 推进到下一节点：普通 roll + 保底落地
 	var hi := 0
 	for d in st.offers:
-		if int((d as Dictionary).get("cost", 1)) >= 3:
+		# ⚠️ 档次口径（见 `EveRunState.offer_tier`）：黑市同一次刷新还会把整批
+		#    货架改成半价，`cost` 已被覆写，裸读会把"保底落地"误判成没落地。
+		if EveRunState.offer_tier(d as Dictionary) >= 3:
 			hi += 1
 	_ok(hi >= 1,
-			"★ R05 下一节点货架保底 ≥1 艘 cost≥3（实际 %d 艘）—— 不再被覆盖" % hi)
+			"★ R05 下一节点货架保底 ≥1 艘档次≥3（实际 %d 艘）—— 不再被覆盖" % hi)
 
 
 # ─────────────────────────────────────────────────────── 连射停手（bug#3）

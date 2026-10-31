@@ -123,6 +123,33 @@ const BATTLESHIP_SHIELD_PIERCE := {
 }
 
 const ARMOR_SHARE := 0.65
+
+## ★★ 2026-10-31（用户定案）：**TTK 旋钮**（全局，一次性改 52 艘）。
+##
+## 用户原话：「战斗时间还是 60 秒，我说的 TTK 是舰队对轰时候的时间，
+##   现在明显偏长了，我得提高些数值让它短点」
+##   ⇒ **时限不变**，只让「双方打光」发生得更早。60 秒窗口里正常一局
+##     只用到 39 秒（实测 96 局：平均 38.8 / 中位 41.4 / 90% 分位 45.1），
+##     剩下 20 秒是「打完等结算」，玩家体感就是拖。
+##
+## 为什么是「伤害 ↑ + 血量 ↓」双向夹，而不是只加伤害：
+##   · 只加伤害 ⇒ 先手方优势被放大（谁先开火谁赢），高射速小船受益大于大船；
+##   · 只降血量 ⇒ 维修 / 后勤的相对价值被稀释（固定修量占比变大）。
+##   两个一起动，双方同船同改，胜负关系基本不动。
+##
+## ⚠️ 这两个系数乘在 `derive()` 的出口，但**只作用于实战字段**：
+##    `weapon_damage` / `shield` / `armor` / `hull` / `armor_struct`。
+##    ⛔ `attack`（权威表原值）**不乘** —— 它是设计侧数据，
+##       `verify_run` 有一条断言专门守它（「权威表的 attack 原值没被改」）。
+##    ⇒ 界面上「攻击 12」与「实际每发 14.4」允许不一致，这是项目既有口径
+##      （后勤船显示 12、实际打 3 是同一套逻辑）。
+## ⚠️ `armor_struct` 乘了 —— 它是 HUD 的「总血」来源，跟实战血量必须一致，
+##    否则界面显示的血会比实际多 18%，玩家会以为算法坏了。
+## ⚠️ ⛔ 别在 `EveFleetFactory` / 羁绊里再乘一次，那会变成平方。
+## ⚠️ 战列舰的 `BATTLESHIP_HP` 也吃 −15%（2026-10-29 才给它 +15% 血），
+##    这一条正好被抵消 —— 是**有意的**：用户现在要的是整体缩短对轰时间。
+const TTK_DAMAGE_MULT := 1.20
+const TTK_HP_MULT := 0.85
 ## Fallback default for attack interval (sec/shot).
 ## 2026-10-27: the table now carries a real gradient; this is only
 ## the fallback when the column is missing.
@@ -420,6 +447,15 @@ static func derive(row: Dictionary) -> Dictionary:
 		armor = float(hp3[1])
 		hull = float(hp3[2])
 
+	# ★ 2026-10-31（用户定案）：TTK 收缩 —— 三层血量统一 ×0.85。
+	#   ⚠️ 放在战列特例**之后**：战列那三层的来源是 `BATTLESHIP_HP`，同样要吃系数。
+	#   ⚠️ `armor_struct`（HUD 显示用的合并值）也要一起乘，否则界面显示的总血
+	#      会比实战多 18% —— 玩家会以为算错了。
+	shield *= TTK_HP_MULT
+	armor *= TTK_HP_MULT
+	hull *= TTK_HP_MULT
+	armor_struct *= TTK_HP_MULT
+
 	# --- ② 抗性档位 ---
 	# ⚠️ 判据用 **id**（不是在比中文）：拼错字会在 `EveCombatIds.unknown_values`
 	#    那一关被拦下，而不是在这里静默走"甲抗"分支。
@@ -472,7 +508,9 @@ static func derive(row: Dictionary) -> Dictionary:
 
 	# `weapon_damage` 既是战斗用的「每发伤害」，也是 DPS 的唯一分母来源。
 	# ⚠️ 第一次抄成 `attack` 而非 `attack x cycle` 会让全表 DPS 差一个数量级。
-	var weapon_damage := (logi_atk if is_logi else float(row["attack"])) * cycle
+	# ★ 2026-10-31：TTK 收缩 —— 每发伤害 ×1.2（射速不变 ⇒ DPS +20%）。
+	var weapon_damage := (logi_atk if is_logi else float(row["attack"])) * cycle \
+			* TTK_DAMAGE_MULT
 	var shield_pierce := battleship_pierce(bs_class)
 
 	return {
@@ -501,6 +539,11 @@ static func derive(row: Dictionary) -> Dictionary:
 		"defense_id": defense_id,
 		"role_id": CIDS.role_id_of(String(row["role"])),
 		"is_logistics": bool(row["logistics"]),
+		# ⛔ 2026-10-31 修正：这里**不许**乘 TTK 系数。
+		#   项目把 `attack` 当作「权威表原值」的代言（`verify_run` 有一条
+		#   「★ 权威表的 attack 原值没被改」在守着它）。要改攻击力走
+		#   `weapon_damage`（实战值）—— 两者本来就允许不同：
+		#   后勤船显示 12、实际打 3 就是既有设计（见 `weapon_damage` 的注释）。
 		"attack": float(row["attack"]),
 		"range_cells": range_cells,
 		"speed_cells": speed_cells,

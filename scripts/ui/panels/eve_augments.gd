@@ -15,6 +15,17 @@ extends "res://scripts/ui/eve_window.gd"
 
 const ROW_H := 26.0
 
+## 一屏最多显示几行。
+##
+## ★ 2026-10-30（玩家反馈）：「事件变多了，左下角的事件栏位没变多，
+##   多于 3 个不显示但依旧生效」。
+##   根因不是这里 —— 行的数量本来就跟着 `event_indexes().size()` 走，
+##   真凶是**手机布局把窗高写死 158（=3 行）**，第 4 行起被裁掉了。
+##   现在行数改成「按实际拿到的增益动态补行」，高度由 `content_need_h()`
+##   回给 HUD 参与左列分配；超过本上限时只显示前 MAX_ROWS 条并在标题栏写明总数
+##   （⛔ 不做内部滚动：172 宽的窄栏里滚动条会吃掉 8px，条目文本直接读不全）。
+const MAX_ROWS := 6
+
 var _rows: Array[Dictionary] = []
 var _empty: Label
 var _list_box: VBoxContainer
@@ -45,11 +56,36 @@ func _build_contents() -> void:
 	_list_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	content.add_child(_list_box)
 
-	for i in _max_picks:
+	for i in mini(_max_picks, MAX_ROWS):
 		var row := _build_row()
 		_rows.append(row)
 		(row["root"] as Control).visible = false
 		_list_box.add_child(row["root"])
+
+
+## 按需要把行补齐（`set_augments` 里调用）。上限 `MAX_ROWS`。
+func _ensure_rows(n: int) -> void:
+	n = clampi(n, 1, MAX_ROWS)
+	while _rows.size() < n:
+		var row := _build_row()
+		_rows.append(row)
+		(row["root"] as Control).visible = false
+		_list_box.add_child(row["root"])
+
+
+## 当前内容需要的高度（HUD 左列分配用；0 = 整窗隐藏、不占位）。
+##
+## ⚠️ 口径 = 标题栏 40 + 每行 ROW_H + 行间距 2。
+##    这个数**必须由窗口自己回给布局**，写死在 `MOBILE_AUG_H` 里就会重演
+##    「第 4 条被裁掉」的老问题。
+func content_need_h() -> float:
+	var n := 0
+	for r in _rows:
+		if (r["root"] as Control).visible:
+			n += 1
+	if n <= 0:
+		return 0.0
+	return 40.0 + float(n) * ROW_H + float(n - 1) * 2.0
 
 
 func _idx_text() -> String:
@@ -102,7 +138,13 @@ func set_augments(list: Array) -> void:
 	if not visible:
 		set_status("")
 		return
-	for i in _rows.size():
+	# ★ 2026-10-30：行数跟着实际拿到的增益长，不再固定 3 行（见 MAX_ROWS 的说明）。
+	_ensure_rows(list.size())
+	for i in maxi(_rows.size(), list.size()):
+		# ⚠️ 增益条数可能超过 MAX_ROWS（行只建到上限）⇒ 先挡住越界，
+		#    超出部分由标题栏的 n/m 交代，不留「数组越界」这种崩法。
+		if i >= _rows.size():
+			break
 		var w := _rows[i]
 		var root: Control = w["root"]
 		if i >= list.size():

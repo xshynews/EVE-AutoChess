@@ -34,12 +34,61 @@ var _listening := false
 
 func _ready() -> void:
 	_api = API.new()
+	var enabled := _bridge_enabled()
+	# 一行状态落盘（`user://ai_bridge_state.txt`）。
+	# 导出的 Windows 包是 GUI 子系统，**没有 stdout**，出问题时唯一的现场证据就是它。
+	_log_state("enabled=%s editor=%s env=%s argv=%s" % [
+		enabled, OS.has_feature("editor"), OS.get_environment("EVE_AI_BRIDGE"),
+		str(OS.get_cmdline_args())])
+	if not enabled:
+		return
 	var err := _server.listen(PORT, "127.0.0.1")
 	if err != OK:
+		_log_state("listen_failed=%d" % err)
 		push_warning("[AI桥] 监听 127.0.0.1:%d 失败（错误 %d）—— AI 操作不可用" % [PORT, err])
 		return
 	_listening = true
+	_log_state("listen_ok=%d" % PORT)
 	print("[AI桥] 已监听 127.0.0.1:%d · JSON 行协议 · 命令见 scripts/core/eve_ai_api.gd" % PORT)
+
+
+func _log_state(line: String) -> void:
+	var f := FileAccess.open("user://ai_bridge_state.txt", FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_line(line)
+	f.close()
+
+
+## 是否开监听口。
+##
+## ★ 2026-10-29（用户：「导出的PC版本，说被电脑的防火墙拦截」）：
+##   **发布包里默认不开**。Windows 只要看到程序建了 TCP 监听口（哪怕只绑
+##   127.0.0.1）就会弹「防火墙已拦截」授权框，而普通玩家根本用不上这个桥，
+##   等于每次开游戏都被安全软件拦一次。
+##
+##   · 编辑器里跑（`--path .` 直接 run）：照旧自动开，开发流程不受影响；
+##   · 导出版本：必须显式传 `--ai-bridge`（`exe --ai-bridge`），
+##     或 `exe -- --ai-bridge`（Godot 会把 `--` 之后的参数留在
+##     `OS.get_cmdline_user_args()` 里）。
+##
+## ⛔ 别改成「检测端口被占用就退让」之类的迂回 —— 问题不是端口冲突，
+##    是发布包**不该**持有一个对外可见的监听口。
+##
+## ⚠️ 命令行开关实测在**导出的 Windows GUI 包**里读不到
+##    （`OS.get_cmdline_args()` 拿不到 `--ai-bridge`，包本身没问题，
+##    默认启动确实不监听 —— 见 2026-10-29 现场排查）。
+##    所以发布包请优先用环境变量 `EVE_AI_BRIDGE=1` 打开；命令行两条保留兼容。
+func _bridge_enabled() -> bool:
+	if OS.has_feature("editor"):
+		return true
+	var env := OS.get_environment("EVE_AI_BRIDGE").strip_edges().to_lower()
+	if env == "1" or env == "true" or env == "yes":
+		return true
+	var argv := OS.get_cmdline_args()
+	if "--ai-bridge" in argv:
+		return true
+	return "--ai-bridge" in OS.get_cmdline_user_args()
 
 
 func _process(_delta: float) -> void:

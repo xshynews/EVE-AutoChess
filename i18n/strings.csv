@@ -249,7 +249,7 @@ RESULT_COIN,Holding %d credits,持有 %d 星币
 RESULT_SALVAGE_ASK_TITLE,Give Up Salvage,放弃打捞
 RESULT_SALVAGE_ASK_OK,Give Up,确定放弃
 RESULT_SALVAGE_ASK_CANCEL,Back to Choosing,回去再选
-RESULT_ENDING_CLEARED,The Frontier Is Cleared,遥望边境已肃清
+RESULT_ENDING_CLEARED,Reinforcements Have Arrived,守卫成功，增援已到
 RESULT_ENDING_BEACON,Beacon at Zero · Withdraw,信标归零 · 撤离
 SHOP_TITLE,Shop,商店
 SHOP_COIN_UNIT,Credits,星币
@@ -282,8 +282,8 @@ SHOP_BENCH,Bench %d / %d,备战席 %d / %d
 SHOP_SELL_HINT,Drag here to sell · ◆ refunded,拖到此处出售 · 返还 ◆
 DOSSIER_TITLE,Ship Dossier,舰船档案
 DOSSIER_EMPTY_H,Select a ship,点击舰船查看
-DOSSIER_EMPTY_P,"Battlefield / Bench / Shop card
-click any one of them","战场 / 备战席 / 商店卡
+DOSSIER_EMPTY_P,"Battlefield / Bench
+click any one of them","战场 / 备战席
 任一处点选即可"
 DOSSIER_NONE,None Selected,未选中
 DOSSIER_HP_SHIELD,Shield,护盾

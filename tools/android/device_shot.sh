@@ -29,9 +29,11 @@ find_adb() {
     [ -x "${LOCALAPPDATA}/Android/Sdk/platform-tools/adb.exe" ] && {
       echo "${LOCALAPPDATA}/Android/Sdk/platform-tools/adb.exe"; return; }
   fi
+  # ⚠️ 2026-10-30 清理：原来这里写死了作者的 Windows 用户名
+  #    （`/c/Users/Administrator/...`）。仓库要能被任何人 clone 下来就跑，
+  #    ⇒ 改用 $HOME 拼（Git Bash 下即 /c/Users/<当前用户>）。
   for c in \
-    "/c/Users/Administrator/AppData/Local/Android/Sdk/platform-tools/adb.exe" \
-    "C:/Users/Administrator/AppData/Local/Android/Sdk/platform-tools/adb.exe"; do
+    "${HOME}/AppData/Local/Android/Sdk/platform-tools/adb.exe"; do
     [ -x "$c" ] && { echo "$c"; return; }
   done
   command -v adb 2>/dev/null

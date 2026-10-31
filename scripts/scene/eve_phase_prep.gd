@@ -31,6 +31,9 @@ var pending_event: StringName = &""
 ## ⚠️ 卡片里塞的是**条目本体**（引用），选完直接改它 ——
 ##    不记"第几格"：那样上下场一换位就指错人。
 var ship_pick_cache: Array = []
+## ★ 2026-10-30「双舰强化」（`pick_count: 2`）：玩家点的**第一艘**。
+##   为空 = 还没开始选 / 是单船事件。第二艘点完立刻清空。
+var _pick_first: Dictionary = {}
 ## 正在重建舰队 / 装载面板 —— 这期间 `_refresh_run_ui` 不要再来一次重建。
 var busy := false
 ## ★ 2026-10-28 联机事件回合（`versus.round_kind() == CAROUSEL`）：
@@ -72,6 +75,8 @@ func setup(p_run: EveRunState, p_hud: EveHudRoot, p_resolve,
 ## 不会再广播 `timer_expired` —— 决策点**没有时限**（与云顶海克斯一致）。
 func enter_event_node() -> void:
 	busy = true
+	# ★ 2026-10-30：进新事件 = 上一条「选 2 艘」的中间态作废（重开/连点都靠这条兜底）。
+	_pick_first = {}
 	_run.set_phase(EveRunState.Phase.PREP)
 	_hud.set_phase(0)
 	_hud.set_selling(false)
@@ -163,6 +168,7 @@ func on_event_chosen(id: StringName) -> void:
 	#      面板那边看起来就像"点了没反应"。
 	var opt0 := EveEventTable.by_id(id)
 	if bool(opt0.get("pick_ship", false)):
+		_pick_first = {}
 		ship_pick_cache = _ship_pick_cards()
 		if ship_pick_cache.is_empty():
 			# 连备战席都是空的 ⇒ 这条根本没法落地，让玩家换一条
@@ -172,8 +178,10 @@ func on_event_chosen(id: StringName) -> void:
 			return
 		pending_event = id
 		_hud.hide_event()
+		var need_n := int(opt0.get("pick_count", 1))
 		_hud.show_ship_pick(ship_pick_cache,
-				T.t("PREP_PICK_SHIP", "选 1 艘船 —— 本局永久生效"),
+				T.t("PREP_PICK_SHIP", "选 1 艘船 —— 本局永久生效") if need_n < 2
+						else "选第 1 艘 —— 两艘必须**同费**",
 				T.t("PREP_NODE_NAME", "节点 %d · %s")
 						% [_run.node_index, String(opt0.get("name", id))])
 		return
@@ -187,14 +195,64 @@ func on_event_ship_picked(index: int) -> void:
 		return
 	var entry: Dictionary = ship_pick_cache[index].get("entry", {})
 	var id := pending_event
+	# ★ 2026-10-30「双舰强化」：第一次点击只是**记下来**，然后只留「同费」的候选
+	#   让玩家点第二艘。⛔ 不能在第一次点击时就落地 —— `apply_event()` 要求
+	#   两艘同时给，否则会返回 {}，事件就被白白消耗掉。
+	var need_n := int(EveEventTable.by_id(id).get("pick_count", 1))
+	if need_n >= 2 and _pick_first.is_empty():
+		_pick_first = entry
+		var cost := _entry_cost(entry)
+		var same: Array = []
+		# ⚠️ 按**下标**排掉刚点的那一艘，⛔ 不要用 `e2 == entry` 比较字典：
+		#    两艘同名同星的船（都在备战席、`cell` 都是 -1,-1）字典值完全相同，
+		#    值比较会把合法的第二艘也排掉，玩家会看到"没有第二艘同费船"。
+		for i in ship_pick_cache.size():
+			if i == index:
+				continue
+			var c: Dictionary = ship_pick_cache[i]
+			var e2: Dictionary = c.get("entry", {})
+			if e2.is_empty():
+				continue
+			if _entry_cost(e2) == cost:
+				same.append(c)
+		if same.is_empty():
+			# 同费的其它船一艘都没有 ⇒ 这条落地不了，退回四选一
+			_hud.append_log({"time": 0.0, "category": &"hint",
+					"text": "没有第二艘 %d 费船 ——「双舰强化」需要两艘同费，换一条增益吧" % cost})
+			_pick_first = {}
+			pending_event = &""
+			_hud.hide_ship_pick()
+			_hud.show_event(_run.event_options(), _run.entry_line(),
+					T.t("PREP_PICK_ONE", "节点 %d · %d 选 1")
+							% [_run.event_clock(), EveEventTable.count()])
+			return
+		# ⚠️ 候选里也把「第一艘」剔掉（玩家不能把同一艘船升两次）
+		ship_pick_cache = same
+		_hud.hide_ship_pick()
+		_hud.show_ship_pick(same, "选第 2 艘 —— 必须同为 %d 费" % cost,
+				T.t("PREP_NODE_NAME", "节点 %d · %s")
+						% [_run.node_index, String(EveEventTable.by_id(id).get("name", id))])
+		return
+	var first := _pick_first
+	_pick_first = {}
 	pending_event = &""
 	_hud.hide_ship_pick()
-	_apply_event_and_advance(id, entry)
+	_apply_event_and_advance(id, first if not first.is_empty() else entry,
+			entry if not first.is_empty() else {})
+
+
+## 一条 entry 的费用档（`cost`）。取不到时按 1 费算 —— 同费判据用它，
+## 不能让一条脏数据把整条事件卡死。
+func _entry_cost(e: Dictionary) -> int:
+	return maxi(1, int(EveShipDatabase.by_id(
+			String(e.get("ship_key", ""))).get("cost", 1)))
 
 
 ## 落地 + 推进。选船路径与四选一路径**共用这一段** —— 推进逻辑只有一份。
-func _apply_event_and_advance(id: StringName, target: Dictionary) -> void:
-	var opt := _run.apply_event(id, target)
+## `target2` 只给「选 2 艘」的事件（`pick_count: 2`）用。
+func _apply_event_and_advance(id: StringName, target: Dictionary,
+		target2: Dictionary = {}) -> void:
+	var opt := _run.apply_event(id, target, target2)
 	if opt.is_empty():
 		_hud.append_log({"time": 0.0, "category": &"hint",
 				"text": T.t("PREP_AUG_FAIL",

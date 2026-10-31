@@ -327,6 +327,10 @@ var _continue_btn: Button = null
 ## ★ 2026-10-28 图鉴入口按钮（只在「任务关卡」难度卡片下面显示）与浮层实例。
 var _codex_btn: Button = null
 var _codex: Control = null
+## ★ 2026-10-30 热更状态行（版本号**上方**那行小字）。
+##   ⚠️ 文本为空时整行隐藏 —— 平时玩家看到的还是干净的主界面，
+##      只有「正在下载 / 已就绪重启生效 / 校验失败」时才有话说。
+var _update_tag: Label = null
 
 
 func _ready() -> void:
@@ -395,6 +399,10 @@ func _ready() -> void:
 	_refresh()
 	_layout_content()
 	resized.connect(_layout_content)
+	# ★ 2026-10-30：走到这里说明「挂了热更包还能起得来主菜单」⇒ 清掉失败计数。
+	#   ⚠️ 必须放在界面全部建完之后：前面任何一步崩掉都算「这次启动失败」，
+	#      计数留着才有意义（见 `EveUpdater` 的坏包三次自动回退）。
+	EveUpdater.mark_boot_ok()
 
 
 ## 把内容层摆到「基准区居中」的位置。
@@ -835,7 +843,12 @@ func _build_sys() -> void:
 ## ⚠️ 用 `set_anchors_and_offsets_preset`（⛔ 不是 `set_anchors_preset`）：后者会
 ##    **保持 0×0 的当前矩形**、量不出正确位置（见 MEMORY §10 的同类坑）。
 func _build_version_tag() -> void:
-	var ver := str(ProjectSettings.get_setting("application/config/version", "0.0.0"))
+	# ★ 2026-10-30：改读 `EveUpdater.build_info()` —— 它优先读 `res://build_info.json`
+	#   （导出脚本生成），热更包挂载后这个文件会被 pck 里那份覆盖 ⇒
+	#   **右下角显示的版本号自动跟着热更走**，不会出现"更新完了却还写着旧版本号"。
+	#   ⚠️ 取不到 build_info.json 时它内部会回退到 `application/config/version`，
+	#      所以「只读配置、不许另写死数字」这条约定仍然成立。
+	var ver := String(EveUpdater.build_info().get("version", "0.0.0"))
 	# ⚠️ **不加暗底**（用户 2026-10-10 明确要求）⇒ 必须用**深色字**：底图右下角是
 	#    亮星云（实测 RGB≈160,180,192），浅色字根本读不出来；深色字对比度 ≈ 6:1。
 	var tag := _label(T.t("MENU_VERSION", "当前版本 V%s") % ver, 11, Color(0.12, 0.16, 0.19, 0.92))
@@ -848,6 +861,36 @@ func _build_version_tag() -> void:
 	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	tag.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_content.add_child(tag)
+
+	# ── 热更状态行（版本号正上方）──
+	# 拉得比版本号宽：这里可能出现「发现新版本 V0.14.10 · 准备下载」这种长句。
+	var utag := _label("", 11, Color(0.12, 0.16, 0.19, 0.86))
+	utag.name = "UpdateTag"
+	utag.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	utag.offset_left = -460.0
+	utag.offset_right = -56.0
+	utag.offset_top = -74.0
+	utag.offset_bottom = -50.0
+	utag.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	utag.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	utag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	utag.visible = false
+	_content.add_child(utag)
+	_update_tag = utag
+	# ⚠️ 先判重再 connect：`_build_version_tag` 可能在重建界面时被再调一次，
+	#    重复 connect 会让回调跑两遍（Godot 4 会直接报 "already connected" 错）。
+	if not EveUpdater.changed.is_connected(_refresh_update_tag):
+		EveUpdater.changed.connect(_refresh_update_tag)
+	_refresh_update_tag()
+
+
+## 把热更状态同步到那一行小字。空文本 = 隐藏（绝大多数时候应该隐藏）。
+func _refresh_update_tag() -> void:
+	if _update_tag == null:
+		return
+	var s := String(EveUpdater.status_text)
+	_update_tag.text = s
+	_update_tag.visible = s != ""
 
 
 ## 当前选中的是不是「版权声明」这一项。

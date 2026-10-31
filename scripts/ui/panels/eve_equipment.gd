@@ -16,7 +16,15 @@ extends "res://scripts/ui/eve_window.gd"
 ##   - set_slots() 接装备数组；put()/take() 单格操作
 ##   - 满仓时标题栏右侧显示「8 / 8」并转橙
 
-const SLOT_COUNT := 8
+## ★ 2026-10-31（用户定案）：背包格数的真源是 `EveRunState.EQUIP_BAG_SIZE`。
+##
+## 用户原话：「背包先定8个，但我感觉不是很够，以后会研究装备合成路线的」
+##   ⇒ 这个数**以后会变**。所以这里不许再写死 8，一律读常量 ——
+##     否则「游戏里说 10 格、界面上只有 8 格」，而两边都不会报错。
+## ⚠️ 用 `preload` 而不是 `class_name`：GDScript 的 `const` 初始化需要
+##    **编译期**常量，走 class_name 的全局脚本在部分无头场景下取不到。
+const RUN := preload("res://scripts/core/eve_run_state.gd")
+const SLOT_COUNT := RUN.EQUIP_BAG_SIZE
 const SLOT_H := 35.0
 ## 8 个固定位的序号（手机档格子拉高后显示；桌面档格子矮，自动隐藏）
 const ROMAN: Array[String] = ["Ⅰ", "Ⅱ", "Ⅲ", "Ⅳ", "Ⅴ", "Ⅵ", "Ⅶ", "Ⅷ"]
@@ -51,7 +59,9 @@ func _build_contents() -> void:
 		# ★ 手机档：格子随窗口拉高（桌面档 116 高恰好 2×35，不动）
 		slot.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		# 序号 Ⅰ~Ⅷ：格子够高才看得见（`EveSlot.TAG_SHOW_H`）
-		slot.tag = ROMAN[i]
+		# ⚠️ 越界保护：背包一旦扩到 10 格（用户提过「8 个不太够」），
+		#    `ROMAN[i]` 会直接越界崩 —— 宁可没序号，不能崩窗口。
+		slot.tag = ROMAN[i] if i < ROMAN.size() else ""
 		grid.add_child(slot)
 
 		_slots.append(slot)

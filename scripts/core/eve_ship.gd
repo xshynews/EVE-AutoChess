@@ -178,6 +178,88 @@ var damage_dealt: float = 0.0
 var damage_taken: float = 0.0
 var kills: int = 0
 
+## 最近一次开火时刻（模拟器时间，秒）。用于「沉默多久 = 该压上去了」这条闸。
+## 初值 -999 ⇒ 开局不算沉默（否则第一 tick 全队就脱队）。
+var last_fire_at: float = -999.0
+
+## ★ 2026-10-30：**最近一发**是否掷中了「穿盾」（`shot_fired` 里没有这个信息）。
+##
+## 由模拟器每发写入，供战斗播报条区分「穿透」与「命中」。
+## ⚠️ 它是**瞬时**状态，不要拿去做统计或结算 —— 只服务于那一帧的文案。
+var last_hit_pierced: bool = false
+
+# --- ★★ 电子战（2026-10-31 用户定案：重现 EVE 的**锁定**机制）---
+#
+## 干扰节奏（电子战）。放在这里而不是模拟器，是为了让
+## `EveFleetFactory`（开局攒第一个周期）和 `EveBattleSimulator`（逐帧掷）
+## **读同一份** —— ⛔ 别在两边各写一个 5.0。
+##
+## `JAM_CYCLE` = 每 5 秒掷一次（不是每发都掷：开火间隔 0.6~1.5 秒，
+##   逐发掷会让 6 艘电子船的目标几乎永久哑火，见 `_ew_step` 的说明）。
+## `JAM_DURATION` = 命中后 10 秒不能开火（用户定案）。
+const JAM_CYCLE := 5.0
+const JAM_DURATION := 10.0
+
+## 电子船的干扰命中率（用户定案：护卫 5% / 巡洋 10%）。
+##
+## ⚠️ 放在 `EveShip` 而不是工厂，因为**三个**地方要读它
+##    （工厂造队 / `EveRunState.apply_fleet_traits` 给敌方补 / 测试探针），
+##    放工厂会跟 run_state 形成循环引用。
+## ⚠️ 驱逐 / 战巡 / 战列**不在电子战兵源里**（`EW_SHIP_KEYS` 只取护卫 + 巡洋），
+##    所以后三档不会出现在实战中 —— 写出来是给「以后扩兵源」留的口子，
+##    同时也是对「为什么只有两档」的显式回答（⛔ 别删成 if/else）。
+static func jam_chance_for_class(cls: int) -> float:
+	match cls:
+		Class.FRIGATE:
+			return 0.05
+		Class.DESTROYER:
+			return 0.06
+		Class.CRUISER:
+			return 0.10
+		Class.BATTLE_CRUISER:
+			return 0.13
+		_:
+			return 0.15
+
+#
+# 口径变更（重要，看旧注释前先看这里）：
+#   旧实现 = 羁绊给**敌方全体**加开火间隔（`enemy_cycle_pct`）。
+#   新实现 = 电子船对它**正锁定的那一艘**削输出（`ew_lock_reduce`），
+#            外加每艘电子船自带的干扰（`jam_chance`）。
+#   ⇒ 减伤的落点从「敌方全体」变成「电子船的攻击目标」，
+#     这正是用户要的「电子船正在攻击谁，谁的伤害就直接降低」。
+#
+# ⚠️ `ew_lock_reduce` 由**羁绊档位**写（2/4 艘 30% / 6 艘 40%），
+#    `jam_chance` 由**舰种**写（护卫 5% / 巡洋 10%），两者来源不同，
+#    ⛔ 别合并成一个字段。
+var is_ew: bool = false            ## 本舰是电子战舰（判据 `EveTraitTable.EW_SHIP_KEYS`）
+var ew_lock_reduce: float = 0.0    ## 它锁定的目标输出 ×(1 − 该值)
+var jam_chance: float = 0.0        ## 每个干扰周期独立掷一次的命中率
+var jam_timer: float = 0.0         ## 距下次掷干扰的倒计时（秒）
+var jam_disabled: float = 0.0      ## 被干扰后**不能开火**的剩余秒数
+
+## 输出侧倍率（1.0 = 正常）。被电子船锁定时 < 1。
+##
+## ⚠️ 与 `incoming_mult`（受击侧）方向相反，别写混：
+##      `incoming_mult` 改「我挨打疼不疼」，`outgoing_mult` 改「我打得疼不疼」。
+##    电子战的"减伤"是**削敌方输出**，所以必须走这一侧 ——
+##    走 `incoming_mult` 会让「敌方全体打我变轻」，那就不是锁定机制了。
+## ⚠️ 每 tick 由 `EveBattleSimulator._ew_step()` 从 1.0 重算，
+##    ⛔ 不要在其他地方累乘（会被下一帧复位冲掉）。
+var outgoing_mult: float = 1.0
+
+## ★ 2026-10-31（用户定案）：装备槽容器。
+##
+## 长度 = 该舰**吨位**对应的槽位数（护卫/驱逐 1 · 巡洋/战巡 2 · 战列 3），
+## 由 `EveFleetFactory.apply_doctrine()` 统一 `resize` —— 那是所有造队链
+## （我方 / 敌方 / PvP / 档案预览）唯一的公共入口。
+##
+## ⚠️ 这里**只放容器**，⛔ 不要在 `EveShip` 里再抄一份「按 cost 查槽位」的表：
+##    那份表的真源是 `EveRunState.EQUIP_SLOTS_BY_COST`（掉落 / UI / 验收都读它），
+##    抄一份必然分叉（「界面说 2 格、实际只有 1 格」）。
+## ⚠️ 元素结构与背包同源（`EveRunState.roll_equip`），空槽 = `{}`。
+var equips: Array[Dictionary] = []
+
 ## 受到的伤害倍率（1.0 = 正常）。炼狱 BOSS 的「壁垒」把未破解时的伤害压到 0.1。
 ##
 ## ⚠️ 与 `resists` 是两回事：抗性是**按伤害类型**逐层算的（EVE 规则），

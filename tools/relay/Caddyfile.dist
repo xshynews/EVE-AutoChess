@@ -1,0 +1,61 @@
+# =============================================================================
+#  分发节点的 Caddy 配置（部署到服务器 /etc/caddy/Caddyfile）
+#
+#  用法：
+#      cp Caddyfile.dist /etc/caddy/Caddyfile
+#      caddy validate --config /etc/caddy/Caddyfile
+#      systemctl reload caddy
+#
+#  ⚠️ 这个文件里**不许出现任何本机/作者私有信息**（仓库要开源）。
+#     唯一的运行期地址是 root 指向的目录，属于通用路径。
+# =============================================================================
+
+{
+	# 请求体上限压小：本站只发静态文件，没人需要上传。
+	servers {
+		timeouts {
+			read_body 10s
+			read_header 10s
+			idle 45s
+		}
+	}
+}
+
+:80 {
+	root * /var/www/eve
+
+	# 1) 只读：挡掉 PUT/POST/DELETE 之类的探测（扫描器很爱试这些）
+	@bad not method GET HEAD
+	respond @bad "method not allowed" 405
+
+	# 2) ⛔ 不写 browse！
+	#    原来写的是 `file_server browse`，任何人能直接列出 /update/pck/ 下的文件，
+	#    等于把热更包地址白送出去。实测关掉后 GET /update/pck/ 返回 404。
+	file_server
+
+	# 3) 缓存：清单必须能立刻反映新版本，包的文件名带版本号可以长缓存
+	@meta path /update/version.json
+	header @meta Cache-Control "no-store"
+	@pck path /update/pck/*
+	header @pck Cache-Control "public, max-age=604800, immutable"
+
+	# 4) 抹掉版本指纹
+	header {
+		-Server
+		-X-Powered-By
+		X-Content-Type-Options "nosniff"
+	}
+
+	encode zstd gzip
+
+	# 5) 访问日志 —— 没有它，出了事（被打、被刷）根本查不出是谁
+	#    ⛔ 路径不能用 /var/log/caddy/：caddy 用户没写权限，reload 会失败。
+	#       而 reload 失败时**旧配置继续运行**，表面上一切正常，非常能骗人。
+	log {
+		output file /var/lib/caddy/eve-access.log {
+			roll_size 20MiB
+			roll_keep 3
+		}
+		format json
+	}
+}

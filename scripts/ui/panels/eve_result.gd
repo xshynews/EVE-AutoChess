@@ -59,7 +59,10 @@ var _salvage_section: VBoxContainer
 var _salvage_title: Label
 var _salvage_hint: Label
 var _salvage_warn: Label
-var _salvage_list: VBoxContainer
+var _salvage_list: GridContainer
+var _salvage_scroll: ScrollContainer
+## 防重入标记（见 `_on_result_resized`）：拖动缩放时列数与窗高互相触发。
+var _fitting_salvage := false
 var _salvage_queue: Label
 var _salvage_coin: Label
 var _salvage_close_btn: Button
@@ -80,8 +83,15 @@ var _data: Dictionary = {}
 #
 ## 打捞区的一行（= 一个「打捞」按钮的高度 + 行间距）。
 const SALVAGE_ROW_H := 20.0
-## 打捞列表区的最大高度：超过就滚动（N 艘再多也不撑破窗）。
+## 打捞列表区的最大高度（默认窗宽下的基准）：超过就滚动（N 艘再多也不撑破窗）。
+## ⚠️ 窗**被玩家拖大**之后这个上限会跟着放（见 `_apply_salvage_grid`）——
+##    写死的上限就是「拖大了也只显示 6 艘」那个问题的来源。
 const SALVAGE_LIST_MAX_H := 120.0
+## 打捞区一列的最小宽度（设计像素）。
+## 一行 = 船名 + 星级 + 「打捞」按钮，实测再窄就只剩省略号。
+const SALVAGE_MIN_COL_W := 230.0
+## 最多几列 —— 再宽也只是留白，不会更易读。
+const SALVAGE_MAX_COLS := 4
 ## 打捞区的固定部分（标题行 + 警告行 + 队列行占位 + 段间距）。
 ##
 ## ⚠️⚠️ 这个数是**实测标定**的，不是算出来的 —— 改打捞区排版后**必须重量一次**
@@ -140,6 +150,8 @@ func _ready() -> void:
 	# ★ 打捞区在 `_build_contents` **之后**建 —— 它要挂在 content 的末尾
 	#    （用户要求「按钮在后面」），而 content 是在 _build_contents 里填的。
 	_build_salvage_section()
+	# ★ 2026-10-30：玩家拖动放大/缩小结算窗 ⇒ 打捞列表要跟着重排列数与可见行数。
+	resized.connect(_on_result_resized)
 
 
 func _build_contents() -> void:
@@ -390,11 +402,17 @@ func _build_salvage_section() -> void:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_salvage_section.add_child(scroll)
+	_salvage_scroll = scroll
 
-	_salvage_list = VBoxContainer.new()
+	# ★ 2026-10-30（玩家反馈）：「结算栏拖动放大的同时，打捞选项也要展示更多」。
+	#   列表从**单列 VBox** 换成**网格**：窗一宽就自动分 2/3/4 列，
+	#   窗一高就多显示几行（列数与行数都由 `_apply_salvage_grid` 现算）。
+	_salvage_list = GridContainer.new()
 	_salvage_list.name = "List"
+	_salvage_list.columns = 1
 	_salvage_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_salvage_list.add_theme_constant_override("separation", 2)
+	_salvage_list.add_theme_constant_override("h_separation", 10)
+	_salvage_list.add_theme_constant_override("v_separation", 2)
 	scroll.add_child(_salvage_list)
 
 	# ── ④ 修复队列行（无残骸时才有内容；有残骸时它是空串）──
@@ -554,15 +572,13 @@ func refresh_salvage(res: Dictionary, ended: bool = false) -> void:
 		_salvage_list.visible = true
 		for it in items:
 			_add_salvage_row(it as Dictionary)
-		# 列表高度按行数反推（⛔ 不写死常量）：行高 18 + 行间 2
-		var h: float = items.size() * SALVAGE_ROW_H
-		(_salvage_list.get_parent() as ScrollContainer).custom_minimum_size = \
-				Vector2(0, minf(h, SALVAGE_LIST_MAX_H))
+		# 列数 / 高度由**当前窗宽窗高**现算（拖动放大 → 立刻多显示几艘）
+		_apply_salvage_grid()
 	else:
 		_salvage_warn.visible = false
 		_salvage_list.visible = false
-		(_salvage_list.get_parent() as ScrollContainer).custom_minimum_size = \
-				Vector2(0, 0)
+		if _salvage_scroll != null:
+			_salvage_scroll.custom_minimum_size = Vector2(0, 0)
 		# 「暂无残骸」占位（参考图 2 的那句）
 		var none_lb := Label.new()
 		none_lb.text = T.t("RESULT_SALVAGE_EMPTY", "暂无残骸 —— 舰船被击毁后会出现在这里")
@@ -612,6 +628,68 @@ func _clear_salvage_rows() -> void:
 ## 按内容**反推**窗高。
 ##
 ## ⚠️ 本工程铁律：窗高由内容算，⛔ 不手写 —— 手写会留一条死白底边（踩过 2 次）。
+## ══════════════════════════════════════════════════════════════════
+##  ★ 2026-10-30：打捞列表**网格化**（玩家：拖动放大要显示更多船）
+## ══════════════════════════════════════════════════════════════════
+##
+## 列数 = 可用宽 / 单列最小宽（1~4），行数 = ceil(条数 / 列数)。
+## 高度上限 = max(基准 120, 窗高 − 280) —— 窗拖得越高，能同时看到的行越多。
+## ⚠️ 三处必须**同源**：`refresh_salvage` 的排版、`_fit_salvage_height` 的窗高、
+##    拖动放大时的重排，全都只调这几个函数，⛔ 别在别处再写一遍行高。
+
+## 当前该分几列（按滚动区实际宽度；还没排版时用窗宽兜底）。
+func _salvage_cols_now() -> int:
+	var avail := 0.0
+	if _salvage_scroll != null:
+		avail = _salvage_scroll.size.x
+	if avail <= 8.0:
+		avail = maxf(200.0, size.x - 60.0)
+	return clampi(int(floor(avail / SALVAGE_MIN_COL_W)), 1, SALVAGE_MAX_COLS)
+
+
+## 打捞列表当前应占的高度（0 = 没显示 / 没内容）。
+func _salvage_list_h_now() -> float:
+	if _salvage_list == null or not _salvage_list.visible:
+		return 0.0
+	var n := _salvage_list.get_child_count()
+	if n <= 0:
+		return 0.0
+	var cols := maxi(1, _salvage_list.columns)
+	var rows := int(ceil(float(n) / float(cols)))
+	# 窗拖高之后上限跟着放：多出来的高度全给列表（360 ≈ 顶部固定部分 + 外壳 + 余量）
+	var cap := maxf(SALVAGE_LIST_MAX_H, size.y - 360.0)
+	return minf(float(rows) * SALVAGE_ROW_H, cap)
+
+
+## 重算列数并同步滚动区高度。排版 / 缩放 / 拖动三条路径共用。
+func _apply_salvage_grid() -> void:
+	if _salvage_list == null:
+		return
+	var cols := _salvage_cols_now()
+	if _salvage_list.columns != cols:
+		_salvage_list.columns = cols
+	if _salvage_scroll != null:
+		_salvage_scroll.custom_minimum_size = Vector2(0, _salvage_list_h_now())
+
+
+## 窗口被拖动缩放：重排列数 + 重算窗高。
+##
+## ⚠️ 不这样做的话，玩家放大窗口只会得到一块更大的空白 —— 列表仍按放大前的
+##    列数排（`custom_minimum_size` 是排版那一刻写死的）。
+func _on_result_resized() -> void:
+	if _salvage_section == null or not _salvage_section.visible:
+		return
+	# ⚠️ 防重入：`_apply_salvage_grid()` 会改滚动区最小尺寸 ⇒ 触发重排 ⇒
+	#    可能再发一次 `resized`；`_fit_salvage_height()` 自己也会改窗高。
+	#    没有这道闸，一次拖动会变成反复互相触发。
+	if _fitting_salvage:
+		return
+	_fitting_salvage = true
+	_apply_salvage_grid()
+	_fit_salvage_height()
+	_fitting_salvage = false
+
+
 func _fit_salvage_height() -> void:
 	# ⚠️⚠️ 这里**必须用确定性算式**，⛔ 绝不能读 `get_combined_minimum_size()`。
 	#
@@ -624,8 +702,9 @@ func _fit_salvage_height() -> void:
 	if _salvage_section.visible:
 		h += SALVAGE_FIXED_H
 		if _salvage_list.visible:
-			h += minf(_salvage_list.get_child_count() * SALVAGE_ROW_H,
-					SALVAGE_LIST_MAX_H)
+			# ★ 2026-10-30：改成「按列数折成行数」再乘行高（网格化之后，
+			#   一艘一行的旧算法会把窗高算成 2 倍，底部留一条大白）。
+			h += _salvage_list_h_now()
 		if _salvage_queue.visible:
 			h += 14.0          # 队列行
 	# ★★ 2026-10-25（真机「打捞列表看不见」）：上面这个算式里的常量是按
@@ -785,7 +864,10 @@ func show_result(res: Dictionary) -> void:
 	# 所以换成「再来一局」，并且**去掉**「结束本局」——两个按钮做同一件事很蠢。
 	var ending := String(res.get("ending", ""))
 	if ending != "":
-		_title.text = T.t("RESULT_ENDING_CLEARED", "遥望边境已肃清") if ending == "cleared" \
+		# ★ 2026-10-31（用户定案）：通关标题从「遥望边境已肃清」改成
+		#   「守卫成功，增援已到」—— 原句是**叙事描述**，玩家读完不知道自己赢了；
+		#   新句先说结果（守卫成功）再说后续（增援已到），既有结论又留了钩子。
+		_title.text = T.t("RESULT_ENDING_CLEARED", "守卫成功，增援已到") if ending == "cleared" \
 			else T.t("RESULT_ENDING_BEACON", "信标归零 · 撤离")
 		_title.add_theme_color_override("font_color",
 				C_OK if ending == "cleared" else C_HULL)

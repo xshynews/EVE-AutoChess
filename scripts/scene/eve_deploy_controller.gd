@@ -27,6 +27,28 @@ extends RefCounted
 ##    ⛔ 别在两处各写一份 60.0。
 const PICK_RADIUS := 60.0
 
+## 「按下 → 松手」之间位移小于这个值 = **点选**，不是拖放（像素 · 画布空间）。
+##
+## ★★ 2026-10-30 修 bug（玩家反馈：「准备阶段点击舰船，档案不跟着换，
+##    只显示战斗中最后点的那一个」）：
+##
+##    根因：按下就 `begin_drag` 成功，松手事件被主控 `_input()` 抢走并
+##    `set_input_as_handled()` ⇒ `_unhandled_input` 里那条「松手 → `_try_select_at`」
+##    **一次都走不到**。于是整个准备阶段只有「拖放」，没有「点选」：
+##    档案永远停在上一次战斗中选中的那艘。
+##    备战席同理（`begin_drag` 也认备战席格）。
+##
+##    修法就是这里：松手时若位移 < `TAP_SLOP`，当作一次点击 ——
+##    收尾但不执行任何落点动作，把「选谁」交回主控。
+##
+## ⚠️ 阈值 14 的取法（夹在两头之间，别随手调）：
+##    · 下界 = 触屏点击的真实抖动。Godot 把 touch 模拟成 mouse，按下/抬起的坐标
+##      是采样点，手指"按一下"通常漂 5~10 px（画布空间）⇒ 阈值小于 10 = 手机上修不掉。
+##    · 上界 = 半格。棋盘 11×11 在 1080p 画布上一格约 40 px，超过 20 就等于
+##      「玩家想挪一格，却被当成点选」⇒ 拖放会变得时灵时不灵。
+##    14 落在两者中间，两边都留了余量。
+const TAP_SLOP := 14.0
+
 ## ★ 与主控**共享同一个字典对象**（见顶注）。空字典 = 没在拖。
 var drag: Dictionary = {}
 
@@ -81,6 +103,7 @@ func begin_drag(pos: Vector2) -> bool:
 	var bench := _run.bench_entries()
 	if bi >= 0 and bi < bench.size():
 		_set_drag(make_drag(bench[bi], &"bench", bi))
+		drag["start"] = pos
 		drag["screen"] = pos
 		_begin_drag_visual()
 		return true
@@ -93,6 +116,7 @@ func begin_drag(pos: Vector2) -> bool:
 		var entries := _run.field_entries()
 		if fi >= 0 and fi < entries.size():
 			_set_drag(make_drag(entries[fi], &"field", fi))
+			drag["start"] = pos
 			drag["screen"] = pos
 			_begin_drag_visual()
 			return true
@@ -133,6 +157,9 @@ static func make_drag(e: Dictionary, source: StringName, index: int) -> Dictiona
 		"color": EveShip.FACTION_COLORS.get(int(d.get("faction", 0)), Color.GRAY),
 		# 出售返还 = cost × 3^(star-1)（与 RunState.sell_value 同口径）
 		"refund": cost * int(pow(3.0, float(star - 1))),
+		# `start` = 按下的位置（判 tap 用，**不随鼠标更新**）
+		# `screen` = 当前位置（幽灵跟手用）
+		"start": Vector2.ZERO,
 		"screen": Vector2.ZERO,
 		"hint": "",
 		"hint_ok": false,
@@ -251,12 +278,34 @@ static func ghost_payload(d: Dictionary) -> Dictionary:
 	}
 
 
+## 本次按下到松手算不算「点选」而不是「拖放」。
+##
+## ⚠️ `start` 由 `begin_drag` 写入、**不跟着鼠标走**（`screen` 才跟）。
+##    拿不到 `start`（万一有旧路径只写 screen）就退回 screen —— 那时恒为 tap，
+##    最坏情况是「拖了一下没生效」，比「点了完全不反应」更容易被发现。
+func is_tap(pos: Vector2) -> bool:
+	if drag.is_empty():
+		return false
+	var start: Vector2 = drag.get("start", drag.get("screen", pos))
+	return start.distance_to(pos) <= TAP_SLOP
+
+
 ## 松手：按落点分派动作。整个拖放**唯一的生效点**。
 ##
 ## 落点优先级：出售区 → 棋盘格 → 备战席轨道 → 什么都不做（静默放回）。
-func end_drag(pos: Vector2) -> void:
+##
+## 返回 **true = 这一次是「点选」**（位移 ≤ `TAP_SLOP`）：已经收尾、**数据一个字节
+## 都没动**，调用方应该接着做「选中这艘船」。false = 真拖放，动作已执行。
+##
+## ⚠️ 点选必须**跳过落点动作**，不能"先原地落一下再选"：
+##    场上的船原地 move_field 到自己格子会被 `_cell_taken()` 判成占用，
+##    往日志里甩一条「这一格已被占用」；玩家只是点了一下，却收到一句报错。
+func end_drag(pos: Vector2) -> bool:
 	if drag.is_empty():
-		return
+		return false
+	if is_tap(pos):
+		finish_drag()
+		return true
 	var source := StringName(drag["source"])
 	var index := int(drag["index"])
 
@@ -295,6 +344,7 @@ func end_drag(pos: Vector2) -> void:
 	# 「动作被拒但界面仍需回正」（例如高亮、备战席 hover）收尾。
 	_refresh_ui_cb.call()
 	_log_synergies_cb.call()
+	return false
 
 
 ## 取消：ESC / 右键。落点当成「哪儿都不是」，一个字节的数据都不改。

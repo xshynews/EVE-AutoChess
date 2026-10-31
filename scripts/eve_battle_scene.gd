@@ -248,6 +248,12 @@ var _result_payload: Dictionary:
 ## 买到新船 / 三连合成 / 拖放调位都会变 —— 变了就得把舰队重新造一遍，
 ## 否则玩家花了钱或挪了位，战场上却不出现对应的变化。
 var _last_field_sig := ""
+## ★ 2026-10-30：战斗播报用「本艘船上一次看到的护盾/装甲是否还在」。
+## 键 = ship.id，值 = {"shield": bool, "armor": bool}。
+## ⚠️ `shot_fired` 不带「打在盾上还是甲上」的信息（见 `_hit_layer` 的说明），
+##    所以「破盾 / 破甲」只能靠**状态由有变无**那一发给出来 —— 这是唯一
+##    不需要改模拟器信号签名的做法。每回合舰队重建时清空（id 会换）。
+var _layer_seen: Dictionary = {}
 ## 只有名单（不含格号）的指纹 —— 决定要不要打那一行「上场 n／m 艘」日志
 var _last_roster_sig := ""
 ## 上一次打过的「生效羁绊」组合 —— 只在变化时打日志
@@ -654,6 +660,9 @@ func begin_prep() -> void:
 		return
 
 	_busy = true
+	# ★ 2026-10-30：新一回合的舰船 id 会重排 ⇒ 上一回合的「盾/甲是否还在」作废。
+	#   不清的话，新船 id 若撞上旧 id，第一发就会被误判成「破盾」。
+	_layer_seen.clear()
 	run.set_phase(EveRunState.Phase.PREP)
 	hud.set_phase(0)
 	hud.set_selling(false)
@@ -760,8 +769,7 @@ func begin_prep() -> void:
 		"time": 0.1, "category": &"hint",
 		"text": run.current_node().get("line", ""),
 	})
-	if _own_ships.size() > 0:
-		hud.show_ship(_own_ships[0])
+	_restore_dossier(hud.get_selected_ship())
 	_busy = false
 	# ★ 2026-10-10（审查 2#2）：**每次进入新的准备阶段前存一次对局**。
 	#   选这个时机是因为它正是「一个节点结束了、下一个节点刚开始」——
@@ -810,6 +818,13 @@ func _roster_signature() -> String:
 ##    重建范围刻意只到「我方 + 重新摆位」：
 ##    敌方不重建（他们的数值与玩家的购买无关），只跟着新的部署带挪个位置。
 func _respawn_own_fleet() -> void:
+	# ★ 2026-10-30（玩家反馈「档案只显示乱跳的那一艘，不是点中的」）：
+	#   重建前记下「玩家正在看哪一艘（型号 + 星级）」。
+	#   ⚠️ 不能记实例：`_build_own_fleet()` **每次全新造实例**，旧引用一定不在
+	#      新数组里（按实例匹配 = 永远匹配不上 = 白记）。
+	#   ⚠️ 也不能不记就保留：卖船 / 换阵容时被选中的那艘会从场上消失，
+	#      档案还挂着它 ⇒ 显示一艘不存在的船（血量还是满的，看着像正常）。
+	var prev: EveShip = hud.get_selected_ship() if hud != null else null
 	for s in _own_ships:
 		arena.remove_ship_visual(s.id)
 
@@ -845,8 +860,7 @@ func _respawn_own_fleet() -> void:
 				", ".join(FLEET_FACTORY.names_of(_own_ships)),
 			],
 		})
-	if _own_ships.size() > 0:
-		hud.show_ship(_own_ships[0])
+	_restore_dossier(prev)
 
 
 ## 给拖放控制器现取「会被重新赋值」的两个数组（见 `_deploy.setup` 的注释）。
@@ -856,6 +870,29 @@ func _get_own_ships() -> Array[EveShip]:
 
 func _get_own_field_index() -> Array[int]:
 	return _own_field_index
+
+
+## 把右上档案窗落回「玩家正在看的那一艘」；它已不在场上才退回第 1 艘。
+##
+## ★ 2026-10-30（玩家反馈：「准备阶段点击舰船，档案不会跟着换，只会显示
+##   战斗中最后点的那一个」）—— 这条反馈有**两个**成因，一个是拖放吃掉了
+##   点击（见 `EveDeployController.TAP_SLOP`），另一个就是这里：
+##   `_respawn_own_fleet()` 与 `begin_prep()` 都无条件 `show_ship(_own_ships[0])`，
+##   于是玩家每买一张牌 / 每进一个回合，档案就自己翻回第 1 艘。
+##
+## ⚠️ 匹配用「型号 + 星级」而**不是实例**：舰队每次重建都是全新实例
+##    （`_build_own_fleet()`），按实例比一定匹配不上。
+## ⚠️ `prev` 为 null（从没选过）⇒ 落第 1 艘，保证档案不空着。
+func _restore_dossier(prev: EveShip) -> void:
+	if hud == null or _own_ships.is_empty():
+		return
+	var pick: EveShip = _own_ships[0]
+	if prev != null:
+		for s in _own_ships:
+			if String(s.ship_key) == String(prev.ship_key) and s.star == prev.star:
+				pick = s
+				break
+	hud.show_ship(pick)
 
 
 ## 给结算阶段模块现取模拟器（它在开战时才建、重开时置空）。
@@ -1108,13 +1145,14 @@ func start_battle() -> void:
 #  阶段三：结算
 # ══════════════════════════════════════════════════════════════════
 
-## ★ 火力渐增的开始提示（时限的 60% 处触发一次）。
+## ★ 火力渐增的开始提示（时限的 `SUDDEN_DEATH_FRACTION` 处触发一次）。
 ##
 ## ⚠️⚠️ 2026-10-04 修的真 bug：原来这里直接调
 ##    `hud.set_stage(..., 0.0)` 把顶条倒计时**当场归零** ——
-##    而火力渐增在**时限的 60%** 就开始（SUDDEN_DEATH_FRACTION=0.60）：
+##    而火力渐增在**时限的固定比例**就开始（当时 `SUDDEN_DEATH_FRACTION=0.60`）：
 ##    遭遇战 45s → 27s 触发，顶条还剩 18s；精英战 55s → 33s，还剩 22s。
 ##    ⇒ 用户实机看到「明明战斗还剩 20 多秒，结果一下就归零了」。
+##    （现值为 0.45 ⇒ 遭遇战 20.2s 触发，道理不变，只是更早。）
 ##
 ##    正确行为：火力渐增只是**伤害放大机制**的开始，跟倒计时**没有任何关系**
 ##    —— 只发一条日志，倒计时让它自然走完。
@@ -1631,6 +1669,16 @@ func restart_run() -> void:
 	arena.end_battle_shot()
 	hud.hide_result()
 	hud.hide_settings()
+	# ★★ 2026-10-30（玩家反馈 BUG）：在**事件节点**按 R 重开，事件面板会留在屏幕上。
+	#
+	#   实测链路：`run.start_run()` 已经把节点打回 1、星币打回 start_gold，
+	#   但面板还开着 ⇒ 玩家在那张「节点 4 的四选一」上再点一下：
+	#     `apply_event()` 落到**新的一局**上（增益生效）
+	#     → 紧接着 `advance()` 给了一次节点收入（+5）
+	#   于是新局开局 5 + 5 = 10 星币，还平白多一条增益。
+	#   ⇒ 重开必须把事件面板与「事件态」一起收掉，不只是清 `_pending_event`。
+	hud.hide_event()
+	_prep_phase.versus_event = false
 	hud.clear_damage()
 	hud.hide_entry()
 	_fleet.reset()
@@ -1652,6 +1700,7 @@ func restart_run() -> void:
 	#   可能带着 `_pending_event` 进第一个事件节点（状态串味）。
 	_pending_event = &""
 	_ship_pick_cache.clear()
+	_layer_seen.clear()
 	# ★ 2026-10-10（审查 2#2）：重开 = 上一局作废 ⇒ 先把旧档删掉
 	#   （随后 `begin_prep()` 会把**新的一局**存进去，所以「继续上一局」照样有）。
 	RUN_STORE.clear()
@@ -1771,6 +1820,34 @@ func _hit_layer(ship: EveShip) -> StringName:
 	return &"hull"
 
 
+## 这一发在**播报条**上算什么事件：命中 / 穿透 / 破盾 / 破甲 / 击毁。
+##
+## ⚠️ 优先级是**有顺序**的，别调换：
+##   ① 击毁（结构见底）最重 —— 它同时意味着前面几层已经没了，报「破甲」是误导；
+##   ② 破层（盾/甲 由有变无）—— 只在这一发**跨过归零**时成立，
+##      否则盾空之后的每一发都会被标成「破盾」，播报条就全是破盾；
+##   ③ 穿透（`EveShip.last_hit_pierced`，由模拟器每发写入）；
+##   ④ 落回「命中」。
+func _feed_kind(target: EveShip) -> StringName:
+	if target == null:
+		return &"hit"
+	var id := target.id
+	var prev: Dictionary = _layer_seen.get(id, {"shield": true, "armor": true})
+	var has_shield := float(target.hp.get(&"shield", 0.0)) > 0.001
+	var has_armor := float(target.hp.get(&"armor", 0.0)) > 0.001
+	var has_hull := float(target.hp.get(&"hull", 0.0)) > 0.001
+	_layer_seen[id] = {"shield": has_shield, "armor": has_armor}
+	if not has_hull:
+		return &"kill"
+	if bool(prev.get("shield", true)) and not has_shield:
+		return &"shield"
+	if bool(prev.get("armor", true)) and not has_armor:
+		return &"armor"
+	if target.last_hit_pierced:
+		return &"pierce"
+	return &"hit"
+
+
 ## 开火：画曳光 + 冒伤害数字（阶段 D②③）
 ##
 ## ⚠️ 这个回调在 **sim.step() 的一次调用里可能被触发上百次**
@@ -1786,6 +1863,12 @@ func _on_shot_fired(attacker: EveShip, target: EveShip, hit: bool,
 	#   护盾还在时，视觉命中点取目标护盾朝向攻击者的那一面；
 	#   否则仍用船体位置。
 	var layer := _hit_layer(target)
+	# ★ 2026-10-30：战斗播报（屏幕中央靠上 3 行）。**只播命中** ——
+	#   miss 每秒几十次，播了就是把真正要读的结论冲掉。
+	#   ⚠️ 这里只做「往数组里压一条」，与飘字同一条约束（见本函数顶注）。
+	if hit:
+		hud.push_damage_line(int(round(damage)), attacker.team == 0,
+				_feed_kind(target), target.ship_name)
 	var vis := arena.get_ship_visual(target.id)
 	var aim: Vector3 = target.body.position
 	if hit and layer == &"shield" and vis != null and vis.has_method("shield_impact_point"):
@@ -1916,8 +1999,17 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed:
-			_end_drag(mb.position)
+			# ★★ 2026-10-30（玩家反馈「准备阶段点击舰船，档案不跟着换」）：
+			#    `_end_drag()` 现在会回答「这一次到底是拖放还是点选」。
+			#    点选 = 位移没超过 `TAP_SLOP`，拖放状态已就地收尾、数据一字未改
+			#    ⇒ 这里补上那条原本走不到的「松手 → 选中」。
+			# ⚠️ 必须是 `_end_drag` **之后**再选：拖动态还亮着棋盘/幽灵，
+			#    先选会让 `set_ship` 的「展开档案」和拖动的收尾抢同一帧。
+			var tapped := _end_drag(mb.position)
 			get_viewport().set_input_as_handled()
+			if tapped:
+				_try_select_at(mb.position)
+			return
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
 			_cancel_drag("已取消")
 			get_viewport().set_input_as_handled()
@@ -2023,6 +2115,20 @@ func _pick_ship_at(screen_pos: Vector2) -> EveShip:
 
 
 func _try_select_at(screen_pos: Vector2) -> void:
+	# ── ① 备战席 ────────────────────────────────────────────────────
+	# 备战席的船是**纯数据**（`{"ship_key","star"}`）画在 2D 轨道上，
+	# 3D 场景里根本没有它 ⇒ `_pick_ship_at()` 永远点不中。
+	# 而档案窗收起态的文案写的就是「战场 / 备战席 / 商店卡 任一处点选即可」
+	# —— 备战席必须能点，⛔ 否则是「写了能点但点不动」。
+	if hud != null and run != null:
+		var bi := hud.bench_slot_at(screen_pos)
+		var bench := run.bench_entries()
+		if bi >= 0 and bi < bench.size():
+			var preview: EveShip = _fleet.build_preview(bench[bi])
+			if preview != null:
+				hud.show_ship(preview)
+			return
+	# ── ② 3D 战场 ───────────────────────────────────────────────────
 	var best := _pick_ship_at(screen_pos)
 	if best != null:
 		hud.show_ship(best)
@@ -2077,8 +2183,11 @@ func _update_drag(pos: Vector2) -> void:
 
 
 ## 松手：按落点分派到 部署 / 换位 / 撤回 / 出售
-func _end_drag(pos: Vector2) -> void:
-	_deploy.end_drag(pos)
+##
+## 返回 **true = 这一次其实是「点选」**（按下到松手没怎么动，见
+## `EveDeployController.TAP_SLOP`）⇒ 什么都没改，调用方该接着做「选中」。
+func _end_drag(pos: Vector2) -> bool:
+	return _deploy.end_drag(pos)
 
 
 ## 取消：ESC / 右键

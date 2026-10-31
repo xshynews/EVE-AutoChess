@@ -48,13 +48,20 @@ const MAX_TICKS := 30 * 180   ## 最长 180 秒，超时判平
 ##    原因：节点的战斗时限来自节点表（遭遇战 45s / 精英 55s / BOSS 70s），
 ##    写死的 75s 起点在这些时限下永远不会触发，"火力渐增保证收尾"这一层保护
 ##    就整个失效了。
-##    改成比例后：不论时限多长，前 60% 是正常的 EVE 战斗节奏，
-##    后 40% 线性放大到 5 倍。
+## 改成比例后：不论时限多长，前 X% 是正常的 EVE 战斗节奏，剩下线性放大到 5 倍。
 ##
 ## ★ 2026-10-01：超时改成"一律判负"之后，这一层的作用变成
 ##    **给玩家一个在时限内清场的机会** —— 没有它，45 秒里连两轮集火都打不完，
 ##    每一局都会超时判负。
-const SUDDEN_DEATH_FRACTION := 0.60  ## 时限的前 60% 正常打，之后开始放大
+##
+## ★★ 2026-10-31（用户：「TTK 要缩短，指的是舰队对轰时间」）：
+##    0.60 → **0.45** —— 渐增提前到时限的 45% 开始。
+##    为什么不是继续加伤害：实测伤害再 ×1.6，联机 6v6 只从 39.8s 降到 34.1s，
+##    单机 N8 完全不动（30.1s → 30.3s）。真正的杠杆是「什么时候开始加速」，
+##    不是「加速到多少」。遭遇战 45s ⇒ 20.2s 开始涨（原 27s）。
+##    ⚠️ 代价：前 45% 之外都是"非正常"节奏，观感上后半场更短。
+##    这是用户明确取舍过的一侧（要快），⛔ 别为了"好看"调回去。
+const SUDDEN_DEATH_FRACTION := 0.45  ## 时限的前 45% 正常打，之后开始放大
 const SUDDEN_DEATH_MAX_MULT := 5.0   ## 到时限时伤害放大到 5 倍
 
 ## ★ 2026-10-01：去掉「时限耗尽判负」之后，**收敛由火力渐增保证** ——
@@ -99,9 +106,11 @@ func set_ai_level(level: int) -> void:
 
 ## 当前时间点的伤害倍率（供 _fire_once 使用）
 ##
-## 设计意图：时限的前 60% 是完全正常的 EVE 战斗节奏（接敌 / 锁定 / 试探），
-## 让玩家看清各船的表现；之后进入「加速收尾」，把伤害放大，
-## **让清场这件事在时限内变得可能**。
+## 设计意图：时限的前 `SUDDEN_DEATH_FRACTION`（当前 45%）是完全正常的 EVE
+## 战斗节奏（接敌 / 锁定 / 试探），让玩家看清各船的表现；之后进入「加速收尾」，
+## 把伤害放大，**让清场这件事在时限内变得可能**。
+## ⚠️ 注释里**不写死百分数**：这个值调过两次（0.60 → 0.45），
+##    写死的地方全都在下次调参时变成了假话。
 ##
 ## ★ 2026-10-01（第二次改）：**超时不再判负**（用户：「自走棋就该打到被击毁」）。
 ##   这一层于是回到它本来的职责：**保证战斗收敛** ——
@@ -332,6 +341,15 @@ func _advance_one_tick(dt: float) -> void:
 		_apply_motion(ship, dt)
 		EveDestinyMotion.integrate_body(ship.body, ship.body.acceleration, dt)
 
+	# --- 3b. ★ 2026-10-31 电子战：锁定减伤 + 干扰 ---
+	#
+	# ⚠️ 必须排在「4. 锁定与开火」**之前**：本帧掷中的干扰要立刻让目标这一帧
+	#    就开不了火。放到开火之后，被干扰的船会多打出一轮（玩家看到的是
+	#    「明明被干扰了还在开火」）。
+	# ⚠️ 也必须排在「3. 运动」之后：减伤跟着**当前**锁定关系走，
+	#    而锁定关系在 `_refresh_targets`（第 1 步）里刚更新过。
+	_ew_step(dt)
+
 	# --- 4. 锁定与开火 ---
 	for ship in ships:
 		if not ship.alive:
@@ -389,6 +407,36 @@ const FORMATION_COLS := 3             ## 每排几列（居中，与开局阵列
 ## 为什么必须更宽：全队一起换目标 = **全员重新锁定**（锁定 3.5 秒里一枪不放）。
 ## 单舰抖一下只是丢一艘船的节奏，全队抖一下是整齐地掉一整轮火力。
 const FOCUS_SWITCH_MARGIN := 0.15
+
+# ══════════════════════════════════════════════════════════════════
+#  层位（2026-10-30 行为重做）
+# ══════════════════════════════════════════════════════════════════
+#
+# 阵型不再「全员一个平面」，而是按定位分前 / 中 / 后三层：
+#   前排 = 攻击型护卫、驱逐（自己压上，见 `_advance_with_formation`）
+#   中排 = 巡洋、战列（稳守，正面顶住）
+#   后排 = 后勤、电子战（远离敌人；⚠️ 只挪站位，射程数值不动）
+const LAYER_FRONT := 0
+const LAYER_MID := 1
+const LAYER_BACK := 2
+
+## 前排槽位沿「远离敌人」方向的前移量（米，负 = 朝敌人）。
+const LAYER_OFFSET_FRONT := -5_000.0
+## 后排 · 电子战的槽位后移量（米）。
+const LAYER_OFFSET_EW := 4_000.0
+## 后排 · 后勤的槽位后移量（米）。比电子战更靠后：它是全队唯一的续航。
+const LAYER_OFFSET_BACK := 7_000.0
+
+## **全局收敛闸**：开打多少秒后全员放弃阵型直接压上。
+##
+## 为什么必须有：玩家报的现象是「打着打着互相避战，拖到时间结束被判负」。
+## 阵型本身不产生位移收益，但两支都在锚定的舰队会各自停在射程边缘，
+## 一旦双方的 `optimal_range` 交叠得不好，就会出现「谁都够不着谁」的僵局。
+## 20 秒是 60 秒战斗窗的 1/3 —— 到这时还没接战，胜负只能靠压上解决。
+const CONVERGE_AFTER := 20.0
+
+## **单舰沉默闸**：一艘船连续多少秒没开火 ⇒ 视为「够不着 / 被卡射程外」，自己扑上去。
+const SILENT_PUSH_SECONDS := 4.0
 
 ## team → EveShip：本队旗舰（吨位最高的活船）。每刷新周期重算，死了自动改选。
 ## 用 Dictionary 而不是定长数组：team 现在只有 0/1，但别把队数焊死。
@@ -776,6 +824,60 @@ func _update_lock(ship: EveShip, dt: float) -> void:
 		ship.locked = true
 
 
+# ------------------------------------------------------------------ 电子战
+
+## ★★ 2026-10-31（用户定案）：电子战 = **锁定减伤 + 干扰**，每 tick 重算。
+##
+##   ① 减伤（写 `outgoing_mult`）：电子船**正锁定的那一艘**输出 ×(1 − reduce)。
+##      多艘电子船锁同一个目标 ⇒ 取**最强**（`minf`），不是连乘 ——
+##      6 艘叠乘会把目标削到 0 输出，那是秒杀，不是用户要的「减伤」。
+##   ② 干扰（写 `jam_disabled`）：每 `JAM_CYCLE` 秒独立掷一次 `jam_chance`，
+##      命中 ⇒ 目标 `JAM_DURATION` 秒不能开火。**概率按船独立掷**，
+##      所以多艘电子船压同一目标时等效概率近似相加 —— 用户说的「可叠加」。
+##
+## ⚠️ 为什么干扰不是「每发都掷」：护卫开火间隔 0.6 秒，6 艘电子船每发各掷
+##    5~10% ⇒ 目标每秒被掷十几次，几乎永久哑火。5 秒一个周期 ≈ EVE 里
+##    一架 ECM 的锁定周期，也是「玩家能看懂发生了什么」的最短尺度。
+##
+## ⚠️ `outgoing_mult` 每帧从 1.0 重算，⛔ 不要累乘 —— 锁定关系每 5 tick 就可能换
+##    （换目标 / 目标被打死），累乘会让旧目标的减伤永远消不掉。
+func _ew_step(dt: float) -> void:
+	# ① 复位到「没有电子战影响」
+	for ship in ships:
+		ship.outgoing_mult = 1.0
+
+	# ② 逐艘电子船：给它的锁定目标挂减伤，并掷干扰
+	for ship in ships:
+		if not ship.alive or not ship.is_ew:
+			continue
+		var tgt: EveShip = _ship_by_id.get(ship.target_id)
+		if tgt == null or not tgt.alive:
+			# 目标没了就补半个周期，避免换到新目标时立刻掷一次（白送一次判定）
+			ship.jam_timer = maxf(ship.jam_timer, EveShip.JAM_CYCLE * 0.5)
+			continue
+		if ship.ew_lock_reduce > 0.0:
+			tgt.outgoing_mult = minf(tgt.outgoing_mult, 1.0 - ship.ew_lock_reduce)
+		if ship.jam_chance > 0.0:
+			ship.jam_timer -= dt
+			if ship.jam_timer <= 0.0:
+				ship.jam_timer += EveShip.JAM_CYCLE
+				if rng.randf() < ship.jam_chance:
+					# ⚠️ 只在「从没被干扰」时记一条：连续干扰每 5 秒一次，
+					#    每次都记会把 120 行的日志挤满，反而盖掉真正要紧的战报。
+					#    判据必须在赋值**之前**读。
+					var was_free := tgt.jam_disabled <= 0.0
+					tgt.jam_disabled = maxf(tgt.jam_disabled, EveShip.JAM_DURATION)
+					if was_free:
+						_log(&"system", "%s 干扰 %s · %.0f 秒无法开火"
+								% [ship.ship_name, tgt.ship_name, EveShip.JAM_DURATION],
+								tgt.team)
+
+	# ③ 递减禁火倒计时（放最后：本帧刚命中的那艘也从**下一帧**开始扣）
+	for ship in ships:
+		if ship.jam_disabled > 0.0:
+			ship.jam_disabled = maxf(0.0, ship.jam_disabled - dt)
+
+
 # ------------------------------------------------------------------ 开火
 
 func _try_fire(ship: EveShip, dt: float) -> void:
@@ -787,6 +889,13 @@ func _try_fire(ship: EveShip, dt: float) -> void:
 
 	# 电容不足无法开火
 	if ship.cap_max > 0.0 and ship.cap_dry:
+		return
+
+	# ★ 2026-10-31 电子战：被干扰 ⇒ 整舰哑火（用户定案「不能攻击 10 秒」）。
+	# ⚠️ 返回前**不推进** `weapon_timer`：干扰结束时武器是**冷却完**的状态，
+	#    解禁立刻能开火。若在这里扣 timer，10 秒干扰会变成「解禁了还要再等一个
+	#    完整开火周期」，实际的停火时间就超过用户定的 10 秒了。
+	if ship.jam_disabled > 0.0:
 		return
 
 	# 武器循环
@@ -805,6 +914,10 @@ func _try_fire(ship: EveShip, dt: float) -> void:
 
 
 func _fire_once(ship: EveShip, target: EveShip) -> void:
+	# ★ 2026-10-30：记「这一刻开过火」。单舰沉默闸（`SILENT_PUSH_SECONDS`）靠它判断
+	#   这艘船是不是够不着 —— 放在函数最前面：开火这个动作本身就算「没被卡住」，
+	#   打不打得中是另一回事。
+	ship.last_fire_at = elapsed
 	var motion := EveCombatCore.relative_motion(
 		ship.body.position, ship.body.velocity,
 		target.body.position, target.body.velocity
@@ -857,6 +970,11 @@ func _fire_once(ship: EveShip, target: EveShip) -> void:
 	# ⚠️ 乘上 damage_multiplier()：90 秒后进入火力渐增，
 	#    保证一局必定收尾（详见该函数的说明）。
 	var raw_damage := ship.weapon_damage * multiplier * damage_multiplier()
+	# ★ 2026-10-31 电子战：**输出侧**倍率。被电子船锁定的船打人不疼。
+	#   ⚠️ 放在受击侧 `incoming_mult` 之前：两者是不同来源的独立乘数
+	#      （电子战削「谁打的」，壁垒改「谁挨的」），顺序不影响结果，
+	#      但读代码的人要能分清 —— ⛔ 别合并成一个字段。
+	raw_damage *= ship.outgoing_mult
 	# ★ 2026-10-24：机制壁垒（炼狱 BOSS）—— 未破解时整艘船吃 10% 伤害。
 	#   与抗性分开乘：抗性按伤害类型逐层算，壁垒是整船的机制护盾。
 	raw_damage *= target.incoming_mult
@@ -873,6 +991,9 @@ func _fire_once(ship: EveShip, target: EveShip) -> void:
 		ship.armor_pierce, pierced
 	)
 	var applied := float(result["applied"])
+	# ★ 2026-10-30：把「这一发穿了盾没有」记在被击中的船上，供播报条用
+	#   （`shot_fired` 的信号签名保持不变 —— 改签名会牵动敌方/联机两条链路）。
+	target.last_hit_pierced = pierced > 0.5
 
 	ship.damage_dealt += applied
 	target.damage_taken += applied
@@ -941,6 +1062,39 @@ func _apply_motion(ship: EveShip, dt: float) -> void:
 	ship.body.acceleration = accel
 
 
+## 本舰的定位档（`attack` / `defense` / `logistics` / `ew` / `command`）。
+##
+## ⚠️ 走 `EveShipDatabase.role_tag()`（唯一真源：电子战 > 加强型 > 后勤 > role 字段），
+##    ⛔ 不要在模拟器里自己按 `cost` 或 `role_id` 再判一遍 —— 会与图鉴口径分叉。
+func _role_tag_of(ship: EveShip) -> StringName:
+	if ship == null:
+		return &""
+	return EveShipDatabase.role_tag(String(ship.ship_key))
+
+
+## 本舰该排在**哪一层**（见 `LAYER_*`）。
+##
+## 判据顺序（前两条优先，因为它们由**数值**决定，改表也不会错）：
+##   ① 有修量 ⇒ 后勤（`is_logistics_unit()`，与 HUD / 结算同一判据）
+##   ② 电子战 ⇒ 后排
+##   ③ 攻击型的护卫 / 驱逐 ⇒ 前排（它们要自己压上去）
+##   ④ 其余 ⇒ 中排
+func _role_layer(ship: EveShip) -> int:
+	if ship == null:
+		return LAYER_MID
+	if ship.is_logistics_unit():
+		return LAYER_BACK
+	match _role_tag_of(ship):
+		&"logistics":
+			return LAYER_BACK
+		&"ew":
+			return LAYER_BACK
+		&"attack":
+			return LAYER_FRONT if ship.ship_class <= EveShip.Class.DESTROYER else LAYER_MID
+		_:
+			return LAYER_FRONT if ship.ship_class <= EveShip.Class.DESTROYER else LAYER_MID
+
+
 ## 阵型跟随：把 `ship` 开向它的位置。返回 `true` = 本 tick 的推力已定稿。
 ##
 ## ══════════════════════════════════════════════════════════════════
@@ -978,10 +1132,55 @@ func _advance_with_formation(ship: EveShip, dt: float,
 		if target == null:
 			return false
 		return _flagship_advance(flag, dt, target)
-	# 跟班：一律走槽位（这就是"不许各自接战"）
+
+	# ══════════════════════════════════════════════════════════════
+	#  ★★ 2026-10-30 行为重做（玩家反馈 / 用户定案）
+	# ══════════════════════════════════════════════════════════════
+	#  玩家原话：「攻击型护卫不往前顶，现在是谁被点名谁顶上去。
+	#             删除以前定的大家要一起跑的行为逻辑，重新弄」。
+	#  ⇒ 旧口径（2026-10-27「全队一律飞槽位、谁都不许各自接战」）**作废**。
+	#    现在的分工：
+	#      · 攻击型护卫 / 驱逐 → **自己压上去**（不跟队，见下面的 FRONT 分支）
+	#      · 后勤 / 电子战       → 槽位整体后移（后排），射程数值不动
+	#      · 其余               → 仍走槽位，但按层位做了前后偏移（前/中/后三排）
+	#    另加两道**收敛闸**，专门治「互相避战拖到超时判负」。
+	if target != null:
+		var layer := _role_layer(ship)
+		# ① 攻击型的护卫 / 驱逐：接到目标就直接扑，不等旗舰把队推上来。
+		if layer == LAYER_FRONT and _role_tag_of(ship) == &"attack":
+			return false
+		# ② 全局收敛闸：开打 20 秒后全员放弃阵型、直接压上。
+		#    ⚠️ 这条是「不许避战到超时」的最后一道保险 —— 60 秒的战斗窗里，
+		#       20 秒后还在绕圈就已经没有胜负可打了。
+		if elapsed >= CONVERGE_AFTER:
+			return false
+		# ③ 单舰沉默闸：4 秒没开过火 ⇒ 这艘船自己扑上去（够不着 / 被卡射程外）。
+		if elapsed - ship.last_fire_at >= SILENT_PUSH_SECONDS:
+			return false
+
+	# 跟班：飞自己的槽位（层位偏移见下）
 	var cols := _formation_cols(ship.team)
 	var slot := formation_slot(flag, _fleet_heading(ship.team),
 			_slot_index(ship, flag), cols)
+	# ★ 2026-10-30：按层位把槽位沿「远离敌人」的方向前后挪 ——
+	#   前排压上、中排不动、后勤/电子战退后排。
+	#   ⚠️ 只挪**位置**，不碰任何射程数值（用户选的是 A2「改站位不改数值」）。
+	if target != null:
+		var away := ship.body.position - target.body.position
+		away.y = 0.0
+		if away.length_squared() < 1.0:
+			away = Vector3(0.0, 0.0, 1.0 if ship.team == 0 else -1.0)
+		away = away.normalized()
+		var off := 0.0
+		# ⚠️ 用 if 而不是 `match`：`match` 里写裸常量名有被当成「绑定变量」的风险
+		#    （那样每个分支都会命中第一条），这里必须逐条比数值。
+		var layer_now := _role_layer(ship)
+		if layer_now == LAYER_FRONT:
+			off = LAYER_OFFSET_FRONT
+		elif layer_now == LAYER_BACK:
+			off = LAYER_OFFSET_BACK if ship.is_logistics_unit() else LAYER_OFFSET_EW
+		if not is_zero_approx(off):
+			slot += away * off
 	# ⚠️ 用 `goto_thrust`（定速接近 + 到点刹住）而不是 `follow_thrust`：
 	#    `follow_thrust` 的语义是"与某艘船保持距离"（会跟着它绕圈），
 	#    而我们要的是「站在**固定的相对位置**上」—— 那是 `goto_thrust` 的语义。

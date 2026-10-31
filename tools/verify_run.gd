@@ -814,21 +814,36 @@ func _t_trait_table() -> void:
 	_expect(bad_class.is_empty(), "兵源全是护卫/巡洋且在船表里（问题：%s）" % str(bad_class))
 	_expect(by_fac.size() == 4, "兵源覆盖 4 个势力（实际 %s）" % str(by_fac))
 
-	# 电子战的档位与「敌方间隔」系数（唯一一条作用在敌方身上的羁绊）
-	_expect(is_equal_approx(float(EveTraitTable.tier_of(&"ew", "电子战", 2)["apply"]
-			.get("enemy_cycle_pct", 0.0)), 0.05), "电子战 2 艘 = 敌方间隔 +5%")
-	_expect(is_equal_approx(float(EveTraitTable.tier_of(&"ew", "电子战", 4)["apply"]
-			.get("enemy_cycle_pct", 0.0)), 0.10), "电子战 4 艘 = 敌方间隔 +10%")
-	_expect(is_equal_approx(float(EveTraitTable.tier_of(&"ew", "电子战", 6)["apply"]
-			.get("enemy_cycle_pct", 0.0)), 0.15), "电子战 6 艘 = 敌方间隔 +15%")
+	# 电子战的档位（2026-10-31 重做：从「敌方全体开火变慢」改成「锁定目标减伤」）
+	#   档位：2/4 艘 = 30%，6 艘 = 40%（2/4 档在第一轮 20% 时 A/B 判为白给，已上调）
+	#
+	# ⚠️ 两个字段**同时**要验，它们是同一条羁绊的两个不同落点：
+	#    · `ew_lock_reduce` → 电子船锁定的那一艘，输出 ×(1−该值)（新机制）
+	#    · `enemy_cycle_pct` → 敌方**全体**开火变慢（旧机制里保留在 4/6 档）
+	#   ⛔ 只验一个的话，「2 档忘了写减伤」会被放过 —— 那正是 2 档唯一的收益来源。
+	var ew2: Dictionary = EveTraitTable.tier_of(&"ew", "电子战", 2).get("apply", {})
+	var ew4: Dictionary = EveTraitTable.tier_of(&"ew", "电子战", 4).get("apply", {})
+	var ew6: Dictionary = EveTraitTable.tier_of(&"ew", "电子战", 6).get("apply", {})
+	_expect(is_equal_approx(float(ew2.get("ew_lock_reduce", 0.0)), 0.30)
+			and is_equal_approx(float(ew2.get("enemy_cycle_pct", 0.0)), 0.0),
+			"电子战 2 艘 = 锁定减伤 30%（无间隔惩罚）")
+	_expect(is_equal_approx(float(ew4.get("ew_lock_reduce", 0.0)), 0.30)
+			and is_equal_approx(float(ew4.get("enemy_cycle_pct", 0.0)), 0.10),
+			"电子战 4 艘 = 锁定减伤 30% + 敌方间隔 +10%")
+	_expect(is_equal_approx(float(ew6.get("ew_lock_reduce", 0.0)), 0.40)
+			and is_equal_approx(float(ew6.get("enemy_cycle_pct", 0.0)), 0.20),
+			"电子战 6 艘 = 锁定减伤 40% + 敌方间隔 +20%")
 
 	var ew_run := _new_run(59)
 	ew_run.level = 8
 	ew_run.field.clear()
 	for i in 6:
 		ew_run.field.append({"ship_key": ew[i], "star": 1, "cell": Vector2i(-1, -1)})
-	_expect(is_equal_approx(ew_run.enemy_cycle_pct(), 0.15),
-			"场上 6 艘电子战船 → enemy_cycle_pct = 0.15（实际 %.3f）"
+	_expect(is_equal_approx(ew_run.ew_lock_reduce(), 0.40),
+			"场上 6 艘电子战船 → ew_lock_reduce = 0.40（实际 %.3f）"
+					% ew_run.ew_lock_reduce())
+	_expect(is_equal_approx(ew_run.enemy_cycle_pct(), 0.20),
+			"场上 6 艘电子战船 → enemy_cycle_pct = 0.20（实际 %.3f）"
 					% ew_run.enemy_cycle_pct())
 	# ⚠️ 电子战**不该**改自己的船：这条走敌方那一侧，自己的开火间隔必须不动
 	var own := EveShipDatabase.instantiate_by_id(String(ew[0]), 0, 9101)
@@ -1128,16 +1143,21 @@ func _t_battleship_rework() -> void:
 		&"rokh": [290.0, 400.0, 230.0], &"maelstrom": [290.0, 400.0, 230.0],
 		&"hyperion": [175.0, 520.0, 230.0], &"abaddon": [175.0, 520.0, 230.0],
 	}
+	# ★ 2026-10-31：三层血量现在统一乘 TTK 收缩系数（`TTK_HP_MULT`）。
+	#   `want` 里记的是**基线值**（`BATTLESHIP_HP` 原表），比较时乘一次系数 ——
+	#   ⛔ 别把 187/272/161.5 这类算好的数写进来：下次调 TTK 系数会全部假挂，
+	#      而且那样就看不出「基线到底是多少」了。
+	var khp := EveShipDatabase.TTK_HP_MULT
 	var bad := PackedStringArray()
 	for key in want:
 		var s: Dictionary = EveShipDatabase.by_id(String(key))
 		var hp: Array = want[key]
-		if not is_equal_approx(float(s["shield"]), float(hp[0])) \
-				or not is_equal_approx(float(s["armor"]), float(hp[1])) \
-				or not is_equal_approx(float(s["hull"]), float(hp[2])):
+		if not is_equal_approx(float(s["shield"]), float(hp[0]) * khp) \
+				or not is_equal_approx(float(s["armor"]), float(hp[1]) * khp) \
+				or not is_equal_approx(float(s["hull"]), float(hp[2]) * khp):
 			bad.append("%s(%s/%s/%s)" % [key, s["shield"], s["armor"], s["hull"]])
-	_expect(bad.is_empty(), "★★ 12 艘战列三层血量按四类写死（不符：%s）"
-			% ("无" if bad.is_empty() else ", ".join(bad)))
+	_expect(bad.is_empty(), "★★ 12 艘战列三层血量按四类写死（基线 × TTK %.2f；不符：%s）"
+			% [khp, "无" if bad.is_empty() else ", ".join(bad)])
 
 	# ── ①a 定位真的分开了：防御型「血厚炮轻」、攻击型「血薄炮重」──
 	#   ⚠️ 这一条是 2026-10-29 用户那句「防御型和攻击型的区别没了」的回归哨：
@@ -1194,20 +1214,25 @@ func _t_battleship_rework() -> void:
 	_expect(is_zero_approx(float(EveShipDatabase.by_id("incursus")["shield_pierce"])),
 			"★★ 非战列舰穿盾率为 0（行为不变）")
 
-	# ── ② DPS 精确不变：weapon_damage 必须 = attack × cycle ──
+	# ── ② DPS 口径：weapon_damage 必须 = attack × cycle × TTK 系数 ──
+	#   ★ 2026-10-31：多了一个 `TTK_DAMAGE_MULT`（用户要求缩短对轰时间）。
+	#   ⚠️ 这个系数是**全局唯一**的伤害旋钮，乘在这里而不是散落到 52 张船卡上。
+	#   ⛔ 断言的期望值必须跟着常量算 —— 写死「attack × cycle」会在调系数时假挂。
+	var kdmg2 := EveShipDatabase.TTK_DAMAGE_MULT
 	var drift := 0.0
 	for row in EveShipDatabase.all_ships():
 		# 后勤船的火力走 `logi_atk`（自卫火力口径），不参与这一条
 		if bool(row["is_logistics"]):
 			continue
-		var expect_dmg := float(row["attack"]) * float(row["weapon_cycle"])
+		var expect_dmg := float(row["attack"]) * float(row["weapon_cycle"]) * kdmg2
 		drift = maxf(drift, absf(float(row["weapon_damage"]) - expect_dmg))
-	_expect(drift < 1e-4, "★★ 全表 weapon_damage = attack × cycle（最大偏差 %.6f）" % drift)
+	_expect(drift < 1e-4, "★★ 全表 weapon_damage = attack × cycle × %.2f（最大偏差 %.6f）"
+			% [kdmg2, drift])
 	_expect(is_equal_approx(float(raven["weapon_damage"]),
-			float(raven["attack"]) * float(raven["weapon_cycle"])),
-			"★★ 盾抗战列每发 %.1f 点（attack %.0f × %.1fs）"
+			float(raven["attack"]) * float(raven["weapon_cycle"]) * kdmg2),
+			"★★ 盾抗战列每发 %.1f 点（attack %.0f × %.1fs × %.2f）"
 			% [float(raven["weapon_damage"]), float(raven["attack"]),
-				float(raven["weapon_cycle"])])
+				float(raven["weapon_cycle"]), kdmg2])
 
 	# ── ③ 抗性全 0 ──
 	var res_sum := 0.0
@@ -1327,7 +1352,11 @@ func _t_event_table() -> void:
 			"事件节点 = 节点 4 / 10 / 14（实际 %s）" % str(idx))
 
 	var opts := EveEventTable.all()
-	_expect(opts.size() == 5, "事件选项 5 条（实际 %d）" % opts.size())
+	# ★ 2026-10-30：玩家反馈第 4 条要求补一条经济事件 ⇒ 5 → 6（新增「双舰强化」）。
+	# ★ 2026-10-31：装备系统落地，用户要求加一条装备事件 ⇒ 6 → 7（新增「补给舱」）。
+	#   ⚠️ 这条断言的本意是「表不该被随手增删」，所以必须写死数字：
+	#      写成 `count()` 就等于没验。
+	_expect(opts.size() == 7, "事件选项 7 条（实际 %d）" % opts.size())
 
 	# ① id 唯一
 	var ids := {}
@@ -1368,6 +1397,9 @@ func _t_event_table() -> void:
 		# ★ 2026-10-28「打捞折扣」是**定时**增益，靠这个字段生效
 		if int(o.get("salvage_discount_rounds", 0)) > 0:
 			has_effect = true
+		# ★ 2026-10-31「补给舱」靠这个字段生效（随机给 N 件装备）
+		if int(o.get("equip_drop", 0)) > 0:
+			has_effect = true
 		# ⛔ leak_reduce 已随「漏网」机制删除（2026-10-01）
 		for k in ["coin", "coin_per_node", "xp", "beacon_heal", "beacon_max"]:
 			if int(o.get(k, 0)) != 0:
@@ -1398,11 +1430,12 @@ func _t_event_table() -> void:
 		if int(o.get("coin", 0)) != 0 or int(o.get("coin_per_node", 0)) != 0:
 			payer = String(o.get("id", ""))
 	_expect(payer == "", "★ 反向注入：所有事件都不给星币（违规项：%s）" % payer)
-	_expect(EveEventTable.count() == 5, "五选一（实际 %d）" % EveEventTable.count())
+	_expect(EveEventTable.count() == 7, "七选一（实际 %d）" % EveEventTable.count())
 	_expect(EveEventTable.has_id(&"weapon_tune") and EveEventTable.has_id(&"armor_plate")
 			and EveEventTable.has_id(&"beacon_repair") and EveEventTable.has_id(&"black_market")
-			and EveEventTable.has_id(&"salvage_discount"),
-			"id 齐全（weapon_tune / armor_plate / beacon_repair / black_market / salvage_discount）")
+			and EveEventTable.has_id(&"salvage_discount") and EveEventTable.has_id(&"star_up_two")
+			and EveEventTable.has_id(&"equip_supply"),
+			"id 齐全（weapon_tune / armor_plate / beacon_repair / black_market / salvage_discount / star_up_two / equip_supply）")
 
 
 ## C2：事件效果真的落到状态机上（2026-10-01 按交接文档 §7.2 的四条重写）
@@ -1471,9 +1504,11 @@ func _t_event_apply() -> void:
 	st4.advance()
 	var has_hi := false
 	for d in st4.offers:
-		if int((d as Dictionary).get("cost", 1)) >= 3:
+		# ⚠️ 读**档次**（`offer_tier`）不是 `cost` —— 黑市情报同一次刷新里还会
+		#    把整批货架改成半价，`cost` 那时已经被覆写，裸读会误判成"保底失效"。
+		if EveRunState.offer_tier(d as Dictionary) >= 3:
 			has_hi = true
-	_expect(has_hi, "★ 黑市保底：下一节点 5 槽至少 1 艘 cost ≥ 3（1 级商店原本 100% 是 1 费）")
+	_expect(has_hi, "★ 黑市保底：下一节点 5 槽至少 1 艘档次 ≥ 3（1 级商店原本 100% 是 1 费；半价不改变档次）")
 
 	# ⑥ 星币：选完事件**钱包不能变**（反向注入：不给星币）
 	var st5 := _new_run(81)
@@ -2442,15 +2477,20 @@ func _t_logistics() -> void:
 	#    ★ 2026-10-27 电子战兵源定为 condor/executioner 后，这两艘的攻击被
 	#    刻意降到 12（对齐同族防御型）⇒ 它们不再是「攻击型火力 13」的代表。
 	#    拿它们当参考会误判成「后勤压制失效」。参照组必须是不带电子战的攻击型。
-	_expect(is_equal_approx(dps_of.call("incursus"), 13.0)
-			and is_equal_approx(dps_of.call("bantam"), 3.0),
-			"护卫：攻击型火力 13 · 后勤火力 3（实际 %.0f / %.0f）"
-			% [dps_of.call("incursus"), dps_of.call("bantam")])
+	# ★ 2026-10-31：`weapon_damage` 现在还要乘 TTK 系数（`TTK_DAMAGE_MULT`）。
+	#   ⇒ 断言跟着**常量**走，⛔ 别写死 15.6 / 3.6 —— 下次调系数会假挂。
+	#   设计口径不变量：攻击型 = 13（护卫）/ 40（巡洋）的**基线**，
+	#   后勤 = 基线的 1/4 —— 两条都是相对关系，乘同一个系数不变。
+	var kdmg := EveShipDatabase.TTK_DAMAGE_MULT
+	_expect(is_equal_approx(dps_of.call("incursus"), 13.0 * kdmg)
+			and is_equal_approx(dps_of.call("bantam"), 3.0 * kdmg),
+			"护卫：攻击型火力 %.1f · 后勤火力 %.1f（基线 13 / 3 × TTK %.2f）"
+			% [dps_of.call("incursus"), dps_of.call("bantam"), kdmg])
 	# 巡洋档：攻击型 40 / 后勤 10
-	_expect(is_equal_approx(dps_of.call("caracal"), 40.0)
-			and is_equal_approx(dps_of.call("osprey"), 10.0),
-			"巡洋：攻击型火力 40 · 后勤火力 10（实际 %.0f / %.0f）"
-			% [dps_of.call("caracal"), dps_of.call("osprey")])
+	_expect(is_equal_approx(dps_of.call("caracal"), 40.0 * kdmg)
+			and is_equal_approx(dps_of.call("osprey"), 10.0 * kdmg),
+			"巡洋：攻击型火力 %.1f · 后勤火力 %.1f（基线 40 / 10 × TTK %.2f）"
+			% [dps_of.call("caracal"), dps_of.call("osprey"), kdmg])
 	# 后勤 ≤ 攻击型的 1/3（留出「没压到 0」的余量，但不许接近）
 	_expect(dps_of.call("bantam") <= dps_of.call("incursus") / 3.0
 			and dps_of.call("osprey") <= dps_of.call("caracal") / 3.0,
