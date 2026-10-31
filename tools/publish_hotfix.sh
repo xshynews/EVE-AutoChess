@@ -118,10 +118,15 @@ echo ""
 #    老客户端就永远收不到更新了（还不报错，只是静默不更）。
 #  ⚠️ `urls` 是给带多源能力的新客户端用的，顺序 = 免带宽优先：
 #    先试加速站（通了就不占自己带宽），失败/超时 15 秒后回自建。
-#    实测 2026-10-30：ghfast / gh-proxy / gh.llkk 在作者网络全部超时，
-#    GitHub 直连 1.7 秒（HEAD），自建 506 KB/s —— 所以顺序就按这个来。
+#    ★ 2026-10-31 实测（**从服务器上量**，这才是玩家真实的网络位置）：
+#      ghfast.top  → 连 443 直接 15 秒超时（连续两轮发版都挂）
+#      gh-proxy.com→ 862 KB/s，1.04MB 用 1.27 秒
+#    所以首选源换成 gh-proxy.com。
+#    ⚠️ 这里踩过一个坑：URL 写错不会在任何一步报错 —— 服务器 `curl -f` 会失败、
+#       脚本照样往下走，玩家端只是"静默回退到自建"，看起来一切正常。
+#       ⇒ 换加速站之后**必须在服务器上真拉一遍**（见脚本末尾的步骤 1）。
 TAG="hotfix-${VER}-b${CODE}"
-GH_URL="https://ghfast.top/https://github.com/${REPO}/releases/download/${TAG}/EVE-hotfix-${VER}-b${CODE}.pck"
+GH_URL="https://gh-proxy.com/https://github.com/${REPO}/releases/download/${TAG}/EVE-hotfix-${VER}-b${CODE}.pck"
 SELF_URL="${PUBLIC_BASE}/update/pck/EVE-hotfix-${VER}-b${CODE}.pck"
 
 mkdir -p "${PROJ}/build"
@@ -173,9 +178,9 @@ echo ""
 echo "✓ 已上传 https://github.com/${REPO}/releases/tag/${TAG}"
 echo ""
 echo "下一步（把包和清单送到服务器）："
-echo "  1) 服务器拉包（⛔ 别直连 github：实测只有 2.8 KB/s，必须走 ghfast.top 加速）："
+echo "  1) 服务器拉包（⛔ 别直连 github：实测只有 2.8 KB/s，必须走 gh-proxy.com 加速）："
 echo "     wget -O /var/www/eve/update/pck/EVE-hotfix-${VER}-b${CODE}.pck \\"
-echo "       https://ghfast.top/https://github.com/${REPO}/releases/download/${TAG}/EVE-hotfix-${VER}-b${CODE}.pck"
+echo "       https://gh-proxy.com/https://github.com/${REPO}/releases/download/${TAG}/EVE-hotfix-${VER}-b${CODE}.pck"
 echo "     拉完必须对一遍 SHA256：${SHA}"
 echo "  2) 把 build/version.json 覆盖到 /var/www/eve/update/version.json"
 echo "     ⚠️ 该清单的 notes 已写成英文（lighthouse 通道拒绝含中文的命令）"
