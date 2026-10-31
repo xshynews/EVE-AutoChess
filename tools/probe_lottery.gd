@@ -130,12 +130,12 @@ func _fake_hit_shot() -> void:
 	var wkey: StringName = wish.get("key", &"")
 	var wstar := int(wish.get("star", 1))
 	var ship := EveShipDatabase.by_id(String(wkey))
+	# ★ 现在一次只抽 1 艘（用户 2026-10-31 定案），假结果也只给 1 张卡 ——
+	#   别让截图误导后人以为还是两艘。
 	_hud.call("show_lottery_result", [
 		{"ok": true, "star": wstar, "ship_key": wkey,
 			"name": String(ship.get("name", "?")), "cost": int(ship.get("cost", 3)),
 			"hit": true, "reward": int(ship.get("cost", 3)), "placed": "bench"},
-		{"ok": true, "star": 2, "ship_key": &"moa", "name": "巨鸟级", "cost": 3,
-			"hit": false, "reward": 0, "placed": "bench"},
 	])
 
 
