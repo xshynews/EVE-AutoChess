@@ -229,22 +229,22 @@ func _process(delta: float) -> void:
 	if board != null and board.visible:
 		_apply_board_framing_smooth(delta)
 		return
+	# ── 开战运镜进行中（2 秒）：相机由剧本站位接管，舰队跟随【让位】──────
+	# ⚠️ 必须 return 掉整段跟随：跟随每帧会 set_focus_point + 改 max_range，
+	#    和运镜抢方向盘 ⇒ 观感是"镜头一边俯冲一边被拽向舰队中心"。
+	# ⚠️ 这个分支绝不能漏掉「结束条件」：`step_battle_shot` 走完 2 秒会自己
+	#    调 `_finish_shot()` 清标记。若那条路径断了，相机会被永远钉死在这一帧。
+	if _shot_active:
+		step_battle_shot(delta)
+		return
 	_board_focus_init = false
-	if _ship_nodes.is_empty():
+	var fleet := _measure_fleet()
+	if not bool(fleet["ok"]):
 		return
-	var min_v := Vector3(INF, INF, INF)
-	var max_v := Vector3(-INF, -INF, -INF)
-	var any := false
-	for node in _ship_nodes.values():
-		if not is_instance_valid(node) or not node.visible:
-			continue
-		any = true
-		min_v = min_v.min(node.position)
-		max_v = max_v.max(node.position)
-	if not any:
-		return
+	var min_v: Vector3 = fleet["min"]
+	var max_v: Vector3 = fleet["max"]
 
-	var center := (min_v + max_v) * 0.5
+	var center: Vector3 = fleet["center"]
 	# ★ 焦点朝近排偏一点 ⇒ 整支舰队在画面上抬（见 CAMERA_FOCUS_NEAR_BIAS）
 	center.z += (max_v.z - min_v.z) * CAMERA_FOCUS_NEAR_BIAS
 	# 取景半宽：含边距，并【强制一个最小取景范围】。
@@ -265,7 +265,7 @@ func _process(delta: float) -> void:
 	if _cam_last_span == Vector2.ZERO or _cam_last_span.distance_to(span) > _cam_last_span.length() * 0.06:
 		_cam_last_span = span
 		# ★ CAMERA_FIT_SCALE：实测「不切船」的最大推近档（见该常量顶注）
-		var want_range := sqrt(half_x * half_x + half_z * half_z) * 2.0 * CAMERA_FIT_SCALE
+		var want_range := _fit_range(min_v, max_v)
 		# 视距基准本身也做一点平滑，避免「接敌瞬间视距跳一下」
 		orion_cam.set_max_range(lerpf(
 				float(orion_cam.get_max_range()), maxf(20.0, want_range),
@@ -770,6 +770,9 @@ func reset_camera() -> void:
 	# 回默认机位 = 同时解除视角锁定
 	_cam_lock_id = -1
 	_cam_focus_initialized = false
+	# 运镜中按复位：运镜立刻作废（复位的意思就是"别演了"）
+	_shot_active = false
+	_shot_t = 0.0
 	orion_cam.reset()
 	if board != null and board.visible:
 		frame_board()
@@ -829,12 +832,70 @@ func fx_clear() -> void:
 		battle_fx.clear()
 
 
-# ------------------------------------------------------------------ 开战镜头（阶段 D）
+# ------------------------------------------------------------------ 开战镜头（阶段 D / 2026-10-31 升格为 2 秒运镜）
 
-## 开战取景的推近倍率。
+## 开战运镜的总时长（秒）。
 ##
 ## ══════════════════════════════════════════════════════════════════
-##  为什么需要一个「开战镜头」
+##  为什么是「运镜」而不是「一次推近」
+## ══════════════════════════════════════════════════════════════════
+##  玩家诉求原话：「两军对垒，是不是可以加个环绕的主将相互靠近的机制？」
+##  用户定案走 B 方案（分层站位 + 30 秒主力压上），但玩家仍说"看不出来"。
+##  A/B 数据也证明了这点：分层让主力在 24~30 秒多保持 4~5 km 距离，
+##  而这个差距在 3/4 远视角下只有几个像素 —— **数值改了，观感没变**。
+##
+##  ⇒ 数值不动，改**观感**：开战这 2 秒把「两军对峙 → 主力压上」这件事
+##    用镜头语言讲一遍。⛔ 不进 sim、不改任何战斗数值（TTK / 输出完全不变）。
+##
+## ── 三拍结构（缓动各不相同，这是"有电影感"和"镜头乱飞"的分界）──────
+##
+##   拍 ① 0.00 → 0.80s  拉高俯瞰   ease-out（快起慢收）
+##        pitch 0.72 → 1.05，zoom ×0.74，焦点移到两军包围盒中点。
+##        作用：一瞬间把"两军各站一边"这件事摆给玩家看。
+##
+##   拍 ② 0.80 → 1.20s  定住      （几乎静止）
+##        只让俯角极缓慢回落 4%。作用：没有这 0.4 秒的停顿，
+##        三拍会糊成一段连续运动，"对峙"就读不出来 —— 停顿才是重点。
+##
+##   拍 ③ 1.20 → 2.00s  俯冲切入   smoothstep（慢起→加速→稳收）
+##        pitch → 0.64，yaw → BATTLE_VIEW_YAW(-0.34)，zoom → ×1.55。
+##        作用：从高空斜切进接触线，正好在双方开火的那几秒落到近景。
+##
+## ── 为什么运镜期间 sim 照跑（不暂停）──────────────────────────────
+##  暂停 2 秒 = 白送 2 秒给玩家看空镜，而 TTK 一点没变，纯亏。
+##  照跑的话：俯瞰拍里能看到双方接近与首批曳光，俯冲拍落地即接战 —— 节奏反而更紧。
+const BATTLE_SHOT_SECONDS := 2.0
+
+## 拍 ① 结束时刻 / 拍 ② 结束时刻（秒）
+const SHOT_KEY_PULL := 0.80
+const SHOT_KEY_HOLD := 1.20
+
+## 拍 ① 的拉远倍率（相对开战瞬间的 zoom）—— 小于 1 = 拉远。
+##
+## ⚠️ 别调太小（第一版 0.74 实测是个反例）：视距 23.9 → 32.3，
+##    5 艘船在 1080p 上只剩 ~40px，**"两军"读不出来，只看见几个小点**。
+##    而战场本来就这么大 —— 拉远不产生信息量，只会把船变小。
+##    现在只做 10% 的轻微后撤，把"拉出空间感"这件事交给俯角（见 SHOT_PITCH_WIDE）。
+const SHOT_PULLBACK_ZOOM := 0.90
+## 拍 ① 的俯瞰俯角（弧度）。
+##
+## 默认 0.72（41°）是玩家平时看的 3/4 视角。抬到 0.95（54°）的意义：
+## 视线更垂直 ⇒ 两军在**纵深方向**的分布被摊开在画面上（而不是叠在一起），
+## "各站一边"这件事才读得出来。再往上抬（1.05 试过）船会变成顶视图、像棋子。
+const SHOT_PITCH_WIDE := 0.95
+## 拍 ③ 的收尾俯角 —— 比默认 0.72 **更低**（更贴地平视），压迫感来自这里
+const SHOT_PITCH_PUSH := 0.64
+
+## 玩家输入可以打断运镜的最早时刻（秒）。
+##
+## ⚠️ 不是 0 —— 开战那一下本身就是左键按下（点"开战"按钮），
+##    0 会让运镜被同一个点击当场掐死（见 handle_camera_input 的说明）。
+const SHOT_SKIP_AFTER := 0.15
+
+## 开战取景的推近倍率（拍 ③ 的终点）。
+##
+## ══════════════════════════════════════════════════════════════════
+##  为什么需要一个「开战推近」
 ## ══════════════════════════════════════════════════════════════════
 ##  准备阶段玩家在用 3/4 远视角看清整片战场；一旦开打，
 ##  交战会收拢到接敌线附近，那时候再用准备阶段的视距看，
@@ -859,27 +920,174 @@ const BATTLE_VIEW_ZOOM := 1.55
 ##    也不能转太多（超过 ±0.35 会让构图明显偏向一侧、远端舰船被挤出画幅）。
 const BATTLE_VIEW_YAW := -0.34
 
-## 开战镜头：推近 + 平滑偏转。
+## 运镜是否在进行中
+var _shot_active := false
+## 运镜已走时长（秒）
+var _shot_t := 0.0
+
+## 运镜起点（开战那一瞬间的实况位姿 —— 从玩家自己滚/转出来的角度起步，不硬跳）
+var _shot_yaw0 := EveOrbitCamera.DEFAULT_YAW
+var _shot_pitch0 := EveOrbitCamera.DEFAULT_PITCH
+var _shot_zoom0 := EveOrbitCamera.DEFAULT_ZOOM
+var _shot_focus0 := Vector3.ZERO
+## 运镜中段的两个派生终点
+var _shot_zoom_wide := EveOrbitCamera.DEFAULT_ZOOM
+var _shot_zoom_end := EveOrbitCamera.DEFAULT_ZOOM
+## 对峙焦点（两军包围盒中点）—— 运镜全程焦点钉在它上面，不跟单船抖
+var _shot_focus_end := Vector3.ZERO
+
+
+## 开战运镜：从当前机位开始，2 秒走完三拍。
 ##
-## ⚠️ 两条都不能硬设：
-##    ① 视距走 `queue_zoom_delta` 的指数路径（EveOrbitCamera 原生手感）；
-##    ② 方位走 `set_yaw_target` 的 target/current 收敛（约 0.25 秒）。
-##    硬设的话画面会「啪」地跳过去 —— 开战是全局最需要仪式感的一刻，
-##    跳帧会把仪式感直接毁掉。
-##
-## ⚠️ 视距差要用 log 反解：`queue_zoom` 内部是 `zoom * exp(-dy * 0.002)`，
-##    所以「把 zoom 从 a 变到 b」需要的 dy 是 `ln(a/b) / 0.002`。
-##    直接送一个「看起来差不多」的常数，会因为起点不同而结果不同
-##    （准备阶段视距本来就会随舰队包围盒浮动）—— 那样推近量是不可复现的。
+## ⚠️ 调它之前必须已经 `snap_ships()` 过敌方视觉（EvePhaseBattle.start 的顺序就是
+##    先 spawn + snap 再 begin_battle_shot）—— 否则两军包围盒只算到我方，
+##    对峙焦点会偏在我方一侧，画面读起来像"镜头怼着自己人"。
 func begin_battle_shot() -> void:
 	if orion_cam == null:
 		return
-	orion_cam.set_yaw_target(BATTLE_VIEW_YAW)
-	var cur := maxf(0.001, float(orion_cam.get_zoom()))
-	var want := clampf(cur * BATTLE_VIEW_ZOOM,
+	_shot_yaw0 = float(orion_cam.get_yaw())
+	_shot_pitch0 = float(orion_cam.get_pitch())
+	_shot_zoom0 = maxf(0.001, float(orion_cam.get_zoom()))
+	_shot_focus0 = orion_cam.get_focus()
+
+	# ⚠️ 起点距离要从**当前实况**算，不能拿常量反推：
+	#    准备阶段的 max_range 是按部署带算的，玩家滚过滚轮后 zoom 也不是默认值。
+	var range0 := maxf(1.0, float(orion_cam.get_max_range()))
+	var dist0 := range0 * EveOrbitCamera.DISTANCE_SCALE / maxf(0.55, _shot_zoom0)
+
+	var fleet := _measure_fleet()
+	if bool(fleet["ok"]):
+		var c: Vector3 = fleet["center"]
+		var min_v: Vector3 = fleet["min"]
+		var max_v: Vector3 = fleet["max"]
+		# 对峙焦点 = 两军包围盒中心 + 近排偏置（与 _process 跟随同口径）
+		c.z += (max_v.z - min_v.z) * CAMERA_FOCUS_NEAR_BIAS
+		_shot_focus_end = c
+		# 拍③ 的推近距离**不能超过「按包围盒算出的合适距离」**。
+		#
+		# ⚠️⚠️ 这条是实测逼出来的（第一次跑探针就切船）：
+		#    原来那版是死推 1.55 倍，在 5 艘小船的场面上直接把侧翼挤出画幅 ——
+		#    因为旧版开战镜头**同时还有跟随在跑**（跟随会把 max_range 从部署带的
+		#    52 压到 20 出头），而运镜期间跟随被屏蔽、max_range 冻结，
+		#    两个 1.55 倍叠不到一起 ⇒ 死推 1.55 就成了"推过头"。
+		#    现在按包围盒兜底：大编队照样推满 1.55，小编队自动收手。
+		var fit_range := _fit_range(min_v, max_v)
+		var dist_fit := fit_range * EveOrbitCamera.DISTANCE_SCALE / maxf(0.55, _shot_zoom0)
+		var dist_end := clampf(dist0 / BATTLE_VIEW_ZOOM, dist_fit, dist0)
+		_shot_zoom_end = clampf(
+				range0 * EveOrbitCamera.DISTANCE_SCALE / maxf(1.0, dist_end),
+				EveOrbitCamera.ZOOM_MIN, EveOrbitCamera.ZOOM_MAX)
+	else:
+		_shot_focus_end = _shot_focus0
+		_shot_zoom_end = clampf(_shot_zoom0 * BATTLE_VIEW_ZOOM,
+				EveOrbitCamera.ZOOM_MIN, EveOrbitCamera.ZOOM_MAX)
+
+	_shot_zoom_wide = clampf(_shot_zoom0 * SHOT_PULLBACK_ZOOM,
 			EveOrbitCamera.ZOOM_MIN, EveOrbitCamera.ZOOM_MAX)
-	if absf(want - cur) > 0.0001:
-		orion_cam.queue_zoom_delta(log(cur / want) / EveOrbitCamera.WHEEL_ZOOM_SCALE)
+
+	_shot_t = 0.0
+	_shot_active = true
+
+
+## 量一次场上【可见】舰船的包围盒。
+##
+## ⚠️ 运镜与跟随共用它，别各写一份 —— 两边算出来的中心差一点点，
+##    运镜落地那一瞬间画面会抖一下（而且只在特定编队下复现）。
+func _measure_fleet() -> Dictionary:
+	var min_v := Vector3(INF, INF, INF)
+	var max_v := Vector3(-INF, -INF, -INF)
+	var any := false
+	for node in _ship_nodes.values():
+		if not is_instance_valid(node) or not node.visible:
+			continue
+		any = true
+		min_v = min_v.min(node.position)
+		max_v = max_v.max(node.position)
+	if not any:
+		return {"ok": false}
+	return {"ok": true, "min": min_v, "max": max_v, "center": (min_v + max_v) * 0.5}
+
+
+## 按包围盒算「装得下这些船」的视距基准（max_range）。
+##
+## 与 `_process` 跟随**同一口径**（同一组 CAMERA_MIN_HALF_* / CAMERA_FIT_MARGIN /
+## CAMERA_FIT_SCALE）。运镜用它给拍③ 兜底，防止死推 1.55 倍把侧翼切出画幅。
+func _fit_range(min_v: Vector3, max_v: Vector3) -> float:
+	var half_x := maxf((max_v.x - min_v.x) * 0.5, CAMERA_MIN_HALF_X) * CAMERA_FIT_MARGIN
+	var half_z := maxf((max_v.z - min_v.z) * 0.5, CAMERA_MIN_HALF_Z) * CAMERA_FIT_MARGIN
+	return sqrt(half_x * half_x + half_z * half_z) * 2.0 * CAMERA_FIT_SCALE
+
+
+## 运镜推进一帧。⛔ 只碰相机，一个字都不碰 sim / 视觉节点位置。
+##
+## `delta` 兜底同 EveOrbitCamera._step：无头模式 delta=0 会让运镜永远停在 t=0，
+## 而 `_process` 的运镜分支是 **return** 掉的 ⇒ 跟随永远不恢复 ⇒ 相机彻底死住。
+func step_battle_shot(delta: float) -> void:
+	if not _shot_active or orion_cam == null:
+		return
+	var dt := maxf(delta, EveOrbitCamera.MIN_STEP_DELTA)
+	_shot_t = minf(_shot_t + dt, BATTLE_SHOT_SECONDS)
+
+	var t := _shot_t
+	var yaw := _shot_yaw0
+	var pitch := _shot_pitch0
+	var zoom := _shot_zoom0
+	var focus := _shot_focus0
+
+	if t <= SHOT_KEY_PULL:
+		# 拍 ①：快起慢收（out-quad）—— 拉出要"有力"，落在全景上要稳
+		var k := t / SHOT_KEY_PULL
+		var e := 1.0 - (1.0 - k) * (1.0 - k)
+		pitch = lerpf(_shot_pitch0, SHOT_PITCH_WIDE, e)
+		zoom = lerpf(_shot_zoom0, _shot_zoom_wide, e)
+		focus = _shot_focus0.lerp(_shot_focus_end, e)
+	elif t <= SHOT_KEY_HOLD:
+		# 拍 ②：定住。只让俯角回落 4%（完全静止会像卡帧）
+		var k := (t - SHOT_KEY_PULL) / maxf(0.001, SHOT_KEY_HOLD - SHOT_KEY_PULL)
+		pitch = lerpf(SHOT_PITCH_WIDE, SHOT_PITCH_WIDE * 0.96, k)
+		zoom = _shot_zoom_wide
+		focus = _shot_focus_end
+	else:
+		# 拍 ③：smoothstep —— 慢起、加速、稳收（俯冲的重量感来自这个形状）
+		var k := (t - SHOT_KEY_HOLD) / maxf(0.001, BATTLE_SHOT_SECONDS - SHOT_KEY_HOLD)
+		var e := k * k * (3.0 - 2.0 * k)
+		pitch = lerpf(SHOT_PITCH_WIDE * 0.96, SHOT_PITCH_PUSH, e)
+		yaw = lerpf(_shot_yaw0, BATTLE_VIEW_YAW, e)
+		zoom = lerpf(_shot_zoom_wide, _shot_zoom_end, e)
+		focus = _shot_focus_end
+
+	orion_cam.drive_pose(yaw, pitch, zoom, focus)
+
+	if _shot_t >= BATTLE_SHOT_SECONDS:
+		_finish_shot()
+
+
+## 结束运镜并把相机交还给 `_process` 的舰队跟随（幂等）。
+##
+## ⚠️ 交接三件事缺一不可：
+##   ① 清 `_shot_active` —— 否则 `_process` 永远走在运镜分支里（相机彻底死住）；
+##   ② `_cam_focus` 对齐到运镜末位 —— 否则下一帧跟随从**旧焦点** lerp 过来，
+##      观感是运镜落地后又"飘"一下；
+##   ③ 清 `_cam_last_span` —— 强制下一帧重算视距基准（运镜期间视距没跟包围盒）。
+func _finish_shot() -> void:
+	if not _shot_active:
+		return
+	_shot_active = false
+	_shot_t = BATTLE_SHOT_SECONDS
+	if orion_cam != null:
+		_cam_focus = orion_cam.get_focus()
+	_cam_focus_initialized = true
+	_cam_last_span = Vector2.ZERO
+
+
+## 运镜是否进行中（验收 / 调试用）
+func battle_shot_active() -> bool:
+	return _shot_active
+
+
+## 运镜进度 0~1（验收 / 调试用）
+func battle_shot_progress() -> float:
+	return clampf(_shot_t / BATTLE_SHOT_SECONDS, 0.0, 1.0)
 
 
 ## 回到准备/观察机位（结算、推进节点、重开时调）。
@@ -891,6 +1099,9 @@ func begin_battle_shot() -> void:
 ##
 ## ⚠️ 这里**不调 reset()**（那会连焦点一起清掉），见上面那条分工。
 func end_battle_shot() -> void:
+	# 先无条件打断运镜（幂等）—— 战斗中重开 / 直接进结算都会走到这里
+	_shot_active = false
+	_shot_t = 0.0
 	if orion_cam == null:
 		return
 	orion_cam.reset_zoom_only()
@@ -981,6 +1192,11 @@ func hide_board() -> void:
 ##    ② `begin_prep()` —— 战斗打完回到准备阶段（玩家不拖船也要正常）。
 ##    只做①的话，"打完一场什么都不做、直接按开战"的玩家镜头会一直贴着。
 func reset_battle_zoom() -> void:
+	# ★ 2026-10-31：运镜若还在跑（战斗极短 / 开战即重开），一并作废。
+	#   漏掉这行的症状是「下一轮布阵时镜头还在自己飞」，而且只在
+	#   "战斗不到 2 秒就结束"这一小概率路径上复现。
+	_shot_active = false
+	_shot_t = 0.0
 	if orion_cam != null and orion_cam.has_method("set_zoom_target"):
 		orion_cam.set_zoom_target(EveOrbitCamera.DEFAULT_ZOOM)
 
@@ -1288,6 +1504,16 @@ func screen_to_cell(screen_pos: Vector2) -> Vector2i:
 func handle_camera_input(event: InputEvent) -> bool:
 	if orion_cam == null:
 		return false
+	# ★ 2026-10-31：运镜期间玩家一动手，运镜【就地】结束并交还控制权。
+	#
+	#   ⚠️ 为什么必须给这条出路：2 秒运镜对"每回合都点开战"的老玩家是负担，
+	#      而镜头正在飞的时候硬拖视角会让人以为游戏卡住了。
+	#   ⚠️ 为什么加 0.15 秒防抖：开战那一下本身就是左键按下（点按钮），
+	#      没有防抖的话运镜会被同一个点击当场掐死 —— 表现是"开战镜头从来没演过"，
+	#      而且只在"用鼠标点按钮"时复现、用快捷键开战时正常，极难定位。
+	if _shot_active and _shot_t > SHOT_SKIP_AFTER:
+		if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+			_finish_shot()
 	# 双击 = 复位机位（对齐参考程序的 dblclick 行为）
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton

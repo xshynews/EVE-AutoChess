@@ -307,6 +307,39 @@ func set_zoom_target(z: float) -> void:
 func queue_zoom_delta(dy: float) -> void:
 	queue_zoom(dy)
 
+
+## ★ 2026-10-31「开战运镜」专用：把相机【直接摆到】指定位姿。
+##
+## ══════════════════════════════════════════════════════════════════
+##  为什么必须有这条路径（别拿 set_yaw_target 硬凑）
+## ══════════════════════════════════════════════════════════════════
+##  `set_yaw_target` / `set_zoom_target` 都走 target/current 的**指数收敛**，
+##  时间常数固定在 0.25 秒左右（`ORBIT_SPEED = 5`）。这对「玩家拖拽」是对的，
+##  对「剧本运镜」是错的：
+##    · 运镜要的是一条**由我控制的时间轴**（2 秒、三拍、每拍不同缓动），
+##      而指数收敛每帧都在抢方向盘 ⇒ 两套插值叠加，观感是"一顿一顿"的。
+##    · 定住不动的「停顿拍」（对峙感全靠它）在指数收敛下根本做不出来，
+##      因为它总在追一个不断变化的 target。
+##
+##  ⇒ 运镜期间由调用方**每帧**算好 (yaw, pitch, zoom, focus) 再喂进来，
+##    这里只负责「清目标 + 写入 + 落地」，不再做任何自己的插值。
+##
+## ⚠️ 清 `_target_*` 是必须的：留着的话 `_step()` 会在下一帧把 yaw/pitch 拉回旧目标，
+##    症状是运镜走到一半突然被拽回去（而且只在"上一次有未完成收敛"时才复现）。
+## ⚠️ 运镜结束后调用方必须**交还控制权**（EveBattleArena 的 _process 跟随分支），
+##    否则相机永远停在这一帧的位姿上 —— 表现为「开完战镜头就死了，拖不动」。
+func drive_pose(p_yaw: float, p_pitch: float, p_zoom: float, p_focus: Vector3) -> void:
+	_target_yaw = NAN
+	_target_pitch = NAN
+	_target_zoom = NAN
+	var limit := PI * 0.5 - MIN_PITCH
+	yaw = p_yaw
+	pitch = clampf(p_pitch, -limit, limit)
+	zoom = clampf(p_zoom, ZOOM_MIN, ZOOM_MAX)
+	focus = p_focus
+	animating = false
+	apply_to_camera()
+
 # ────────────────────────────────────────────────────────────── 生命周期
 
 func bind_camera(cam: Camera3D) -> void:

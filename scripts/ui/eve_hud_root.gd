@@ -130,6 +130,16 @@ const RECT_EVENT := Rect2(460, 300, 1000, 296)
 #    富余高度会被内容吃掉，给多 100px 就是窗里的空洞（本工程的既有教训）。
 const RECT_RESULT := Rect2(750, 330, 420, 356)
 
+# ── 舰船抽奖窗（2026-10-31 · 炼狱专属事件「黑市情报」）────────────────
+#
+# 比事件面板**高得多**（560 vs 296）：它要同时摊开两个候选池（32 艘 / 12 艘）
+# 让玩家挨个看、再点一张当愿望。宽沿用 1000 —— 两个池各 494 宽，
+# 4 列卡片 ×106 + 3 间距 ×6 = 442，留得下滚动条 10。
+# y = 150 是「顶条 46 以下、备战席 760 以上」这 714 高的带里居中。
+const RECT_LOTTERY := Rect2(460, 150, 1000, 560)
+## 抽奖窗的最大高度（紧凑 / 手机档要按可用带夹一次）
+const LOTTERY_MAX_H := 560.0
+
 # 设置窗：**全平台同一套栏目窗**（2026-10-13 用户定「把设置更新也同步改到PC端」）。
 #
 # 桌面 / 紧凑档的矩形由 static `settings_rect()` 算（半屏宽 + 定高，设计空间居中）；
@@ -168,6 +178,8 @@ var dossier_window: EveWindow         ## 右上：舰船档案
 var log_window: EveWindow             ## 右下：战斗日志
 var shop_window: EveWindow            ## 底中：商店
 var event_window: EveWindow           ## 居中：事件四选一（阶段 C；平时隐藏）
+## 居中：舰船抽奖（炼狱专属；平时隐藏）。见 `eve_lottery.gd`。
+var lottery_window: EveWindow = null
 ## 居中：节点结算页（阶段 D；平时隐藏）
 var result_window: EveWindow = null
 
@@ -209,6 +221,12 @@ signal stage_timer_expired()
 signal event_option_chosen(id: StringName)
 ## 事件「选 1 艘船」：玩家点了第 index 艘（对应 `show_ship_pick` 传进来的数组）
 signal event_ship_picked(index: int)
+
+# ── 舰船抽奖（2026-10-31 · 炼狱专属事件「黑市情报」）──
+## 玩家点了「抽取」：两个愿望原样传出（空 StringName = 该池没许愿）
+signal lottery_draw_requested(wish1: StringName, wish2: StringName)
+## 玩家点了「完成」：场景据此推进节点（抽奖窗是**打断式**的，必须走完）
+signal lottery_finished
 
 # ── 阶段 D 新增 ──
 ## 结算页：继续下一节点 / 结束本局
@@ -261,6 +279,7 @@ const SHOP_SCRIPT := preload("res://scripts/ui/panels/eve_shop.gd")
 const BENCH_SCRIPT := preload("res://scripts/ui/panels/eve_bench.gd")
 const AUGMENTS_SCRIPT := preload("res://scripts/ui/panels/eve_augments.gd")
 const EVENT_SCRIPT := preload("res://scripts/ui/panels/eve_event.gd")
+const LOTTERY_SCRIPT := preload("res://scripts/ui/panels/eve_lottery.gd")
 const DAMAGE_FEED_SCRIPT := preload("res://scripts/ui/eve_damage_feed.gd")
 const DAMAGE_BAND_SCRIPT := preload("res://scripts/ui/eve_damage_feed_band.gd")
 ## 节点进场词横幅（阶段 C 收尾）—— 瞬时元素，见 eve_entry_banner.gd 的口径说明
@@ -366,6 +385,18 @@ func _build_layout() -> void:
 	event_window.visible = false
 	event_window.option_chosen.connect(func(id: StringName): event_option_chosen.emit(id))
 	event_window.ship_picked.connect(func(i: int): event_ship_picked.emit(i))
+
+	# ⑧-b 居中：舰船抽奖（2026-10-31 · 炼狱专属）
+	#
+	# ⚠️ 建在事件窗**之后**：抽奖是"选了黑市情报"的下一个画面，
+	#    两者理论上不同时出现，但真撞上时抽奖必须在上层（它才是当前该点的那个）。
+	lottery_window = LOTTERY_SCRIPT.new()
+	lottery_window.name = "ShipLottery"
+	add_child(lottery_window)
+	lottery_window.visible = false
+	lottery_window.draw_requested.connect(
+			func(a: StringName, b: StringName): lottery_draw_requested.emit(a, b))
+	lottery_window.finished.connect(func(): lottery_finished.emit())
 
 	# ⑨ 居中：结算页（阶段 D）—— 默认隐藏，战斗结束时上台。
 	#
@@ -628,6 +659,9 @@ static func compact_rects(d: Vector2) -> Dictionary:
 	var mid := (RECT_TOP.position.y + RECT_TOP.size.y + bench.position.y) * 0.5
 	var ev_w := minf(RECT_EVENT.size.x, w - 2.0 * COMPACT_PAD)
 	var res_w := minf(RECT_RESULT.size.x, w - 2.0 * COMPACT_PAD)
+	# 抽奖窗：比事件窗高一大截，按「顶条以下、备战席以上」这段可用高度夹一次
+	var lot_h := minf(LOTTERY_MAX_H,
+			maxf(220.0, bench.position.y - RECT_TOP.end.y - 16.0))
 	return {
 		"top": top,
 		"syn": Rect2(RECT_SYN.position, RECT_SYN.size),
@@ -641,6 +675,7 @@ static func compact_rects(d: Vector2) -> Dictionary:
 		"bench": bench,
 		"event": Rect2((w - ev_w) * 0.5, mid - RECT_EVENT.size.y * 0.5,
 				ev_w, RECT_EVENT.size.y),
+		"lottery": Rect2((w - ev_w) * 0.5, mid - lot_h * 0.5, ev_w, lot_h),
 		"result": Rect2((w - res_w) * 0.5, mid - RECT_RESULT.size.y * 0.5,
 				res_w, RECT_RESULT.size.y),
 		"settings": settings_rect(Vector2(w, h)),
@@ -743,6 +778,9 @@ static func mobile_rects(d: Vector2, safe_left: float = 0.0,
 	var mid := (band_top + band_bot) * 0.5
 	var ev_w := minf(RECT_EVENT.size.x, band_w)
 	var res_w := minf(MOBILE_RESULT_W, band_w)
+	# 抽奖窗（手机档）：与事件窗同宽同列，高度按「顶条以下、备战席以上」夹
+	var lot_h := minf(LOTTERY_MAX_H,
+			maxf(220.0, bench.position.y - band_top - 16.0))
 	var res_h := minf(MOBILE_RESULT_H, h - band_top - 2.0 * MOBILE_EDGE)
 	var res_y := clampf(band_top + (h - band_top - res_h) * 0.5,
 			band_top + 8.0, maxf(band_top + 8.0, h - MOBILE_EDGE - res_h))
@@ -766,6 +804,7 @@ static func mobile_rects(d: Vector2, safe_left: float = 0.0,
 		"bench": bench,
 		"event": Rect2(band_l + (band_w - ev_w) * 0.5, mid - RECT_EVENT.size.y * 0.5,
 				ev_w, RECT_EVENT.size.y),
+		"lottery": Rect2(band_l + (band_w - ev_w) * 0.5, mid - lot_h * 0.5, ev_w, lot_h),
 		"result": Rect2(band_l + (band_w - res_w) * 0.5, res_y, res_w, res_h),
 		"settings": Rect2(band_l + (band_w - set_w) * 0.5, set_y, set_w, set_h),
 	}
@@ -831,6 +870,7 @@ func _refresh_rect_tbl() -> void:
 			"top": RECT_TOP, "syn": RECT_SYN, "eq": RECT_EQ, "aug": RECT_AUG,
 			"info": RECT_INFO, "log": RECT_LOG, "shop": RECT_SHOP,
 			"bench": RECT_BENCH, "event": RECT_EVENT, "result": RECT_RESULT,
+			"lottery": RECT_LOTTERY,
 			"settings": settings_rect(_last_design),
 		}
 	# ★ 字号放大 ⇒ 底部两条整体上抬（两个档位都要，见 `SHOP_FONT_GROW`）。
@@ -897,6 +937,7 @@ func _win_of(key: String) -> EveWindow:
 		"log": return log_window
 		"shop": return shop_window
 		"event": return event_window
+		"lottery": return lottery_window
 		"result": return result_window
 		"settings": return settings_window
 	return null
@@ -932,7 +973,7 @@ func _apply_rects() -> void:
 	#    同步改到PC端」）—— `_ready` 自建时就已 `_tabbed = true`，这里不再反向
 	#    下命令（原来按 `_mobile_layout` 强设，会把 PC 拽回竖向长条）。
 	for key in ["top", "syn", "eq", "aug", "info", "log",
-			"shop", "event", "result", "settings"]:
+			"shop", "event", "lottery", "result", "settings"]:
 		var w: EveWindow = _win_of(key)
 		if w == null:
 			continue
@@ -1013,7 +1054,7 @@ func apply_ui_profile(scale: float) -> void:
 	# ⚠️ 必须做：设计空间都不一样了，旧坐标留着只会错位
 	#（玩家拖动记录是绝对像素，`_effective_rect()` 会优先用它）。
 	for key in ["top", "syn", "eq", "aug", "info", "log",
-			"shop", "event", "result", "settings"]:
+			"shop", "event", "lottery", "result", "settings"]:
 		var w: EveWindow = _win_of(key)
 		if w != null:
 			w.reset_layout()
@@ -1051,7 +1092,7 @@ func refresh_layout() -> void:
 ##   ② 重铺：偏移 `o` 由 `_apply_rects()` 按**新的**设计空间算。
 func on_resolution_changed() -> void:
 	for key in ["top", "syn", "eq", "aug", "info", "log",
-			"shop", "event", "result", "settings"]:
+			"shop", "event", "lottery", "result", "settings"]:
 		var w: EveWindow = _win_of(key)
 		if w != null:
 			w.reset_layout()
@@ -1222,6 +1263,35 @@ func hide_ship_pick() -> void:
 	if event_window:
 		event_window.visible = false
 		event_window.close_panel()
+
+
+## 打开舰船抽奖（炼狱专属 · 事件「黑市情报」）。
+##
+## ⚠️ 与事件面板一样是**打断式**的：没有关闭按钮，玩家必须抽完点「完成」。
+##    这是有意的 —— 抽奖是白给的东西，但流程上它挡着节点推进，
+##    不给"关掉它"就等于不给"跳过奖励"这种自伤选项。
+func show_lottery(pool1: Array, pool2: Array, line: String = "", meta: String = "") -> void:
+	if lottery_window == null:
+		return
+	lottery_window.show_lottery(pool1, pool2, line, meta)
+	lottery_window.visible = true
+	lottery_window.move_to_front()
+
+
+## 把两次抽取的结果画进抽奖窗。
+func show_lottery_result(results: Array) -> void:
+	if lottery_window == null:
+		return
+	lottery_window.show_result(results)
+
+
+func hide_lottery() -> void:
+	if lottery_window:
+		lottery_window.visible = false
+
+
+func lottery_is_open() -> bool:
+	return lottery_window != null and lottery_window.visible
 
 
 func hide_event() -> void:

@@ -641,13 +641,18 @@ func _t_desktop_table_unchanged() -> void:
 	var h := _mk_hud()
 	var tbl: Dictionary = h.get("_rect_tbl")
 	_ok(not bool(h.get("_compact")), "新建出来的 HUD 默认不是紧凑档")
-	_ok(tbl.size() == 11, "档位表 11 项（10 扇窗 + 备战席）实际 %d" % tbl.size())
+	# ★ 2026-10-31：+1 扇 —— 舰船抽奖窗（炼狱专属）。窗数从 10 变 11，
+	#   所以这张表从 11 项变 12 项。⛔ 以后再加窗，这里要跟着改，
+	#   否则新窗**不会被摆**（`_apply_rects` 按 key 列表遍历），
+	#   而症状是"窗出现在左上角"或"尺寸不对"。
+	_ok(tbl.size() == 12, "档位表 12 项（11 扇窗 + 备战席）实际 %d" % tbl.size())
 	var pairs := [
 		["top", HUD_SCRIPT.RECT_TOP], ["syn", HUD_SCRIPT.RECT_SYN],
 		["eq", HUD_SCRIPT.RECT_EQ], ["aug", HUD_SCRIPT.RECT_AUG],
 		["info", HUD_SCRIPT.RECT_INFO], ["log", HUD_SCRIPT.RECT_LOG],
 		["shop", HUD_SCRIPT.RECT_SHOP], ["bench", HUD_SCRIPT.RECT_BENCH],
 		["event", HUD_SCRIPT.RECT_EVENT], ["result", HUD_SCRIPT.RECT_RESULT],
+		["lottery", HUD_SCRIPT.RECT_LOTTERY],
 		# ★ 2026-10-13 用户定「把设置更新也同步改到PC端」：桌面设置窗 =
 		#   与手机同一套栏目窗（半屏宽 + 定高），不再是 320 竖条常量。
 		["settings", HUD_SCRIPT.settings_rect(h.call("_design_space"))],
@@ -657,7 +662,7 @@ func _t_desktop_table_unchanged() -> void:
 		if tbl.get(p[0]) != p[1]:
 			diff.append("%s=%s≠%s" % [p[0], str(tbl.get(p[0])), str(p[1])])
 	_ok(diff.is_empty(),
-			"★ 11 项逐项等于 RECT_*（差异 %s）" % ("无" if diff.is_empty() else str(diff)))
+			"★ 12 项逐项等于 RECT_*（差异 %s）" % ("无" if diff.is_empty() else str(diff)))
 	# 窗确实被摆到了设计稿坐标上
 	_ok(h.get("shop_window").position == HUD_SCRIPT.RECT_SHOP.position,
 			"商店窗实际位置 == 设计稿（%s）" % str(h.get("shop_window").position))

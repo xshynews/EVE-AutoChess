@@ -427,13 +427,22 @@ const LAYER_OFFSET_EW := 4_000.0
 ## 后排 · 后勤的槽位后移量（米）。比电子战更靠后：它是全队唯一的续航。
 const LAYER_OFFSET_BACK := 7_000.0
 
-## **全局收敛闸**：开打多少秒后全员放弃阵型直接压上。
+## **全局收敛闸**：开打多少秒后全线放弃阵型、直接压上（「决战」）。
 ##
 ## 为什么必须有：玩家报的现象是「打着打着互相避战，拖到时间结束被判负」。
 ## 阵型本身不产生位移收益，但两支都在锚定的舰队会各自停在射程边缘，
 ## 一旦双方的 `optimal_range` 交叠得不好，就会出现「谁都够不着谁」的僵局。
-## 20 秒是 60 秒战斗窗的 1/3 —— 到这时还没接战，胜负只能靠压上解决。
-const CONVERGE_AFTER := 20.0
+##
+## ★★ 2026-10-31（用户定案，B 方案「分层站位」的配套）：
+##   「开战 30 秒后还是没结果，主力舰就接近吧」⇒ 20 → **30**。
+##   前 30 秒：战列线按各自射程分层（战列 25~30 km、护卫自己压到 5~10 km 缠斗）；
+##   30 秒后：全线压上，把没分出胜负的局收掉。
+##   ⚠️ 名字从 `CONVERGE_AFTER` 改成 `MAIN_PUSH_AFTER`，是因为语义变了：
+##      旧语义是「全队怕避战」的保险，新语义是「主力舰的决战时刻」。
+##   ⚠️ 代价：遭遇战时限只有 45 s ⇒ 留给决战 15 s。实测没出现超时
+##      （见 `docs/玩家反馈-分层站位-2026-10-31.md` 的对比表）；
+##      如果哪天遭遇战开始超时，**先回这个值**，别去动伤害。
+const MAIN_PUSH_AFTER := 30.0
 
 ## **单舰沉默闸**：一艘船连续多少秒没开火 ⇒ 视为「够不着 / 被卡射程外」，自己扑上去。
 const SILENT_PUSH_SECONDS := 4.0
@@ -1102,6 +1111,25 @@ func _role_layer(ship: EveShip) -> int:
 			return LAYER_FRONT if ship.ship_class <= EveShip.Class.DESTROYER else LAYER_MID
 
 
+## 本舰是否「**自行接战**」—— 即不等旗舰推队、自己扑向目标的小船。
+##
+## ★★ 2026-10-31（B 方案「分层站位」）：这个判据现在**有两处**要一致使用：
+##   ① `_advance_with_formation()`：是 ⇒ 不飞槽位，自己压上；
+##   ② `_fleet_station_distance()`：是 ⇒ **不参与**旗舰站位距离的计算。
+##
+##   ⚠️⚠️ ② 才是本轮的关键。原来站位取「全队**最短射程**」：
+##      编队里只要有 1 艘护卫（reach 12 km），旗舰就被推到 12×0.72 ≈ 8.6 km，
+##      再减排深 ⇒ 撞到 3 km 下限 ⇒ **战列被迫贴脸**。
+##      贴脸 = 打环绕中的护卫 = 角速度爆表 = 命中率接近 0
+##      ⇒ 玩家报的「战列打不中还手」就是这个。
+##      分层之后：站位由**站战列线的船**（巡洋及以上）决定，小船自己冲上去缠斗
+##      —— 与 EVE 的真实分工一致（大船保持距离，小船环绕）。
+func _is_skirmisher(ship: EveShip) -> bool:
+	if ship == null:
+		return false
+	return _role_layer(ship) == LAYER_FRONT and _role_tag_of(ship) == &"attack"
+
+
 ## 阵型跟随：把 `ship` 开向它的位置。返回 `true` = 本 tick 的推力已定稿。
 ##
 ## ══════════════════════════════════════════════════════════════════
@@ -1152,14 +1180,21 @@ func _advance_with_formation(ship: EveShip, dt: float,
 	#      · 其余               → 仍走槽位，但按层位做了前后偏移（前/中/后三排）
 	#    另加两道**收敛闸**，专门治「互相避战拖到超时判负」。
 	if target != null:
-		var layer := _role_layer(ship)
 		# ① 攻击型的护卫 / 驱逐：接到目标就直接扑，不等旗舰把队推上来。
-		if layer == LAYER_FRONT and _role_tag_of(ship) == &"attack":
+		#    ★ 2026-10-31：判据收进 `_is_skirmisher()` —— 同一个判据还要给
+		#      `_fleet_station_distance()` 用（它不再参与站位距离）。两处必须同步，
+		#      否则会出现「它不站线，但站位还按它算」的错位。
+		if _is_skirmisher(ship):
 			return false
-		# ② 全局收敛闸：开打 20 秒后全员放弃阵型、直接压上。
-		#    ⚠️ 这条是「不许避战到超时」的最后一道保险 —— 60 秒的战斗窗里，
-		#       20 秒后还在绕圈就已经没有胜负可打了。
-		if elapsed >= CONVERGE_AFTER:
+		# ② 全局收敛闸：开打 N 秒后全员放弃阵型、直接压上。
+		#    ⚠️ 这条是「不许避战到超时」的最后一道保险。
+		#    ★★ 2026-10-31（用户定案）20 → **30 秒**：
+		#      「开战 30 秒后还是没结果，主力舰就接近吧」。
+		#      前 30 秒是真正的分层阵型战（战列线 + 小船缠斗），30 秒后是决战。
+		#      ⚠️ 代价：遭遇战时限只有 45 s ⇒ 留给决战 15 s。
+		#        实测（probe_duel + sim_winrate）没出现超时，见 docs 里的对比表；
+		#        但如果哪天遭遇战开始超时，**先回这个值**，别去动伤害。
+		if elapsed >= MAIN_PUSH_AFTER:
 			return false
 		# ③ 单舰沉默闸：4 秒没开过火 ⇒ 这艘船自己扑上去（够不着 / 被卡射程外）。
 		if elapsed - ship.last_fire_at >= SILENT_PUSH_SECONDS:
@@ -1300,14 +1335,67 @@ func _fleet_covered(team: int, target: EveShip) -> bool:
 	return true
 
 
-## 旗舰应该停在哪 —— 使**最吃亏的那艘**（射程最近 + 站位最深）刚好够得着。
+## 旗舰应该停在哪 —— 使**站战列线的船**里最吃亏的那艘（射程最近 + 站位最深）刚好够得着。
 ##
 ## 几何：槽位在旗舰身后 `(row+1)*FORMATION_ROW_STEP`。旗舰落点距敌 `S` 时，
 ## 深度为 `d` 的跟班距敌 ≈ `S + d`。要它够得着：
 ##     S + d ≤ reach  ⇒  S ≤ reach − d
 ## 全队取最小 ⇒ 旗舰要**顶到最靠里**的那一个约束上。
+##
+## ★★ 2026-10-31（B 方案「分层站位」）：**自行接战的船不参与这个 min**。
+##
+##   旧口径是「全队所有人取 min」⇒ 编队里只要有 1 艘护卫（reach 12 km），
+##   旗舰就被算到 `12×0.72 − 排深`，直接撞 3 km 下限 ⇒ **战列被迫贴脸**。
+##   而贴脸打环绕中的护卫，角速度爆表、命中率接近 0
+##   ⇒ 玩家报的「战列打不中还手」正是这个。
+##
+##   新口径：只有**站线的船**（巡洋及以上）决定站位；小船自己扑上去（`_is_skirmisher`）。
+##   这既是 EVE 的真实分工，也保证「战列的射程优势真的存在」。
+##
+##   ⚠️ 兜底：如果**全队都是**自行接战的小船（纯护卫队），没有任何站线船 ⇒
+##      退回旧口径（全员取 min）。否则 `best` 会是 INF，站位无从算起。
+##   ⚠️ 这一条推翻的是 2026-10-27「全队统一站位」的一半 —— 见 `_is_skirmisher()` 的说明。
+func _fleet_station_distance(team: int, target: EveShip) -> float:
+	var flag: EveShip = _flagship.get(team)
+	var best := INF          # 只统计站线船
+	var all_best := INF      # 兜底：全队都算（纯小舰队用这个）
+	var cols := _formation_cols(team)
+	for s in ships:
+		if not s.alive or s.team != team:
+			continue
+		var depth := 0.0
+		if s != flag and flag != null:
+			var idx := _slot_index(s, flag)
+			depth = float(idx / cols + 1) * FORMATION_ROW_STEP
+		var limit := (s.optimal_range + s.falloff) * FORMATION_RANGE_MARGIN - depth
+		all_best = minf(all_best, limit)
+		if not _is_skirmisher(s):
+			best = minf(best, limit)
+	if all_best == INF:
+		return FORMATION_MIN_STANDOFF
+	if best == INF:
+		# 纯小舰队：没人站线 ⇒ 老口径
+		return maxf(all_best, FORMATION_MIN_STANDOFF)
+	return maxf(best, FORMATION_MIN_STANDOFF)
+
+
+## 旗舰的**站位点**（世界坐标）：距敌 `need` 米、站我方半场一侧，带防抖与中线夹持。
 func _fleet_station(flag: EveShip, target: EveShip, dt: float = 0.0) -> Vector3:
 	var need := _fleet_station_distance(flag.team, target)
+	# ★★ 2026-10-31（B 方案的必要补丁）**只进不退**。
+	#
+	#   站位是 `目标位置 + 方向 × need` —— 一个**相对敌人**的量。
+	#   两支舰队都按这个算 ⇒ 对称后撤：我退到距你 24km，你也退到距我 24km
+	#   ⇒ 稳定间距 = 2×need = 48km > 战列射程 34km
+	#   ⇒ **两军各自站在射程外互相够不着**（实测：前 12 秒只开了 1 炮，
+	#     验收 `开火节流真的在吞` 因此挂掉，是这条几何错误的报警）。
+	#
+	#   分层站位把 need 从「护卫的 8.6km」抬到「巡洋/战列的 24km」之后，
+	#   这个陷阱才第一次变得致命（旧口径 need 小，翻倍也还在射程内）。
+	#   ⇒ 限制：need 取不到比**当前距离**更远。已经比站位更近的，就地停住，
+	#     绝不为了「保持射程」往回退。两军因此只会越来越近，不会互相躲。
+	var cur := flag.body.position.distance_to(target.body.position)
+	need = minf(need, cur)
 	# ── 方位：理想 = 从目标指向旗舰当前位置；再做「有惯性 + 不许绕后」的处理 ──
 	var home := Vector3(0.0, 0.0, 1.0 if flag.team == 0 else -1.0)
 	var ideal := flag.body.position - target.body.position
@@ -1381,22 +1469,6 @@ const FORMATION_MIN_STANDOFF := 3_000.0
 ##       这是「保持阵型」的直接代价，不是 bug（见 `_advance_with_formation` 的说明）。
 ##    ⚠️ 不要调到 1.0 以上变成"退后"：旗舰退后会把它自己推出射程。
 const FORMATION_RANGE_MARGIN := 0.72
-
-func _fleet_station_distance(team: int, target: EveShip) -> float:
-	var flag: EveShip = _flagship.get(team)
-	var best := INF
-	var cols := _formation_cols(team)
-	for s in ships:
-		if not s.alive or s.team != team:
-			continue
-		var depth := 0.0
-		if s != flag and flag != null:
-			var idx := _slot_index(s, flag)
-			depth = float(idx / cols + 1) * FORMATION_ROW_STEP
-		best = minf(best, (s.optimal_range + s.falloff) * FORMATION_RANGE_MARGIN - depth)
-	if best == INF:
-		return FORMATION_MIN_STANDOFF
-	return maxf(best, FORMATION_MIN_STANDOFF)
 
 
 ## 全队朝向基准 —— 决定阵型**往哪摆**。

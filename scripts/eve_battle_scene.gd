@@ -461,6 +461,10 @@ func _ready() -> void:
 	#    `_step_event_choose` 就是为这类「静默断线」设的（实测捕获过一次）。
 	hud.event_option_chosen.connect(_prep_phase.on_event_chosen)
 	hud.event_ship_picked.connect(_prep_phase.on_event_ship_picked)
+	# 舰船抽奖（2026-10-31 · 炼狱专属）：同款「静默断线」风险 ——
+	# 少这两行，抽奖窗的按钮看着能点、点下去什么都不发生，节点也永远推不动。
+	hud.lottery_draw_requested.connect(_prep_phase.on_lottery_draw)
+	hud.lottery_finished.connect(_prep_phase.on_lottery_finished)
 
 	# ── 阶段 D：结算页 / 设置窗 ──
 	# ⚠️ 与上面 event_option_chosen 同款风险 —— 少一行就是「按钮看着能点、
@@ -692,9 +696,10 @@ func begin_prep() -> void:
 	#
 	# ⚠️⚠️ 但**视距必须还原**（2026-09-20 阶段 D 回归的修复）：
 	#    `reset_camera()` 管的是**角度**（那个确实该保留），
-	#    而开战镜头改的是**视距**（zoom ×1.55 推近）—— 它不属于"玩家的观察角度"，
-	#    是系统临时加的。不还原的话，下一轮布阵时棋盘格投影会整体下移，
-	#    格 (8,5) 正好落进商店窗的出售区矩形里 ⇒ 玩家的船被"拖到格子上"却**卖掉了**。
+	#    而开战运镜改的是**视距**（2026-10-31 起是 2 秒三拍运镜，终点推近）——
+	#    它不属于"玩家的观察角度"，是系统临时加的。不还原的话，下一轮布阵时
+	#    棋盘格投影会整体下移，格 (8,5) 正好落进商店窗的出售区矩形里
+	#    ⇒ 玩家的船被"拖到格子上"却**卖掉了**。
 	#    详见 EveBattleArena.reset_battle_zoom() 的说明。
 	arena.reset_battle_zoom()
 	arena.frame_battlefield()
@@ -1686,6 +1691,12 @@ func restart_run() -> void:
 	#   于是新局开局 5 + 5 = 10 星币，还平白多一条增益。
 	#   ⇒ 重开必须把事件面板与「事件态」一起收掉，不只是清 `_pending_event`。
 	hud.hide_event()
+	# ★ 2026-10-31：抽奖窗是**同一类中间态** —— 上一局停在抽奖窗就重开，
+	#   新局会带着 `lottery_open = true`，于是下一个事件节点选完黑市情报时
+	#   `on_lottery_finished` 的守卫会误判、节点推进的路径也会错。
+	#   ⚠️ 窗口也必须收：它的 visible 是 HUD 自己的状态，不清就一直挂在新局上。
+	_prep_phase.lottery_open = false
+	hud.hide_lottery()
 	_prep_phase.versus_event = false
 	hud.clear_damage()
 	hud.hide_entry()
@@ -2355,6 +2366,10 @@ func ai_event_state() -> Dictionary:
 	return {
 		"open": bool(hud.event_is_open()) if hud != null else false,
 		"ship_pick_open": pick_open,
+		# ★ 2026-10-31（炼狱专属抽奖）：这个窗口开着时**节点不会推进**，
+		#   AI 必须发 `lottery` 才算走完事件 —— 不给这个字段，
+		#   AI 会看到"事件已选、但面板全关、节点不动"，然后无限重试。
+		"lottery_open": bool(_prep_phase.lottery_open),
 		"options": run.event_options() if run != null else [],
 		"pending_event": String(_prep_phase.pending_event),
 	}
@@ -2380,9 +2395,27 @@ func ai_event_ship(index: int) -> Dictionary:
 	return {"ok": true, "data": {"index": index}}
 
 
+## 抽奖窗：一次调用走完「抽两次 + 点完成」。
+##
+## ★ 2026-10-31（炼狱专属）：AI 侧不需要"许愿"这个玩法层的东西 ——
+##   它的价值全在玩家身上（许愿命中返币）。所以 AI 走空愿望，
+##   直接拿两艘船并推进节点。
+## ⚠️ 必须**同时**返回抽到的船：AI 靠它更新自己的备战席认知，
+##   只回 `{ok:true}` 会让它对"凭空多了两艘船"一无所知。
+func ai_lottery_draw(wish1: StringName = &"", wish2: StringName = &"") -> Dictionary:
+	if not bool(_prep_phase.lottery_open):
+		return {"ok": false, "reason": "当前没有抽奖窗"}
+	_prep_phase.on_lottery_draw(wish1, wish2)
+	# 抽完立刻点「完成」（= 推进节点）。AI 没有"看完结果再点"的节奏需求。
+	_prep_phase.on_lottery_finished()
+	return {"ok": true, "data": {
+		"bench": run.bench_entries() if run != null else [],
+		"node": int(run.node_index) if run != null else 0,
+	}}
+
+
 func ai_result_next() -> void:
 	_resolve_phase.on_result_next()
-
 
 func ai_result_end() -> void:
 	_resolve_phase.on_result_end()

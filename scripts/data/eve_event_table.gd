@@ -21,6 +21,8 @@ class_name EveEventTable
 ##   `ship_apply`     选了船之后加在**那一艘**上的永久增益（键同 `_apply_synergy`）
 ##   `beacon_heal`    信标结构值 +N（夹在上限内）
 ##   `free_advanced_roll` true = 免费高级刷新，保底 1 艘 cost ≥ 3
+##   `opens_lottery`  true = 选完再开一次舰船抽奖窗口（**仅炼狱**生效，
+##                    由难度档的 `event_lottery` 二次把关）
 ##   `salvage_discount_rounds` N = 未来 N 个回合打捞费降价（我方 / 敌方均 1/4 船价，向下取整，最低 1）
 ##
 ## ⛔ **不要再加回「给星币」的选项**（2026-10-01 用户裁决）：
@@ -92,6 +94,15 @@ const OPTIONS: Array = [
 		# ★ 2026-10-30（玩家反馈 / 用户定案）：「刷至少 3 费的那个，
 		#   需要把刷到的船费用减半」。落地见 `_apply_advanced_roll_guarantee`。
 		"roll_half_price": true,
+		# ★★ 2026-10-31（用户定案，仅炼狱）：选完再开一次**舰船抽奖窗口**。
+		#
+		#   为什么挂在黑市情报上、而不是新增第五个选项：
+		#     ① 用户原话就是「抽船 3 费以上舰船**那个事件**」—— 他指的就是这一条；
+		#     ② 选项表是 4 选 3 的取舍结构，加一条会变成 5 选 3，
+		#        整个事件的节奏都要重排（用户没要求）。
+		#   ⚠️ 这个字段只是**声明**；真正开不开还看难度档的 `event_lottery`
+		#      （见 `EveRunState.can_open_lottery`）。普通/困难档这一条照旧。
+		"opens_lottery": true,
 	},
 	{
 		# ★ 2026-10-28 用户新增：「未来三个回合，打捞费用减半」——

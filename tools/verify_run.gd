@@ -255,6 +255,7 @@ func _unit_tests() -> void:
 	# ── 阶段 C ──
 	_t_event_table()     # C1 事件选项表自检（3 个事件节点共用一套）
 	_t_event_apply()     # C2 事件效果落地（星币 / 经验 / 信标 / 每节点 / 漏怪减免）
+	_t_inferno_lottery() # ★★ 2026-10-31 炼狱专属：关卡收入 / 利息门槛 / 舰船抽奖
 	_t_salvage_discount() # C2b ★ 2026-10-28 事件「打捞折扣」（区间 + 定价）
 	_t_salvage()         # C3 打捞（残骸来源 / 下单 / 延迟到账占货位 / 刷新刷不掉 / 买走解锁）
 	_t_salvage_tier()    # C4 ★ 残骸星级反解 + 打捞框「数字残留」修复（2026-10-01）
@@ -1556,6 +1557,134 @@ func _t_event_apply() -> void:
 	st2.queue_free()
 	st3.queue_free()
 	st4.queue_free()
+
+
+## ★★ 2026-10-31（用户定案）：炼狱专属的三条 —— 关卡收入 / 利息门槛 / 舰船抽奖。
+##
+## 三条都**只对炼狱生效**，所以这里的主体是「炼狱有 / 其余三档没有」的对照。
+## ⚠️ 只验炼狱自己是不够的：那样"顺手全档推广"这类改动会让断言全绿而玩法崩掉
+##    （普通/困难的钱包一变，前面所有平衡结论都要重算）。
+func _t_inferno_lottery() -> void:
+	var inf := EveCampaignTiers.difficulty("inferno")
+	_expect(bool(inf.get("event_lottery", false)), "炼狱开了抽奖（event_lottery = true）")
+	_expect(int(inf.get("interest_step", 10)) == 9, "炼狱利息门槛 = 9 星币")
+	var curve: Array = inf.get("node_income_bonus", [])
+	_expect(curve.size() == 15, "炼狱关卡奖励曲线 = 15 项（实际 %d）" % curve.size())
+	if curve.size() == 15:
+		_expect(int(curve[0]) == 0 and int(curve[4]) == 0,
+				"曲线：节点 1~5 不加成")
+		_expect(int(curve[5]) == 1 and int(curve[9]) == 1,
+				"曲线：节点 6~10 每关 +1")
+		_expect(int(curve[10]) == 2 and int(curve[14]) == 2,
+				"曲线：节点 11~15 每关 +2")
+	# 其余三档一点不受影响
+	for other in ["simple", "normal", "hard"]:
+		var r := EveCampaignTiers.difficulty(other)
+		_expect(int(r.get("interest_step", 10)) == 10
+				and (r.get("node_income_bonus", []) as Array).is_empty()
+				and not bool(r.get("event_lottery", false)),
+				"%s 档不受炼狱经济改动影响" % other)
+
+	# ── 利息门槛与逐节点奖励（走真实 API，不裸读常量）──
+	var a := _new_run_diff("inferno", 61)
+	var b := _new_run_diff("normal", 61)
+	a.coin = 45
+	b.coin = 45
+	_expect(a.interest() == 5, "炼狱 45 币 → 5 利息（45/9，实际 %d）" % a.interest())
+	_expect(b.interest() == 4, "普通 45 币 → 4 利息（45/10，实际 %d）" % b.interest())
+	a.node_index = 5
+	_expect(a.node_income_bonus() == 0, "炼狱节点 5 无关卡奖励（实际 %d）" % a.node_income_bonus())
+	a.node_index = 6
+	_expect(a.node_income_bonus() == 1, "炼狱节点 6 关卡奖励 +1（实际 %d）" % a.node_income_bonus())
+	a.node_index = 11
+	_expect(a.node_income_bonus() == 2, "炼狱节点 11 关卡奖励 +2（实际 %d）" % a.node_income_bonus())
+	b.node_index = 11
+	_expect(b.node_income_bonus() == 0, "普通档节点 11 无关卡奖励（实际 %d）" % b.node_income_bonus())
+	# 收入总额 = 基础 + 利息 + 关卡奖励（三处一起对一次，防止只加在某一路径上）
+	var base_inf := int(inf.get("base_income", 5))
+	a.coin = 45
+	_expect(a.income() == base_inf + 5 + 2,
+			"炼狱节点 11 收入 = 基础 %d + 利息 5 + 关卡 2 = %d（实际 %d）"
+			% [base_inf, base_inf + 7, a.income()])
+
+	# ── 抽奖池 ──
+	var pool1: Array = a.lottery_pool(1)
+	var pool2: Array = a.lottery_pool(2)
+	_expect(pool1.size() == 32, "一星池 = 权威表 cost≥3 的全部 32 艘（实际 %d）" % pool1.size())
+	var bad1 := 0
+	for d in pool1:
+		if int(d.get("cost", 0)) < 3 or int(d.get("star", 0)) != 1:
+			bad1 += 1
+	_expect(bad1 == 0, "一星池没有 cost<3 或星级≠1 的船（异常 %d 艘）" % bad1)
+	_expect(pool2.size() == 12, "二星池 = 12 艘（实际 %d）" % pool2.size())
+	var bad2 := 0
+	var fac := {}
+	var has_logi := false
+	for d in pool2:
+		if int(d.get("cost", 0)) != 3 or int(d.get("star", 1)) != 2:
+			bad2 += 1
+		fac[String(d.get("faction_cn", ""))] = true
+		if bool(d.get("is_logistics", false)):
+			has_logi = true
+	_expect(bad2 == 0, "二星池全部是 ★2 巡洋（3 费）—— 异常 %d 艘" % bad2)
+	_expect(fac.size() == 4, "二星池覆盖 4 个种族（实际 %s）" % str(fac.keys()))
+	_expect(has_logi, "二星池**不分定位** —— 后勤巡洋也在池里（用户原话）")
+
+	# ── 开窗条件 ──
+	_expect(a.can_open_lottery(&"black_market"), "炼狱：黑市情报会开抽奖窗")
+	_expect(not b.can_open_lottery(&"black_market"), "普通：黑市情报**不**开抽奖窗")
+	_expect(not a.can_open_lottery(&"weapon_tune"), "炼狱：别的选项不开抽奖窗")
+
+	# ── 抽取 + 许愿（用两个同种子局做确定性对账）──
+	# ⚠️ 同种子 ⇒ 同一条随机序列 ⇒ 同一艘船。A 先抽、B 许愿 A 的结果 ⇒ B 必命中。
+	#    这样不用去桩 rng，也不依赖任何一次性的概率。
+	var ra := _new_run_diff("inferno", 900)
+	var rb := _new_run_diff("inferno", 900)
+	var draw_a := ra.lottery_draw(1, &"")
+	_expect(bool(draw_a.get("ok", false)), "抽奖能抽到船（%s）" % str(draw_a.get("name", "")))
+	var coin_b0 := rb.coin
+	var bench_b0 := rb.bench.size()
+	var draw_b := rb.lottery_draw(1, StringName(draw_a.get("ship_key", &"")))
+	_expect(bool(draw_b.get("hit", false)),
+			"同种子 + 许愿同一艘 ⇒ 命中（%s）" % str(draw_b.get("name", "")))
+	_expect(int(draw_b.get("reward", 0)) == int(draw_a.get("cost", 0)),
+			"命中奖励 = 该船一星价格 %d（实际 %d）"
+			% [int(draw_a.get("cost", 0)), int(draw_b.get("reward", 0))])
+	_expect(rb.coin == coin_b0 + int(draw_b.get("reward", 0)),
+			"命中返币真到账（%d → %d）" % [coin_b0, rb.coin])
+	_expect(rb.bench.size() == bench_b0 + 1, "抽到的船进了备战席")
+
+	# 免费：没许愿时星币分文不动
+	var rc := _new_run_diff("inferno", 902)
+	var coin_c0 := rc.coin
+	var draw_c := rc.lottery_draw(1, &"")
+	_expect(String(draw_c.get("placed", "")) == "bench",
+			"空备战席 ⇒ 抽到的船进备战席（实际 %s）" % String(draw_c.get("placed", "")))
+	_expect(rc.coin == coin_c0, "抽奖本身免费（星币 %d → %d）" % [coin_c0, rc.coin])
+
+	# 二星池：抽到的是 ★2 巡洋，奖励按一星价格（3）
+	var rd := _new_run_diff("inferno", 901)
+	var draw_d := rd.lottery_draw(2, &"")
+	_expect(bool(draw_d.get("ok", false)) and int(draw_d.get("star", 0)) == 2,
+			"二星池抽到的是 ★2（实际 ★%d）" % int(draw_d.get("star", 0)))
+	_expect(int(draw_d.get("cost", 0)) == 3,
+			"二星巡洋按一星计价 = 3（实际 %d）" % int(draw_d.get("cost", 0)))
+
+	a.queue_free()
+	b.queue_free()
+	ra.queue_free()
+	rb.queue_free()
+	rc.queue_free()
+	rd.queue_free()
+
+
+## 建一个指定难度的局（⚠️ 难度必须在 `start_run()` **之前**设，否则开局星币按旧档给）
+func _new_run_diff(diff_id: String, p_seed: int) -> EveRunState:
+	var st: EveRunState = EveRunState.new()
+	add_child(st)
+	st.set_difficulty(diff_id)
+	st.start_run(p_seed)
+	return st
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -3660,36 +3789,81 @@ func _step_start_battle() -> void:
 	var sim = _battle.get("sim")
 	_expect(sim != null and not sim.finished, "战斗已经开始推进")
 
-	# D①-a：视距**必须**变「近」。queue_zoom 是瞬时的（见 EveOrbitCamera.queue_zoom），
-	#       所以这里能立刻断言，不用等收敛。
+	# D①-a：开战镜头 = 三拍运镜（2026-10-31 起），先验"它真的启动了"。
 	#
-	# ⚠️ 方向别搞反（这里踩过一次）：`EveOrbitCamera` 里
-	#      distance = max_range · DISTANCE_SCALE / max(0.55, zoom)
-	#    —— **zoom 越大，相机离得越近**。所以「推近」= zoom 数值**变大**。
+	# ⚠️ 这里**不再**断言「开战瞬间 zoom 就变大」——
+	#    旧实现是开战一瞬 queue_zoom 推近，现在是运镜：
+	#      0.00~0.80s 拉高俯瞰（zoom ×0.74，反而更远）
+	#      0.80~1.20s 定住（对峙感）
+	#      1.20~2.00s 俯冲推近（zoom → ×1.55）
+	#    推近发生在最后 0.8 秒，旧断言会把正确的运镜判红。
+	var shot_on := bool(arena.call("battle_shot_active"))
+	_expect(shot_on, "开战镜头已进入运镜（三拍 · 2 秒）")
+	# ⚠️ 时长写死 —— 这一条要捕获「有人把 2 秒改成 0.3 秒」这种"肉眼觉得没变"的退化
+	_expect(is_equal_approx(float(ARENA_SCRIPT.BATTLE_SHOT_SECONDS), 2.0),
+			"运镜时长 = 2.0s（实际 %.2f）"
+			% float(ARENA_SCRIPT.BATTLE_SHOT_SECONDS))
+
+	# D①-b：把运镜快进到底，验**终点**（玩家最终看到的机位）。
+	#
+	# ⚠️ 必须手动推进：引擎帧在两次断言之间只走十几帧（≈0.2 秒），
+	#    运镜根本走不完，断言会拿到中途值 —— 而中途值还带着"拉远"，
+	#    看起来像"开战镜头把镜头推远了"（那次踩坑会让人去改错常量）。
+	arena.call("step_battle_shot", float(ARENA_SCRIPT.BATTLE_SHOT_SECONDS) + 0.5)
+	_expect(not bool(arena.call("battle_shot_active")),
+			"运镜走完会自己交还控制权（否则相机被钉死在这一帧，拖不动）")
+
+	# 方向别搞反（这里踩过一次）：`EveOrbitCamera` 里
+	#   distance = max_range · DISTANCE_SCALE / max(0.55, zoom)
+	# —— **zoom 越大，相机离得越近**。所以「推近」= zoom 数值**变大**。
 	var zoom_after := float(cam.get_zoom())
 	var ratio := zoom_after / maxf(0.001, zoom_before)
 	_expect(zoom_after > zoom_before,
-			"开战镜头推近：zoom %.3f → %.3f（%+.1f%% · zoom 越大离得越近）"
+			"运镜终点推近：zoom %.3f → %.3f（%+.1f%% · zoom 越大离得越近）"
 			% [zoom_before, zoom_after, (ratio - 1.0) * 100.0])
-	# ⚠️ 硬写 1.55 是**故意**的：写死才能让「常量被顺手改掉」这件事亮红。
-	_expect(absf(ratio - 1.55) < 0.02,
-			"推近倍率 = BATTLE_VIEW_ZOOM 1.55（实际 ×%.3f）" % ratio)
+	# ⚠️ 上限写死 1.55 是**故意**的：写死才能让「常量被顺手改掉」这件事亮红。
+	#    但**不能**断等号 —— 2026-10-31 起拍③ 的推近会被「按包围盒算出的取景下限」
+	#    钳住（小编队自动收手，否则侧翼被切出画幅，探针实测过）。
+	#    ⇒ 这里验「不超过 1.55」，下面那条验「真的没切船」。
+	_expect(ratio <= 1.56,
+			"推近不超过 BATTLE_VIEW_ZOOM 1.55（实际 ×%.3f）" % ratio)
 
-	# D①-b：目标偏航角切到开战位（set_yaw_target 是收敛的，所以这一刻只验 target）
-	var target_after: float = float(cam.get("_target_yaw"))
-	_expect(is_equal_approx(target_after, ARENA_SCRIPT.BATTLE_VIEW_YAW),
-			"开战镜头的目标方位 = BATTLE_VIEW_YAW %.2f（实际 %.2f）"
-			% [ARENA_SCRIPT.BATTLE_VIEW_YAW, target_after])
+	# D①-c：**不切船** —— 这是运镜唯一会真正伤到玩家的地方。
+	#
+	# ⚠️ 判据是纯几何的：终点距离 ≥ 「按终点的 zoom 反算的取景下限」。
+	#    少了这条，把 clamp 删掉/写错都不会报错，症状是"开战后有船在画外"——
+	#    而画外的船还在打，玩家会以为它被秒了。
+	var fleet: Dictionary = arena.call("_measure_fleet")
+	if bool(fleet.get("ok", false)):
+		var fit_range := float(arena.call("_fit_range", fleet["min"], fleet["max"]))
+		var need_dist := fit_range * float(ORBIT_CAM_SCRIPT.DISTANCE_SCALE) \
+				/ maxf(0.55, zoom_after)
+		var dist_after := float(cam.call("get_distance"))
+		_expect(dist_after >= need_dist * 0.95,
+				"运镜终点没切船：距离 %.2f ≥ 取景下限 %.2f（视距基准 %.1f）"
+				% [dist_after, need_dist, fit_range])
+
+	# D①-d：终点方位 / 俯角（运镜用 drive_pose 直接写位姿，不走 target 收敛）
+	var yaw_after := float(cam.get_yaw())
+	var pitch_after := float(cam.get_pitch())
+	_expect(absf(yaw_after - float(ARENA_SCRIPT.BATTLE_VIEW_YAW)) < 0.01,
+			"运镜终点方位 = BATTLE_VIEW_YAW %.2f（实际 %.2f）"
+			% [float(ARENA_SCRIPT.BATTLE_VIEW_YAW), yaw_after])
+	_expect(absf(pitch_after - float(ARENA_SCRIPT.SHOT_PITCH_PUSH)) < 0.01,
+			"运镜终点俯角 = SHOT_PITCH_PUSH %.2f（实际 %.2f · 比默认 %.2f 更低）"
+			% [float(ARENA_SCRIPT.SHOT_PITCH_PUSH), pitch_after,
+					float(ORBIT_CAM_SCRIPT.DEFAULT_PITCH)])
 	# ⚠️ 开战方位必须**不同于**默认方位 —— 否则「转镜头」这件事等于没发生：
 	#    玩家在准备阶段随手复位过相机，开战再转到同一个角度，观感上毫无变化。
-	_expect(not is_equal_approx(ARENA_SCRIPT.BATTLE_VIEW_YAW, ORBIT_CAM_SCRIPT.DEFAULT_YAW),
+	_expect(not is_equal_approx(float(ARENA_SCRIPT.BATTLE_VIEW_YAW),
+			float(ORBIT_CAM_SCRIPT.DEFAULT_YAW)),
 			"开战方位 ≠ 默认方位 %.2f（否则转了等于没转）"
-			% ORBIT_CAM_SCRIPT.DEFAULT_YAW)
+			% float(ORBIT_CAM_SCRIPT.DEFAULT_YAW))
 	_expect(not is_equal_approx(zoom_before, 0.0),
 			"开战前的视距不是 0（zoom_before=%.3f，防止断言在退化输入上空转）"
 			% zoom_before)
-	print("      相机：zoom %.3f → %.3f（×%.2f）· yaw %.2f → 目标 %.2f"
-			% [zoom_before, zoom_after, ratio, yaw_before, target_after])
+	print("      运镜：zoom %.3f → %.3f（×%.2f）· yaw %.2f → %.2f · pitch %.2f"
+			% [zoom_before, zoom_after, ratio, yaw_before, yaw_after, pitch_after])
 
 	# ── 阶段 D④：阶段环境音 + BGM 切换 ───────────────────────────
 	# ⚠️ 无头没有音频设备，**声音不会真的响**。所以这里验的是三件事：
@@ -3865,9 +4039,22 @@ func _step_d_hit() -> void:
 					"战斗里真的播了开火音（fire=%d）" % int(sa.get("fire", 0)))
 			_expect(int(sa.get("hit", 0)) > 0,
 					"战斗里真的播了命中音（hit=%d）" % int(sa.get("hit", 0)))
-			_expect(int(sa.get("fire_throttled", 0)) > 0,
-					"开火节流真的在吞（被吞 %d 次 —— 不节流会变成噪音墙）"
-					% int(sa.get("fire_throttled", 0)))
+			# ★★ 2026-10-31：这条原来断言「真实战斗 12 秒里 fire_throttled > 0」，
+			#   但它依赖一个**相位巧合**：多艘船恰好落在同一帧开火。
+			#   实测（改分层站位前后）：开火数 30 → 33（几乎不变），
+			#   节流 11 → **0** —— 只是各船开火时刻被错开了，节流逻辑一点没改。
+			#   ⇒ 改成直接验证节流**本身**：同一时刻连发 5 次（窗口 0.045s / burst 3），
+			#     前 3 次放行、后 2 次必吞。这样它就与舰队站位彻底解耦。
+			var th0 := int(sa.get("fire_throttled", 0))
+			var clock0 := float(audio.get("_clock"))
+			audio.call("set_clock", 100_000.0)   # 远离战斗时刻，避免和真实开火混在一起
+			for _i in 5:
+				audio.call("play_fire", 3, false)   # 关抖动：别消耗 sim 的随机序列
+			var th1 := int((audio.call("stats") as Dictionary).get("fire_throttled", 0))
+			audio.call("set_clock", clock0)
+			_expect(th1 - th0 >= 2,
+					"★ 开火节流真的在吞（同一时刻连发 5 次，被吞 %d 次 —— 不节流就是噪音墙）"
+					% (th1 - th0))
 		else:
 			_expect(int(sa.get("fire", 0)) == 0 and int(sa.get("hit", 0)) == 0
 					and int(sa.get("boom", 0)) == 0,
@@ -3893,11 +4080,19 @@ func _step_d_hit() -> void:
 	_expect(absf(yaw_now - _cam_yaw_before) > 0.05,
 			"开战镜头真的转了方位（%.3f → %.3f，转了 %.3f 弧度）"
 			% [_cam_yaw_before, yaw_now, absf(yaw_now - _cam_yaw_before)])
-	# 并且已经收敛到目标（收敛在 0.25 秒内完成，12 秒后必然到位）
-	var target_yaw := float(cam.get("_target_yaw"))
-	_expect(absf(yaw_now - target_yaw) < 0.05,
-			"偏航已收敛到开战目标（yaw %.3f / target %.3f，差 %.4f）"
-			% [yaw_now, target_yaw, absf(yaw_now - target_yaw)])
+	# 并且已经停稳在开战方位上。
+	#
+	# ⚠️ 2026-10-31 起这条的**写法变了**：开战镜头改成 `drive_pose` 直接写位姿
+	#    （剧本运镜不能用指数收敛，见 EveOrbitCamera.drive_pose 的说明），
+	#    所以 `_target_yaw` 现在是 **NAN**（无待收敛目标），
+	#    旧断言「yaw ≈ _target_yaw」会拿到 NAN 并恒判红。
+	_expect(absf(yaw_now - float(ARENA_SCRIPT.BATTLE_VIEW_YAW)) < 0.02,
+			"偏航停在开战方位 %.2f（实际 %.3f）"
+			% [float(ARENA_SCRIPT.BATTLE_VIEW_YAW), yaw_now])
+	# ⚠️ 这条守的是「运镜有没有把相机交还出去」：
+	#    残留一个收敛目标 = 玩家的拖拽会在下一帧被拽回旧角度。
+	_expect(is_nan(float(cam.get("_target_yaw"))),
+			"运镜结束后相机没有残留收敛目标（否则玩家的拖拽会被拽回去）")
 	# 收敛后应当停在开战方位、且**不是**默认方位 —— 否则转了等于没转
 	_expect(not is_equal_approx(yaw_now, ORBIT_CAM_SCRIPT.DEFAULT_YAW),
 			"收敛后的方位 ≠ 默认方位 %.2f（实际 %.3f）"
@@ -5201,6 +5396,18 @@ func _step_event_choose() -> void:
 	var pick_id := StringName(EveEventTable.all()[0]["id"])
 	_expect(bool(EveEventTable.by_id(pick_id).get("pick_ship", false)),
 			"第一条（%s）是需要选船的 —— 本步骤验的就是两段式" % pick_id)
+
+	# ★ 2026-10-31（炼狱专属抽奖）：窗建了、且**非炼狱局不会误弹**。
+	# ⚠️ 这两条必须留在"普通局"的步骤里：抽奖窗一旦被写成全档开启，
+	#    玩家在简单/普通/困难里会突然多出一个白送两艘船的窗口 ——
+	#    那会直接推翻这三档现有的全部平衡结论。
+	_expect(hud.get("lottery_window") != null, "舰船抽奖窗已建（lottery_window）")
+	_expect(not bool(st.event_lottery_enabled()),
+			"本步骤的局不是炼狱 ⇒ 事件仍走旧的单段流程（不弹抽奖窗）")
+	var lot_rect: Rect2 = EveHudRoot.RECT_LOTTERY
+	_expect(lot_rect.end.y <= 1080.0 and lot_rect.end.x <= 1920.0,
+			"抽奖窗落在设计分辨率 1920×1080 内（%s —— 越界就会被屏幕边缘裁掉）"
+			% str(lot_rect))
 	var coin0 := st.coin
 	var beacon0 := st.beacon
 

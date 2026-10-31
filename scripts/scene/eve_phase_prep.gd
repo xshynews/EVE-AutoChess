@@ -40,6 +40,10 @@ var busy := false
 ##   面板逻辑完全复用，只是选完**不推进节点**（联机没有节点推进）。
 ##   ⇒ 由 `EveBattleScene.begin_prep()` 每次进入回合时设值；单机恒 false。
 var versus_event := false
+## ★ 2026-10-31 舰船抽奖窗是否开着（炼狱专属）。
+##   true 期间 `on_lottery_draw` / `on_lottery_finished` 才受理，
+##   且节点**不会**推进 —— 抽奖窗关掉那一刻才继续（见 `_advance_after_event`）。
+var lottery_open := false
 
 var _run: EveRunState = null
 var _hud: EveHudRoot = null
@@ -265,6 +269,50 @@ func _apply_event_and_advance(id: StringName, target: Dictionary,
 		return
 	_hud.hide_event()
 
+	# ★★ 2026-10-31（用户定案，仅炼狱）：黑市情报选完先开**舰船抽奖窗口**。
+	#
+	#   ⚠️ 位置必须在 `apply_event()` **之后** —— 抽奖是这一条的追加奖励，
+	#      事件本身（免费高级刷新预约 + 本批半价）已经在上面落地了。
+	#      提前 return 会让抽奖把它盖掉（顺序错了就是"抽了船但没刷新"）。
+	#   ⚠️ 抽奖窗是**打断式**的：真正的推进在 `on_lottery_finished()` 里，
+	#      这里 ⛔ 不能顺手再 `advance()`（会把节点推两次）。
+	if _run.can_open_lottery(id) and not versus_event:
+		lottery_open = true
+		_hud.show_lottery(_run.lottery_pool(1), _run.lottery_pool(2),
+				"抽奖池已摊开 —— 点卡片许愿（每池一个），抽中它额外返星币",
+				T.t("PREP_NODE_NAME", "节点 %d · %s")
+						% [_run.node_index, String(opt.get("name", id))])
+		return
+
+	_advance_after_event()
+
+
+## 抽奖窗的「抽取」：两个池各抽一次，结果回画到窗口。
+##
+## ⚠️ 两个池 = **两次 `lottery_draw()` 调用**。一次调用内部只掷一次随机
+##    （`pick_from_pool` 可能消费一次 randf）—— 想连抽两池就在外面调两次，
+##    ⛔ 不要在 run 里写一个"一次抽两艘"的函数：那会让
+##    「第几次随机数对应哪艘船」变成不可对账的。
+func on_lottery_draw(wish1: StringName, wish2: StringName) -> void:
+	if _run == null or not lottery_open:
+		return
+	var results: Array = []
+	results.append(_run.lottery_draw(1, wish1))
+	results.append(_run.lottery_draw(2, wish2))
+	_hud.show_lottery_result(results)
+
+
+## 抽奖窗的「完成」：收起窗口，继续走这条事件原本的推进。
+func on_lottery_finished() -> void:
+	if not lottery_open:
+		return
+	lottery_open = false
+	_hud.hide_lottery()
+	_advance_after_event()
+
+
+## 事件之后的推进（抽奖路径与普通路径共用这一段）。
+func _advance_after_event() -> void:
 	# ★ 2026-10-28 联机事件回合：**不推进节点**。
 	#   联机那套 17 回合表没有 node_index 的概念（敌方编组来自 `PVE_SOURCE_NODE`
 	#   映射），事件由 `versus.round_kind() == CAROUSEL` 触发 ⇒ 选完只把面板收起，

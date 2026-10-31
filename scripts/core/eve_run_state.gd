@@ -2369,7 +2369,6 @@ func _apply_advanced_roll_guarantee() -> bool:
 
 
 ## ★ 2026-10-30 事件「黑市情报」：把**本批**货架全部改成半价。
-##
 ## 做法是直接改报价里的 `cost`（原值留在 `cost_base` 里备查），而不是另开一个
 ## 「半价集合」—— 因为 `cost` 是商店卡面、买入扣费、出售返还**共用的那一个字段**，
 ## 另开一份就必然出现「卡面显示 1 费、买的时候扣 2 费」这类双口径漂移。
@@ -2390,6 +2389,145 @@ func _apply_half_price_batch() -> void:
 	if n > 0:
 		offers_changed.emit()
 		log_event.emit("黑市情报：本批 %d 艘船半价（费用向下取整，最低 1）" % n, &"economy")
+
+
+# ══════════════════════════════════════════════════════════════════
+#  舰船抽奖（炼狱专属 · 事件「黑市情报」）
+# ══════════════════════════════════════════════════════════════════
+#
+#  ★★ 2026-10-31（用户定案，仅炼狱）：
+#    「抽船事件单独做一个抽奖窗口 …… 下面会有一个许愿，让你在可能的舰船中选，
+#      一星和二星舰船分开，选一个，如果真抽到了自己许愿的那个船，
+#      就奖励舰船星币（二星舰船按一星舰船计价）」
+#    「抽船 3 费以上舰船那个事件，添加所有种族的 2 星巡洋舰，不分定位，
+#      也就是添加 12 艘 2 星巡洋舰进抽奖池」
+#
+#  ── 抽奖池 ─────────────────────────────────────────────────────
+#    一星池 = 权威表里 cost ≥ 3 的**全部**船（巡洋 12 / 战巡 8 / 战列 12）
+#    二星池 = 12 艘巡洋的 ★2 版本（4 派系 × 3 艘，**不分定位** —— 后勤也在内）
+#
+#  ⚠️ 二星船不是另建一份数值表：`star` 是 entry 的字段，舰队重建时
+#     `EveFleetFactory.build_own` 会按 `STAR_MULT^(star-1)` 放大。
+#     ⛔ 别在这里手动乘数值 —— 那就成了第二份星级口径。
+#
+#  ── 为什么要分池 ───────────────────────────────────────────────
+#    许愿栏是「一星选一个、二星选一个」两栏。若两个愿望共用一个池，
+#    玩家看到的永远是「一半的愿望不可能命中」。分池后两栏都真的有用。
+#
+#  ── 奖励口径 ───────────────────────────────────────────────────
+#    抽中的船**免费**到手（这是奖品本身）；命中许愿再额外返还
+#    **该船的一星价格**（`cost`）。二星巡洋按一星计价 ⇒ 也是 3。
+#    ⚠️ 「一星价格」用的是 `EveShipDatabase.by_id().cost`（权威表原值），
+#       ⛔ 不用货架上的 `cost`（那可能被黑市半价批改过）。
+
+## 一星池的下限费用（与旧「黑市保底 cost ≥ 3」同一条线）
+const LOTTERY_STAR1_MIN_COST := 3
+## 二星池的船型费用（巡洋 = cost 3）
+const LOTTERY_STAR2_COST := 3
+
+
+## 本局有没有抽奖机制（= 难度档开了 `event_lottery`，当前只有炼狱）。
+func event_lottery_enabled() -> bool:
+	return bool(difficulty_row().get("event_lottery", false))
+
+
+## 这一条事件选完要不要开抽奖窗口。
+##
+## ⚠️ 两个条件缺一不可：难度档允许（炼狱）+ 事件自己声明 `opens_lottery`。
+##    ⛔ 只判难度会让**任何**带 select 的事件都弹窗；只判事件则普通档也弹。
+func can_open_lottery(id: StringName) -> bool:
+	if not event_lottery_enabled():
+		return false
+	return bool(EveEventTable.by_id(id).get("opens_lottery", false))
+
+
+## 抽奖候选池。`star` = 1（cost ≥ 3 的一星船）或 2（12 艘二星巡洋）。
+##
+## 返回的是 `derive()` 产物 + 一个 `star` 字段（UI 直接拿去画卡）。
+## ⚠️ 每次调用都 `duplicate()` —— UI 会往卡上写 `wished` 之类的临时键，
+##    就地改会污染 `_pools` 这个**跨回合复用**的派生缓存。
+func lottery_pool(star: int) -> Array[Dictionary]:
+	_build_pools()
+	var out: Array[Dictionary] = []
+	if star >= 2:
+		for row in _pools.get(LOTTERY_STAR2_COST, []):
+			var d2: Dictionary = (row as Dictionary).duplicate()
+			if int(d2.get("cost", 0)) != LOTTERY_STAR2_COST:
+				continue
+			d2["star"] = 2
+			out.append(d2)
+	else:
+		for c in range(LOTTERY_STAR1_MIN_COST, 6):
+			for row in _pools.get(c, []):
+				var d1: Dictionary = (row as Dictionary).duplicate()
+				d1["star"] = 1
+				out.append(d1)
+	return out
+
+
+## 抽一次。`wish` = 玩家许愿的 `ship_key`（空 = 没许愿）。
+##
+## 返回 `{ok, star, ship_key, name, cost, hit, reward, placed}`；
+## `ok == false` 表示池子是空的（数据异常），调用方不该当成"抽到空"。
+## `placed`：`bench` 进备战席 / `coin` 备战席满了折成星币。
+##
+## ⚠️ 一次调用**只掷一次** `pick_from_pool`（内部可能消费一次 randf）——
+##    两次抽取 = 两次调用，别在一个函数里连抽两个池，否则复现性没法对账。
+func lottery_draw(star: int, wish: StringName = &"") -> Dictionary:
+	var pool := lottery_pool(star)
+	if pool.is_empty():
+		push_warning("[抽奖] 池子为空（star=%d）—— 船表或费用档有问题" % star)
+		return {"ok": false}
+	var got := EveShipDatabase.pick_from_pool(pool, rng)
+	if got.is_empty():
+		return {"ok": false}
+	var key := StringName(got.get("ship_key", &""))
+	var st := clampi(star, 1, MAX_STAR)
+	var placed := _lottery_grant(key, st)
+	# 奖励按**一星价格**（权威表 cost）—— 「二星按一星计价」说的就是这里。
+	var base_cost := int(EveShipDatabase.by_id(String(key)).get("cost", 0))
+	var ship_name := String(got.get("name", "?"))
+	# ① 备战席满了拿不到船 ⇒ 折成该船的一星价格（与许愿奖励**分开记**，
+	#    两者是两笔钱：一笔是补偿，一笔是彩头）。
+	if placed == "coin":
+		coin += base_cost
+		log_event.emit("抽奖：%s ★%d 无处安放（备战席已满）⇒ 折成 %d ◆"
+				% [ship_name, st, base_cost], &"economy")
+	else:
+		log_event.emit("抽奖：获得 %s ★%d → 备战席" % [ship_name, st], &"buy")
+	# ② 许愿命中
+	var hit := wish != &"" and key == wish
+	var reward := 0
+	if hit and base_cost > 0:
+		reward = base_cost
+		coin += reward
+		log_event.emit("许愿命中「%s」—— 额外奖励 %d ◆（按一星价格）"
+				% [ship_name, reward], &"economy")
+	changed.emit()
+	return {
+		"ok": true,
+		"star": st,
+		"ship_key": key,
+		"name": ship_name,
+		"cost": base_cost,
+		"hit": hit,
+		"reward": reward,
+		"placed": placed,
+	}
+
+
+## 把抽到的船落到玩家手里：优先进备战席，满了折成星币（由调用方加钱）。
+##
+## ⚠️ 不往货架塞：货架的每一格都跟"玩家花不花钱、要不要刷新"绑定，
+##    免费奖品插进去会引出「这格是不是我买的」「刷新会不会刷掉它」一整套歧义。
+##    备战席满是一种**罕见**状态，折价补偿比制造歧义干净得多。
+func _lottery_grant(key: StringName, star: int) -> String:
+	if key == &"":
+		return "coin"
+	if bench.size() < BENCH_SLOTS:
+		bench.append(_make_entry(key, star))
+		return "bench"
+	return "coin"
 
 
 ## 给一条 entry 抬星级（事件「双舰强化」用）。最高 `MAX_STAR`。
@@ -2599,15 +2737,37 @@ func enemy_roster() -> Array[Dictionary]:
 	return out
 
 
-## 下回合收入 = 基础 5 + 利息 min(⌊coin/10⌋, 5)
+## 下回合收入 = 基础 + 利息 + 事件每节点 + **难度逐节点奖励**
+##
+## ★ 2026-10-31（用户定案）：炼狱的利息门槛从 10 降到 9。
+##   门槛走难度档的 `interest_step`（缺省回退 `INTEREST_STEP` = 10），
+##   ⛔ 别把 9 写成全局常量 —— 只有炼狱该吃这个便宜。
 func interest() -> int:
-	var cap := int(difficulty_row().get("interest_max", INTEREST_MAX))
-	return mini(int(floor(float(coin) / float(INTEREST_STEP))), cap)
+	var row := difficulty_row()
+	var cap := int(row.get("interest_max", INTEREST_MAX))
+	var step := maxi(1, int(row.get("interest_step", INTEREST_STEP)))
+	return mini(int(floor(float(coin) / float(step))), cap)
 
 
 func income() -> int:
 	var base := int(difficulty_row().get("base_income", BASE_INCOME))
-	return base + interest() + event_coin_per_node()
+	return base + interest() + event_coin_per_node() + node_income_bonus()
+
+
+## 难度档给的「逐节点收入奖励」。
+##
+## ★ 2026-10-31（用户定案）：炼狱节点 6~10 每关 +1、11~15 每关 +2。
+##   取值理由见 `EveCampaignTiers.DIFFICULTIES` 炼狱块内 `node_income_bonus` 的注释。
+##
+## ⚠️ 按 `node_index` 取（不是 `event_clock()`）：收入是在 `advance()` **推进之后**
+##    才发的，那一刻 `node_index` 就是「即将进入的节点」——
+##    节点 6 的 +1 落在进入节点 6 的那次结算里，正是玩家理解的「这一关多给一币」。
+## ⚠️ 数组越界返回 0 而不是报错：老存档 / 联机对局可能带着没有这个字段的难度行。
+func node_income_bonus() -> int:
+	var curve: Array = difficulty_row().get("node_income_bonus", [])
+	if node_index >= 1 and node_index <= curve.size():
+		return maxi(0, int(curve[node_index - 1]))
+	return 0
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -2808,7 +2968,17 @@ func advance() -> void:
 		node_index += 1
 	var inc := income()
 	coin += inc
-	log_event.emit("收入 +%d（基础 %d · 利息 %d）" % [inc, BASE_INCOME, interest()], &"economy")
+	# ★ 2026-10-31：日志补上「关卡奖励」那一段（炼狱专属）。
+	#   基础收入也顺手改成读难度档 —— 原来硬写 `BASE_INCOME`，
+	#   哪天一档把 base_income 调成 6，日志就会和实际到账对不上。
+	var inc_parts := PackedStringArray([
+			"基础 %d" % int(difficulty_row().get("base_income", BASE_INCOME)),
+			"利息 %d" % interest()])
+	if event_coin_per_node() > 0:
+		inc_parts.append("事件 %d" % event_coin_per_node())
+	if node_income_bonus() > 0:
+		inc_parts.append("关卡奖励 %d" % node_income_bonus())
+	log_event.emit("收入 +%d（%s）" % [inc, " · ".join(inc_parts)], &"economy")
 	# 打捞的两步，顺序不能换：
 	#   ① 先让上一节点的修复品**过期**（没买走就没了，并解锁槽位）；
 	#   ② 再让本节点的到账**落位**（占掉槽位、记进 salvage_slots）。
