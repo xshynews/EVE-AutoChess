@@ -546,7 +546,16 @@ func set_ship(p_ship: EveShip) -> void:
 	_set_expanded(true)
 
 	_name_label.text = ship.ship_name
-	_star_label.text = "★ %d" % _stars_for_cost(ship.cost)
+	# ★★ 2026-11-01（玩家报 bug：「合成三星战巡，进游戏之后发现自动下调到 2 星」）：
+	#   这里原来是 `_stars_for_cost(ship.cost)` —— **按吨位猜星级**
+	#   （cost ≥5 → ★3、cost ≥3 → ★2、其余 ★1），**根本没读 `ship.star`**。
+	#   于是任何一艘合成船在档案窗里都会被显示成"该吨位的默认星级"：
+	#   三星战巡（cost 4）→ 显示 ★2，三星护卫（cost 1）→ 显示 ★1，
+	#   玩家只会以为系统把他的船降星了。实际数值一直是按真星级算的
+	#   （`EveFleetFactory.apply_star` 用的是 entry 的 star），只是**显示在骗人**。
+	#   ⛔ 别再用吨位推星级 —— 星级是编制里的独立字段（`{"ship_key","star"}`），
+	#      与吨位正交，一艘 cost 3 的船既可能是 ★1 也可能是 ★3。
+	_star_label.text = "★ %d" % maxi(1, ship.star)
 	_meta_label.text = T.t("DOSSIER_META", "%s · %s · %d 费") % [
 		ship.faction_name(), ship.class_name_cn(), ship.cost]
 
@@ -577,14 +586,6 @@ func _extra_stat(key: String, fallback: float) -> float:
 	if ship._extra.has(key):
 		return float(ship._extra[key])
 	return fallback
-
-
-func _stars_for_cost(cost: int) -> int:
-	if cost >= 5:
-		return 3
-	if cost >= 3:
-		return 2
-	return 1
 
 
 ## 羁绊三行：显示「这艘船的归属 + 该归属在舰队里的计数」
