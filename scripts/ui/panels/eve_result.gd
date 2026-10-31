@@ -82,11 +82,17 @@ var _data: Dictionary = {}
 # ══════════════════════════════════════════════════════════════════
 #
 ## 打捞区的一行（= 一个「打捞」按钮的高度 + 行间距）。
-const SALVAGE_ROW_H := 20.0
+##
+## ★★ 2026-10-31（用户：「战损多的时候后面的船打捞不到」）：**20 → 22**。
+##   20 是按钮本身的高度，漏了 `v_separation`（2）⇒ 算式永远比内容矮一截。
+##   实测（`probe_result_ui -- --many`，420 宽单列）：12 行内容高 262 ⇒ 21.83/行。
+##   症状正是用户看到的那样：列表最后一行**只露出半个按钮**，剩下一半被窗底裁掉。
+##   ⚠️ 改这里必须重跑那个探针核对 `内容高 / 行数`。
+const SALVAGE_ROW_H := 22.0
 ## 打捞列表区的最大高度（默认窗宽下的基准）：超过就滚动（N 艘再多也不撑破窗）。
-## ⚠️ 窗**被玩家拖大**之后这个上限会跟着放（见 `_apply_salvage_grid`）——
+## ⚠️ 窗**被玩家拖大**之后这个上限会跟着放（见 `_salvage_list_h_now`）——
 ##    写死的上限就是「拖大了也只显示 6 艘」那个问题的来源。
-const SALVAGE_LIST_MAX_H := 120.0
+const SALVAGE_LIST_MAX_H := 176.0
 ## 打捞区一列的最小宽度（设计像素）。
 ## 一行 = 船名 + 星级 + 「打捞」按钮，实测再窄就只剩省略号。
 const SALVAGE_MIN_COL_W := 230.0
@@ -403,6 +409,8 @@ func _build_salvage_section() -> void:
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_salvage_section.add_child(scroll)
 	_salvage_scroll = scroll
+	# ★ 2026-10-31（用户：「拉不动」）：默认 8px 滚动条压不住 ⇒ 统一走基类的加宽
+	widen_scrollbar(scroll)
 
 	# ★ 2026-10-30（玩家反馈）：「结算栏拖动放大的同时，打捞选项也要展示更多」。
 	#   列表从**单列 VBox** 换成**网格**：窗一宽就自动分 2/3/4 列，
@@ -648,6 +656,16 @@ func _salvage_cols_now() -> int:
 
 
 ## 打捞列表当前应占的高度（0 = 没显示 / 没内容）。
+##
+## ★★ 2026-10-31（用户：「战损多的时候 后面的船打捞不到」）：
+##   旧算法 `cap = max(120, size.y - 360)` 有个**先有鸡后有蛋**的死结 ——
+##   窗口高由列表高决定，列表高又被**当前**窗高限制 ⇒ 卡死在 120（5 行半）。
+##   战损 12 艘时永远只显示 5 行半，且第 6 行被裁一半（`SALVAGE_ROW_H` 少算 2px）。
+##
+##   现在 cap 改成**按设计空间**给：屏幕还有多高就允许多高，窗自然长上去；
+##   玩家手动拖高那一份仍然认（`size.y - 360`）。
+##
+##   ⚠️ 结果必须**向下取整到整行**：给半行 = 按钮被裁一半，比不给更糟。
 func _salvage_list_h_now() -> float:
 	if _salvage_list == null or not _salvage_list.visible:
 		return 0.0
@@ -656,9 +674,13 @@ func _salvage_list_h_now() -> float:
 		return 0.0
 	var cols := maxi(1, _salvage_list.columns)
 	var rows := int(ceil(float(n) / float(cols)))
-	# 窗拖高之后上限跟着放：多出来的高度全给列表（360 ≈ 顶部固定部分 + 外壳 + 余量）
-	var cap := maxf(SALVAGE_LIST_MAX_H, size.y - 360.0)
-	return minf(float(rows) * SALVAGE_ROW_H, cap)
+	# 上限 = 「屏幕还愿意给的高度」与「玩家拖出来的那份」取大
+	var room := _dspace().y * 0.55 - RESULT_HEAD_H - SALVAGE_FIXED_H
+	var cap := maxf(SALVAGE_LIST_MAX_H, room)
+	cap = maxf(cap, size.y - 360.0)
+	var want := float(rows) * SALVAGE_ROW_H
+	# ⚠️ 至少给一整行，否则空列表上方会塌掉
+	return maxf(SALVAGE_ROW_H, floorf(minf(want, cap) / SALVAGE_ROW_H) * SALVAGE_ROW_H)
 
 
 ## 重算列数并同步滚动区高度。排版 / 缩放 / 拖动三条路径共用。

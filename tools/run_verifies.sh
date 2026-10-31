@@ -75,6 +75,7 @@ SUITE=(
   verify_codex
   verify_ui_scale
   verify_ui_metrics
+  verify_scroll
   verify_resolution
   verify_mobile_layout
   verify_window

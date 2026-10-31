@@ -861,6 +861,22 @@ static func make_section(text: String) -> Label:
 	return l
 
 
+## ★★ 2026-10-31（用户：「文本框也拉不动」）：把滚动区滚动条加宽到可点的宽度。
+##
+## Godot 默认竖滚动条只有 8px，在 1080p 全屏下就是几个物理像素 ——
+## **能滚，但鼠标压不住**，玩家感受就是「拉不动」。
+##
+## ⚠️ 必须在 `ScrollContainer` 已经 AddChild 之后调：
+##    `get_v_scroll_bar()` 在第一次访问时才建那个 VScrollBar，
+##    提前调拿到的是同一个实例（没问题），但 `custom_minimum_size` 要等它进了
+##    容器布局才会生效。所以统一约定：**建完 scroll + add_child 之后再调这个**。
+static func widen_scrollbar(sc: ScrollContainer, width: float = 10.0) -> void:
+	if sc == null:
+		return
+	sc.get_v_scroll_bar().custom_minimum_size = Vector2(width, 0)
+	sc.get_h_scroll_bar().custom_minimum_size = Vector2(0, width)
+
+
 ## 极小号分组标签（「势力 FACTION」这种全大写分组头）
 static func make_group_header(text: String) -> Label:
 	var l := Label.new()

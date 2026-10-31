@@ -257,6 +257,7 @@ func _build() -> void:
 	_grid_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_grid_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	body.add_child(_grid_scroll)
+	EveWindow.widen_scrollbar(_grid_scroll)
 
 	_grid = GridContainer.new()
 	_grid.columns = 6
@@ -274,6 +275,9 @@ func _build() -> void:
 	var dscroll := ScrollContainer.new()
 	dscroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	detail_wrap.add_child(dscroll)
+	# ★ 2026-10-31（用户：「文本框也拉不动」）：右栏舰船详情是全工程唯一的长文本区，
+	#   8px 滚动条压不住 ⇒ 加宽（见 `EveWindow.widen_scrollbar`）。
+	EveWindow.widen_scrollbar(dscroll)
 	_detail = VBoxContainer.new()
 	_detail.add_theme_constant_override("separation", 6)
 	_detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL

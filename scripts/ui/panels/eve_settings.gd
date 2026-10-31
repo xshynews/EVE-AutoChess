@@ -376,6 +376,7 @@ func _build_tabbed() -> void:
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	content.add_child(scroll)
+	widen_scrollbar(scroll)
 	for key in TAB_ORDER:
 		var box := VBoxContainer.new()
 		box.name = "Tab_%s" % key
@@ -488,6 +489,7 @@ func _build_tabbed_mobile() -> void:
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(scroll)
+	widen_scrollbar(scroll)
 
 	for key in TAB_ORDER:
 		var box := VBoxContainer.new()

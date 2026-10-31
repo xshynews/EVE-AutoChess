@@ -69,6 +69,8 @@ func _build_contents() -> void:
 	# ⚠️ PASS 而不是 STOP：卡片自己要吃鼠标，容器不该拦。
 	_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
 	content.add_child(_scroll)
+	# ★ 2026-10-31：横滚动条默认 8px 高，7 张卡时是唯一的把手 ⇒ 加宽到 10
+	widen_scrollbar(_scroll)
 
 	_cards_row = HBoxContainer.new()
 	_cards_row.add_theme_constant_override("separation", 10)

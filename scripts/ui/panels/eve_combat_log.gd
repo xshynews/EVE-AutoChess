@@ -96,6 +96,9 @@ func _build_contents() -> void:
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_scroll.custom_minimum_size = Vector2(0, 120)
 	content.add_child(_scroll)
+	# ★ 2026-10-31（用户：「文本框也拉不动」）：172 宽的小窗里，8px 滚动条
+	#   占掉的是玩家唯一能拖的把手 —— 统一加宽（见 `EveWindow.widen_scrollbar`）。
+	widen_scrollbar(_scroll)
 
 	_list = VBoxContainer.new()
 	_list.add_theme_constant_override("separation", 1)
@@ -108,12 +111,31 @@ func append_entry(entry) -> void:
 	# ★ 见 `HIDDEN_CATS`：命中伤害不进列表（也不进 `_entries`，省内存）
 	if _cat_of(entry) in HIDDEN_CATS:
 		return
+	# ★★ 2026-10-31（用户：「文本框也拉不动」）：**先问玩家现在是不是在底部**，
+	#   再决定要不要跟随。⛔ 这个判断必须在加行之前做 ——
+	#   加完行 `max_value` 就变大了，"刚才在不在底"就再也算不出来。
+	#
+	#   旧行为是无条件 `_scroll_to_bottom()`：战斗里每 0.5 秒出一条新日志 ⇒
+	#   玩家把滚动条往上拖，**下一帧就被拽回最底** —— 看起来就是"拉不动"。
+	#   现在改成聊天窗的通行做法：只有本来贴着底才跟随；玩家翻上去看历史时，
+	#   新日志照常入列但不抢滚动位置。
+	var follow := _is_at_bottom()
 	_entries.append(entry)
 	if _entries.size() > 400:
 		_entries = _entries.slice(_entries.size() - 300)
 	_append_line(entry)
 	_trim()
-	_scroll_to_bottom()
+	if follow:
+		_scroll_to_bottom()
+
+
+## 当前是否贴着最底（±2px 容差：滚动值是整数，max−page 可能是小数）。
+func _is_at_bottom() -> bool:
+	if _scroll == null:
+		return true
+	var bar := _scroll.get_v_scroll_bar()
+	var bottom := int(maxf(0.0, bar.max_value - bar.page))
+	return _scroll.scroll_vertical >= bottom - 2
 
 
 func append_text(text: String, category: StringName = &"system",
