@@ -23,9 +23,11 @@ extends "res://scripts/ui/eve_window.gd"
 ##   若拿 `ship_key` 当键，后写的一张卡会把前一张覆盖掉 ⇒ 池子里少 12 张，
 ##   而且点同名另一张会高亮错卡。所以键必须带星级。
 ##
-## ── 星级怎么区分（一栏里混排）────────────────────────────────────
-##   原来是两栏两张表，星级靠"在哪一栏"表达。合并成一栏之后只能靠卡面：
-##   ★1 用青色边（C_ACCENT）、★2 用金色边（C_GOLD），副标题里也写清 `★n`。
+## ── 星级怎么区分（矩阵里混排）────────────────────────────────────
+##   原来是一栏一张平铺网格，星级只能靠卡面分辨。现在**★2 单独成一段**
+##   压在池子最下面（用户 2026-11-01 的要求），段头是金色分隔线；
+##   段内仍按同样的「费用行 × 定位列」排，所以位置一眼可预期。
+##   ★1 用青色边（C_ACCENT）、★2 用金色边（C_GOLD），名字前面还有 `★n`。
 ##   ⚠️ 别再靠"名字后加个 2"之类的隐晦手段 —— 二星船名和一星一模一样，
 ##      玩家一眼扫过去分不出来，就会许错愿。
 
@@ -34,10 +36,47 @@ signal draw_requested(wish_key: StringName, wish_star: int)
 ## 抽完点「完成」—— 场景据此推进节点
 signal finished()
 
-const CARD_W := 106.0
-const CARD_H := 46.0
-## 一栏 8 列：窗口 1000 宽，8×106 + 7×6 ≈ 890，刚好，再宽就得横向滚
-const POOL_COLS := 8
+const CARD_W := 100.0
+const CARD_H := 44.0
+
+## ══════════════════════════════════════════════════════════════════
+##  「同级一行 · 同定位一列」的矩阵排版
+## ══════════════════════════════════════════════════════════════════
+##  ★ 2026-11-01（用户）：「抽船那个事件，在选船的时候，因为太多，不太好选，
+##    建议做做分类，同级的一行，同定位的一列，二星的在下面」。
+##
+##  行 = 费用档（3 费巡洋 / 4 费战巡 / 5 费战列）；★2 单独成一段放最下面；
+##  列 = 定位（攻击型 / 防御型 / 后勤）。
+##
+##  ⚠️ 定位用 **`role_id`（attack/defense/logi）** 分组，⛔ 不认中文名
+##     —— 与全工程同一条红线（见 `EveCombatIds` 顶注）。
+##     ⛔ 别改用图鉴那套五档（含电子战 / 加强型）：那五档是**互斥**口径
+##     （电子战船从「攻击型 / 防御型」里扣掉），拿来做列会得到 5 列，
+##     而 5 列 × 两行卡 ≈ 1090px，塞不进 970px 的内容区 —— 只能退化成
+##     每列 1 张卡宽、竖向堆 4 层，整池高度翻倍。三列是这个窗口装得下
+##     且信息量最大的分法。电子战/后勤标签仍在卡面上单独标（正交信息）。
+##
+##  ⚠️ 列宽**固定**、不随内容长短伸缩：格内卡片按 `POOL_CELL_ROWS` 行折行，
+##     于是每个费用档正好两行卡、行高一致。列宽取「该列最挤那档」所需宽度
+##     （目前是 5 费防御型 8 艘 ⇒ 4 个子列），空出来的格子留白 ——
+##     宁可留白也不能让列宽逐行变化，那样「同定位一列」当场就散了。
+const POOL_CELL_ROWS := 2
+const POOL_GAP := 6
+## 三个定位列之间的间距（比格内间距大，用来把「列」切出来）
+const POOL_BAND_GAP := 14
+## 左侧费用栏宽度：竖排「3 费 / 巡洋」两行
+const POOL_GUTTER := 42.0
+## 费用档 → 吨位简称（与图鉴顶部「吨位」筛选 chip 同一套说法）
+const COST_SHORT := {3: "巡洋", 4: "战巡", 5: "战列"}
+## 列的固定顺序（与图鉴「定位」一行的先后一致）
+const ROLE_ORDER := [&"attack", &"defense", &"logi"]
+## 列标题色：攻击橙 / 防御蓝 / 后勤绿 —— 全是 `EveWindow` 既有语义色，
+## 不新造颜色（它们本来就是「火力 / 护盾 / 修复」的通用语义）。
+const ROLE_COLORS := {
+	&"attack": Color(0.88, 0.52, 0.30),
+	&"defense": Color(0.35, 0.70, 0.90),
+	&"logi": Color(0.52, 0.76, 0.55),
+}
 
 ## 显示名取词（与商店卡 / 羁绊窗同一口径）。
 const TERMS := preload("res://scripts/core/eve_terms.gd")
@@ -54,7 +93,10 @@ var _pools_box: VBoxContainer
 var _wish_label: Label
 var _draw_btn: Button
 var _result_box: VBoxContainer
-var _grid: GridContainer
+## 池子顶部的说明行（文字按真实数量重写，⛔ 不再写死「44 艘」）
+var _pool_head: Label
+## 矩阵本体（列标题 + 每个费用档一行 + ★2 段）—— 每次开窗重建
+var _pool_box: VBoxContainer
 var _drawn := false
 
 
@@ -121,24 +163,25 @@ func _build_contents() -> void:
 	content.add_child(_draw_btn)
 
 
-## 唯一的那一栏 = 图例 + 可竖滚的网格。
+## 唯一的那一栏 = 说明行 + 可竖滚的矩阵。
 ##
-## ⚠️ 池子必须能滚：44 张 / 8 列 = 6 行，窗口还塞得下，但**别指望它永远塞得下**
-##    （以后往池子里加船就会溢出）。用 `ScrollContainer` 而不是缩小卡片：
-##    卡太小名字就截断了，而"看得清是哪艘船"正是许愿的前提。
+## ⚠️ 池子必须能滚：矩阵现在是「4 个费用档 × 2 行卡」，窗口还塞得下，
+##    但**别指望它永远塞得下**（以后往池子里加船、或加一档星级就会溢出）。
+##    用 `ScrollContainer` 而不是缩小卡片：卡太小名字就截断了，
+##    而"看得清是哪艘船"正是许愿的前提。
 func _build_pool() -> Control:
 	var col_box := VBoxContainer.new()
 	col_box.add_theme_constant_override("separation", 5)
 	col_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	col_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
-	# 星级图例 —— 合并成一栏后，这是玩家唯一的分辨依据
-	var head := Label.new()
-	head.text = "候选池 · 共 44 艘　　■ 青色 = ★1　■ 金色 = ★2（二星巡洋）"
-	head.add_theme_color_override("font_color", C_TEXT_DIM)
-	FONT.fs(head, 10)
-	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	col_box.add_child(head)
+	# 说明行 —— 文字在 `_fill_grid` 里按真实数量重写
+	# （旧版把「共 44 艘」写死在字符串里，池子一动就和实际对不上）
+	_pool_head = Label.new()
+	_pool_head.add_theme_color_override("font_color", C_TEXT_DIM)
+	FONT.fs(_pool_head, 10)
+	_pool_head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col_box.add_child(_pool_head)
 
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -149,12 +192,10 @@ func _build_pool() -> Control:
 	# ★ 2026-10-31：与全工程同口径，滚动条加宽到 10（默认 8 抓不住）
 	widen_scrollbar(scroll)
 
-	_grid = GridContainer.new()
-	_grid.columns = POOL_COLS
-	_grid.add_theme_constant_override("h_separation", 6)
-	_grid.add_theme_constant_override("v_separation", 6)
-	_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(_grid)
+	_pool_box = VBoxContainer.new()
+	_pool_box.add_theme_constant_override("separation", POOL_GAP)
+	_pool_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_pool_box)
 	return col_box
 
 
@@ -224,19 +265,212 @@ static func _card_id(key: StringName, star: int) -> String:
 	return "%s#%d" % [String(key), star]
 
 
-func _fill_grid(pool: Array) -> void:
-	for c in _grid.get_children():
-		c.queue_free()
-	_cards.clear()
+# ------------------------------------------------------------------ 矩阵排版
+
+## 池子 → 三层分组：`{star: {cost: {role_id: [ship...]}}}`
+##
+## ⚠️ 只分组、不改序：同一格内的卡片保持池子原序（权威表按族排，
+##    所以同一族的船会挨在一起 —— 这是玩家本来就熟悉的顺序）。
+## ⚠️ 池子里出现没登记的 `role_id` 时**归到第一列**，⛔ 绝不丢卡：
+##    少一张卡 = 玩家许不到那个愿望，而且界面上完全看不出来少了什么。
+func _group_pool(pool: Array) -> Dictionary:
+	var stars := {}
 	for d in pool:
 		var ship: Dictionary = d
+		var star := clampi(int(ship.get("star", 1)), 1, 3)
+		var cost := int(ship.get("cost", 0))
+		var rid := StringName(ship.get("role_id", &""))
+		if rid == &"":
+			# 老存档 / 未来新增定位没登记 ⇒ 退回按中文查一次，再兜底到第一列
+			rid = EveCombatIds.role_id_of(String(ship.get("role", "")))
+		if rid == &"":
+			rid = StringName(ROLE_ORDER[0])
+		if not stars.has(star):
+			stars[star] = {}
+		var by_cost: Dictionary = stars[star]
+		if not by_cost.has(cost):
+			by_cost[cost] = {}
+		var by_role: Dictionary = by_cost[cost]
+		if not by_role.has(rid):
+			by_role[rid] = []
+		(by_role[rid] as Array).append(ship)
+	return stars
+
+
+## 每列要几个子列 = 「该列最挤那档的艘数 / `POOL_CELL_ROWS`」向上取整。
+##
+## ★ 这保证**任何**费用档都正好 `POOL_CELL_ROWS` 行卡 ⇒ 所有行等高，
+##   网格看起来是规整的表格（这是「好选」的关键，不是装饰）。
+func _role_sub_cols(stars: Dictionary) -> Dictionary:
+	var max_n := {}
+	for star in stars:
+		for cost in (stars[star] as Dictionary):
+			for rid in (stars[star][cost] as Dictionary):
+				var n: int = ((stars[star][cost][rid]) as Array).size()
+				max_n[rid] = maxi(int(max_n.get(rid, 0)), n)
+	var out := {}
+	for rid in ROLE_ORDER:
+		var n: int = int(max_n.get(rid, 0))
+		out[rid] = maxi(1, int(ceil(float(n) / float(POOL_CELL_ROWS))))
+	return out
+
+
+## 一个定位格子的宽度（子列数 × 卡宽 + 格内间距）
+static func _cell_width(sub_cols: int) -> float:
+	return float(sub_cols) * CARD_W + float(maxi(0, sub_cols - 1)) * float(POOL_GAP)
+
+
+func _fill_grid(pool: Array) -> void:
+	for c in _pool_box.get_children():
+		c.queue_free()
+	_cards.clear()
+
+	var stars := _group_pool(pool)
+	var sub_cols := _role_sub_cols(stars)
+	var cell_w := {}
+	for rid in ROLE_ORDER:
+		cell_w[rid] = _cell_width(int(sub_cols.get(rid, 1)))
+
+	_pool_head.text = "候选池 · 共 %d 艘　｜　行 = 费用档　列 = 定位　｜　青边 ★1 · 金边 ★2（二星巡洋）" \
+			% pool.size()
+
+	# ① 列标题（三个定位）—— 与下面的行用同一套列宽，所以能对齐
+	_pool_box.add_child(_build_col_header(cell_w))
+
+	# ② ★1：每个费用档一行
+	var s1: Dictionary = stars.get(1, {})
+	for cost in _sorted_costs(s1):
+		_pool_box.add_child(_build_cost_row(cost, s1[cost], sub_cols, cell_w))
+
+	# ③ ★2：单独一段放最下面（用户原话「二星的在下面」）
+	var s2: Dictionary = stars.get(2, {})
+	if not s2.is_empty():
+		_pool_box.add_child(_section_divider("★2 二星巡洋 · 许愿命中返星币"))
+		for cost in _sorted_costs(s2):
+			_pool_box.add_child(_build_cost_row(cost, s2[cost], sub_cols, cell_w))
+
+	# ④ 未来若出现 ★3（或更高）：接着往下排，⛔ 不静默丢卡
+	for star in stars.keys():
+		if int(star) <= 2:
+			continue
+		_pool_box.add_child(_section_divider("★%d" % int(star)))
+		var sx: Dictionary = stars[star]
+		for cost in _sorted_costs(sx):
+			_pool_box.add_child(_build_cost_row(cost, sx[cost], sub_cols, cell_w))
+
+
+## 费用键升序（3 费 → 5 费）。Dictionary 的 key 顺序不保证，必须显式排。
+static func _sorted_costs(by_cost: Dictionary) -> Array:
+	var ks := by_cost.keys()
+	ks.sort()
+	return ks
+
+
+## 列标题行：左侧空出费用栏，三个定位各占一格宽度并居中。
+func _build_col_header(cell_w: Dictionary) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", POOL_BAND_GAP)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var gutter := Control.new()
+	gutter.custom_minimum_size = Vector2(POOL_GUTTER, 0)
+	gutter.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(gutter)
+	for rid in ROLE_ORDER:
+		var l := Label.new()
+		l.text = String(EveCombatIds.ROLE_LABEL.get(rid, String(rid)))
+		var col: Color = ROLE_COLORS.get(rid, C_TEXT_DIM)
+		l.add_theme_color_override("font_color", col)
+		FONT.fs(l, 10)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.custom_minimum_size = Vector2(float(cell_w.get(rid, CARD_W)), 0)
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(l)
+	return row
+
+
+## 一个费用档 = 左边「3 费 / 巡洋」+ 三个定位格（格内卡片折行）
+func _build_cost_row(cost: int, by_role: Dictionary,
+		sub_cols: Dictionary, cell_w: Dictionary) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", POOL_BAND_GAP)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var tag := Label.new()
+	tag.text = "%d 费\n%s" % [cost, String(COST_SHORT.get(cost, ""))]
+	tag.add_theme_color_override("font_color", C_TEXT_DIM)
+	FONT.fs(tag, 10)
+	tag.custom_minimum_size = Vector2(POOL_GUTTER, 0)
+	tag.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(tag)
+
+	for rid in ROLE_ORDER:
+		var ships: Array = by_role.get(rid, [])
+		var cell: Control
+		if ships.is_empty():
+			# 空列（4 费 / 5 费没有后勤船）也要占住列宽，否则后面的列会往左缩，
+			# 整张表就歪了。留一个极淡的「—」说明"这档本来就没有"，
+			# ⛔ 别只留白：玩家会以为是没渲染出来。
+			cell = _empty_cell(float(cell_w.get(rid, CARD_W)))
+		else:
+			cell = _build_role_cell(ships, int(sub_cols.get(rid, 1)))
+			cell.custom_minimum_size = Vector2(float(cell_w.get(rid, CARD_W)), 0)
+		row.add_child(cell)
+	return row
+
+
+## 空定位格：一个居中、极淡的破折号（占满该列宽度）
+func _empty_cell(w: float) -> Control:
+	var l := Label.new()
+	l.text = "—"
+	l.add_theme_color_override("font_color", C_TEXT_FAINT)
+	FONT.fs(l, 10)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.custom_minimum_size = Vector2(w, CARD_H)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
+
+
+## 一个定位格：`sub_cols` 列、最多 `POOL_CELL_ROWS` 行的卡片网格
+func _build_role_cell(ships: Array, sub_cols: int) -> Control:
+	var cell := GridContainer.new()
+	cell.columns = maxi(1, sub_cols)
+	cell.add_theme_constant_override("h_separation", POOL_GAP)
+	cell.add_theme_constant_override("v_separation", POOL_GAP)
+	cell.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for d in ships:
+		var ship: Dictionary = d
 		var key := StringName(ship.get("ship_key", &""))
-		var star := clampi(int(ship.get("star", 1)), 1, 2)
+		var star := clampi(int(ship.get("star", 1)), 1, 3)
 		var w := _build_card(ship, star)
 		var root: PanelContainer = w["root"]
 		root.gui_input.connect(_on_card_input.bind(key, star))
-		_grid.add_child(root)
+		cell.add_child(root)
 		_cards[_card_id(key, star)] = w
+	return cell
+
+
+## 分段标题（★2 那一段）：两条细线夹一行金字，与鸣谢面板的段头同版式。
+func _section_divider(text: String) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var l := EveWindow.make_divider()
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(l)
+	var t := Label.new()
+	t.text = text
+	t.add_theme_color_override("font_color", C_GOLD)
+	FONT.fs(t, 10)
+	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(t)
+	var r := EveWindow.make_divider()
+	r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(r)
+	return row
 
 
 func _build_card(ship: Dictionary, star: int) -> Dictionary:
