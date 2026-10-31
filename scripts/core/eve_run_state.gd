@@ -478,7 +478,8 @@ func key_mechanic() -> String:
 ## 所以"破甲体系"天然是一类：
 ##   导弹（纯爆炸）     1.0  ← 6 艘导弹就是一套解
 ##   射弹炮（动能+爆炸）0.9  ← 6~7 艘射弹炮也是一套解
-##   混合炮（热能+动能）0.5  ← 12 艘混合炮（很难，但数学上算）
+##   混合炮（热能+动能）0.5  ← 12 艘混合炮（数学上算得出，**实战凑不满**）
+##                          → **盖伦特羁绊 4 档后转 1.0**（见 `GALLENTE_BREAK_TIER`）
 ##   激光炮（电磁+热能）0.25 → **凑满 6 艘吃到「无视 25% 装甲」羁绊后转 1.0**
 ##
 ## 阈值仍是「等效 6 艘专职破甲船」：这保证它不是"随便带几艘就行"，
@@ -494,6 +495,25 @@ const ARMOR_BREAK_WEIGHT := {
 }
 ## 破甲羁绊（激光炮 6/6：无视 25% 装甲）的触发门槛，见 EveTraitTable.EFFECTS
 const ARMOR_BREAK_TRAIT_COUNT := 6
+## ★★ 2026-11-01（用户定案）：**盖伦特种族羁绊 4 档 ⇒ 混合炮升为"整把钥匙"**。
+##
+## 病根（玩家实测 + 探针复核）：混合炮权重 0.5，要凑 **12 艘**才算 1 把钥匙，
+##   而场上位最多 9~10 艘 ⇒ **纯混合炮体系在数学上永远破不了炼狱 BOSS 的壁垒**
+##   （`boss_barrier_mult()` 给 0.1，敌方全体只吃 1/10 伤害）。
+##   玩家原话：「我方两艘战列，打不过敌方一艘鹏鲲」—— 探针复核就是这个：
+##   壁垒没破时两艘 ★2 战列合计 332 DPS 实际只剩 33，而鹏鲲有 1097 血。
+##
+## 口径与激光炮 6/6 **完全对称**（那条也是"半把钥匙 → 整把"）：
+##   盖伦特凑到 4 艘 ⇒ 混合炮的 0.5 抬成 1.0，6 艘混合炮刚好 = 6.0 破壁垒。
+##   ⚠️ 这同时把盖伦特 4 档那条**原本只是文案、从未实装**的效果换成了真机制
+##      （旧文案「每第 5 次普攻双倍」在 `EFFECTS` 里一直是 `pending`）。
+##   ⛔ 别把 `ARMOR_BREAK_WEIGHT[&"hybrid"]` 直接抬到 1.0 —— 那会绕过盖伦特羁绊，
+##      等于"任何混编队伍白拿钥匙"，4 档的奖励就没了。
+const GALLENTE_BREAK_TIER := 4
+## 盖伦特在 `EveShip.Faction` 里的序号（= `EveShipTable.FACTION_INDEX["盖伦特"]`）。
+## ⚠️ 写成数字而不是读 `EveShip.Faction.GALLENTE`：枚举成员访问不满足 GDScript 的
+##    「常量表达式」要求（同 `ARMOR_BREAK_WEIGHT` 用字面量 id 的理由）。
+const FACTION_INDEX_GALLENTE := 2
 ## 破甲门槛（等效"专职破甲船"艘数）
 const ARMOR_BREAK_NEED := 6.0
 
@@ -503,6 +523,7 @@ const ARMOR_BREAK_NEED := 6.0
 ## ⚠️ 分母口径是"上阵"（`field_entries()`），不是备战席 —— 钥匙只认要上场的东西。
 func armor_break_power() -> float:
 	var laser := 0
+	var gallente := 0
 	var ids: Array[StringName] = []
 	for e in field_entries():
 		var d := EveShipDatabase.by_id(String(e.get("ship_key", "")))
@@ -510,13 +531,22 @@ func armor_break_power() -> float:
 		ids.append(wid)
 		if wid == EveCombatIds.W_LASER:
 			laser += 1
+		if int(d.get("faction", -1)) == FACTION_INDEX_GALLENTE:
+			gallente += 1
 	# 激光炮凑满羁绊 ⇒ 每一艘都从 0.25 升到 1.0（它的"无视 25% 装甲"是整组生效）
 	var laser_w := 1.0 if laser >= ARMOR_BREAK_TRAIT_COUNT \
 			else float(ARMOR_BREAK_WEIGHT[&"laser"])
+	# 盖伦特 4 档同理：混合炮从 0.5 升到 1.0（见 `GALLENTE_BREAK_TIER` 顶注）
+	var hybrid_w := 1.0 if gallente >= GALLENTE_BREAK_TIER \
+			else float(ARMOR_BREAK_WEIGHT[&"hybrid"])
 	var total := 0.0
 	for wid in ids:
-		total += laser_w if wid == EveCombatIds.W_LASER \
-				else float(ARMOR_BREAK_WEIGHT.get(wid, 0.0))
+		if wid == EveCombatIds.W_LASER:
+			total += laser_w
+		elif wid == EveCombatIds.W_HYBRID:
+			total += hybrid_w
+		else:
+			total += float(ARMOR_BREAK_WEIGHT.get(wid, 0.0))
 	return total
 
 
