@@ -39,6 +39,9 @@ const CARD_H := 46.0
 ## 一栏 8 列：窗口 1000 宽，8×106 + 7×6 ≈ 890，刚好，再宽就得横向滚
 const POOL_COLS := 8
 
+## 显示名取词（与商店卡 / 羁绊窗同一口径）。
+const TERMS := preload("res://scripts/core/eve_terms.gd")
+
 var _pool: Array = []
 ## 许愿：船 + 星级（两者一起才唯一 —— 同名 ★1/★2 是两个不同奖品）
 var _wish_key: StringName = &""
@@ -266,13 +269,37 @@ func _build_card(ship: Dictionary, star: int) -> Dictionary:
 	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.add_child(nm)
 
+	# ★ 2026-10-31（用户：「巨鸟等船的卡牌上没有电子战羁绊标签，这不行，加上」）：
+	#   副标题行改成「N 费 · 派系」+（电子战船才有的）紫色「电子战」。
+	#   ⚠️ 宽度账（卡 106 − 左右内边距 12 = 94px 可用）：
+	#        「3 费 · 米玛塔尔」≈ 4 字 36 + 前缀 15 = 51px
+	#        「·电子战」     ≈ 36px            ⇒ 合计 ~87px，放得下；
+	#      派系名再长也不会把标签挤没 —— `sub` 吃 EXPAND_FILL 且 clip_text，
+	#      被压缩的只会是派系名，标签用 SHRINK_END 保完整。
+	#   ⛔ 别用「EW」这种缩写：玩家不认识，而卡片宽度只差 12px。
+	var sub_row := HBoxContainer.new()
+	sub_row.add_theme_constant_override("separation", 2)
+	sub_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(sub_row)
+
 	var sub := Label.new()
 	sub.text = "%d 费 · %s" % [int(ship.get("cost", 0)), String(ship.get("faction_cn", ""))]
 	sub.add_theme_color_override("font_color", C_TEXT_DIM)
 	FONT.fs(sub, 9)
 	sub.clip_text = true
+	sub.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	col.add_child(sub)
+	sub_row.add_child(sub)
+
+	# 判据唯一真源 = `EveTraitTable.EW_SHIP_KEYS`（走公开入口 `is_ew_ship`）。
+	if EveTraitTable.is_ew_ship(ship):
+		var ew := Label.new()
+		ew.text = "·" + TERMS.trait_member(&"ew", "电子战")
+		ew.add_theme_color_override("font_color", EveTraitTable.EW_COLOR)
+		FONT.fs(ew, 9)
+		ew.size_flags_horizontal = Control.SIZE_SHRINK_END
+		ew.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sub_row.add_child(ew)
 
 	return {"root": card, "name": nm, "sub": sub, "star": star}
 

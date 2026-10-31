@@ -943,8 +943,18 @@ func levelup() -> Dictionary:
 			return _deny("星币不足（超频需 %d）" % OVERTIER_COST)
 		coin -= OVERTIER_COST
 		overtier += 1
-		log_event.emit("加速列表 超频档 %d／%d（商店品质 +1）"
-				% [overtier, MAX_TIER - MAX_LEVEL], &"buy")
+		# ★ 2026-10-31（仅炼狱）：第二次超频可能额外 +1 上场名额，
+		#   必须**当场说明**——否则玩家只看到"商店品质+1"，多出来的一格
+		#   不知道从哪来（也可能因为备战席满了而没给，同样要说）。
+		var tier_line := "加速列表 超频档 %d／%d（商店品质 +1）" \
+				% [overtier, MAX_TIER - MAX_LEVEL]
+		if difficulty_id == "inferno" and overtier >= MAX_TIER - MAX_LEVEL:
+			if _overtier_slot_bonus():
+				tier_line += " · 上场上限 %d（备战席未满 +1）" % field_limit()
+			else:
+				tier_line += " · 备战席已满（%d/%d），本次不给额外上场名额" \
+						% [bench.size(), BENCH_SLOTS]
+		log_event.emit(tier_line, &"buy")
 		roll_shop()
 	changed.emit()
 	return {"ok": true, "reason": "", "data": {}}
@@ -1460,8 +1470,37 @@ func _expire_repairs() -> void:
 # ══════════════════════════════════════════════════════════════════
 
 ## 上场上限 = 等级 + 2
+##
+## ★ 2026-10-31（用户定案，仅炼狱）：满级 6 之后的**第二次**超频
+##   （`overtier` 到 2 = `MAX_TIER - MAX_LEVEL`），若**备战席没坐满**，
+##   额外 +1 个上场名额。用户原话：
+##     「等级6我看可升级两次，第二次升级如果备战席上不是舰船满额的情况，
+##       可以多加一个派舰船到战斗区的名额」。
+##
+## ⚠️ 为什么条件里要「备战席未满」：这是用户给的原样条件，**不要自作主张删掉**。
+##   读法是「你还有空位囤船 ⇒ 说明你缺的是上场位而不是货架」，给名额才有意义。
+## ⚠️ 名额是**动态**的：玩家往备战席塞满第 8 艘，名额会立刻掉回 8；
+##   已经在场上的第 9 艘**不会**被强制撤回（没有任何代码会踢人），
+##   只是此时不能再往上拖。这是可接受的边界，⛔ 别加"自动下场"。
+## ⚠️ 只对炼狱生效（用户当次声明的总前提「以下更新只对炼狱难度生效」）。
 func field_limit() -> int:
-	return LEVEL_CAP[clampi(level, 1, MAX_LEVEL)]
+	var cap := LEVEL_CAP[clampi(level, 1, MAX_LEVEL)]
+	if _overtier_slot_bonus():
+		cap += 1
+	return cap
+
+
+## 炼狱「二次超频 + 备战席未满」的那 1 格名额是否生效。
+## ⚠️ 单独抽出来是为了让 HUD / 日志能显示「这 1 格是怎么来的」，
+##    而不是在 `field_limit()` 里读一个算好的数却讲不出原因。
+func _overtier_slot_bonus() -> bool:
+	if difficulty_id != "inferno":
+		return false
+	if level < MAX_LEVEL:
+		return false
+	if overtier < MAX_TIER - MAX_LEVEL:
+		return false
+	return bench.size() < BENCH_SLOTS
 
 
 ## 本级内已获得的经验
@@ -2765,11 +2804,21 @@ func enemy_roster() -> Array[Dictionary]:
 ## ★ 2026-10-31（用户定案）：炼狱的利息门槛从 10 降到 9。
 ##   门槛走难度档的 `interest_step`（缺省回退 `INTEREST_STEP` = 10），
 ##   ⛔ 别把 9 写成全局常量 —— 只有炼狱该吃这个便宜。
+##
+## ★★ 2026-10-31 二次定案（覆盖上面的 9）：
+##   · 门槛 9 → **3**（每 3 星币 1 利息），仍只走炼狱的 `interest_step`。
+##   · **取消上限**：难度档把 `interest_max` 填成 `-1` ⇒ 这里 `cap < 0` 直接返回
+##     「不夹」的结果。其余三档 `interest_max` 仍是 5，行为一字未变。
+##   ⚠️ `-1` 这个哨兵值只能在**难度档**出现；全局常量 `INTEREST_MAX` 仍是 5，
+##      它只作 `row` 缺字段时的回退，⛔ 别把它也改成 -1（那会让所有档都无上限）。
 func interest() -> int:
 	var row := difficulty_row()
 	var cap := int(row.get("interest_max", INTEREST_MAX))
 	var step := maxi(1, int(row.get("interest_step", INTEREST_STEP)))
-	return mini(int(floor(float(coin) / float(step))), cap)
+	var base := int(floor(float(coin) / float(step)))
+	if cap < 0:
+		return base
+	return mini(base, cap)
 
 
 func income() -> int:
@@ -2782,15 +2831,24 @@ func income() -> int:
 ## ★ 2026-10-31（用户定案）：炼狱节点 6~10 每关 +1、11~15 每关 +2。
 ##   取值理由见 `EveCampaignTiers.DIFFICULTIES` 炼狱块内 `node_income_bonus` 的注释。
 ##
+## ★★ 2026-10-31 二次定案：整条曲线抬成 1/2/3，并且**15 关之后不断供**。
+##   用户原话：「如果15回合每过，又重打15回合，也要给到这3星币」。
+##
 ## ⚠️ 按 `node_index` 取（不是 `event_clock()`）：收入是在 `advance()` **推进之后**
 ##    才发的，那一刻 `node_index` 就是「即将进入的节点」——
 ##    节点 6 的 +1 落在进入节点 6 的那次结算里，正是玩家理解的「这一关多给一币」。
-## ⚠️ 数组越界返回 0 而不是报错：老存档 / 联机对局可能带着没有这个字段的难度行。
+##
+## ⚠️⚠️ **超出数组长度时钳到最后一格**（而不是返回 0）：
+##    15 关打完重打第二轮时 `node_index` 会变成 16、17…… 旧写法
+##    `node_index <= curve.size()` 会让第二轮起一分不加 —— 那等于"重打反而变穷"，
+##    玩家的体感是经济突然断供。现在统一按末档（3）继续发。
+## ⚠️ 空数组 / 老存档没有这个字段 ⇒ 返回 0（其余三档就是这条路）。
 func node_income_bonus() -> int:
 	var curve: Array = difficulty_row().get("node_income_bonus", [])
-	if node_index >= 1 and node_index <= curve.size():
-		return maxi(0, int(curve[node_index - 1]))
-	return 0
+	if curve.is_empty() or node_index < 1:
+		return 0
+	var idx := mini(node_index, curve.size()) - 1
+	return maxi(0, int(curve[idx]))
 
 
 # ══════════════════════════════════════════════════════════════════

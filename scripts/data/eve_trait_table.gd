@@ -92,6 +92,12 @@ const EW_SHIP_KEYS: PackedStringArray = [
 	"executioner", "omen",     # 艾玛（刽子手级 / 启示级）
 ]
 
+## 电子战羁绊的识别色（紫 = 「干扰 / 异常」的通用语义，刻意不用任何一族识别色，
+## 因为这条羁绊是**跨族**的）。
+## ★ 2026-10-31：抽出来当常量 —— 羁绊窗色块、档案行、商店/抽奖卡面标签
+##   全部读这一份，⛔ 别在 UI 里再写一遍 `Color(0.66, 0.55, 0.95)`（改了必然漂移）。
+const EW_COLOR := Color(0.66, 0.55, 0.95)
+
 ## 成员（显示名 + 颜色）。颜色约定：
 ##   派系用 EVE 官方识别色（艾玛金 / 加达里青 / 盖伦特绿 / 米玛塔尔红），
 ##   武器统一用冷青（它们本来就同类），防御统一用橙（都是抗性）。
@@ -123,11 +129,10 @@ static func members(group: StringName) -> Array[Dictionary]:
 						"color": Color(0.52, 0.86, 0.68)},
 			]
 		&"ew":
-			# 单成员，同「后勤」的理由。紫色 = 「干扰/异常」的通用语义，
-			# 刻意不用任何一族的识别色（这条羁绊是**跨族**的）。
+			# 单成员，同「后勤」的理由。紫色见 `EW_COLOR` 的说明。
 			return [
 				{"name": "电子战", "label": TERMS.trait_member(&"ew", "电子战"),
-						"color": Color(0.66, 0.55, 0.95)},
+						"color": EW_COLOR},
 			]
 	return []
 
@@ -509,6 +514,15 @@ static func _is_logi(s) -> bool:
 ##    自带的 `is_ew`（测试/预览可以显式声明），否则回查 `ship_key`。
 ##    ⛔ 判据只有 `EW_SHIP_KEYS` 一份 —— 派生字典里**不另存** `is_ew`
 ##    （避免「表改了、字典没改」的两份真相）。
+## ★ 2026-10-31（用户：「巨鸟等船的卡牌上没有电子战羁绊标签，这不行，加上」）：
+##   UI 卡面需要判「这艘船是不是电子战舰」，但 `_is_ew()` 是私有约定。
+##   这里开一个**公开入口**，卡面 / 商店 / 抽奖窗统一走它 ——
+##   ⛔ 别在 UI 里自己 `EW_SHIP_KEYS.has(...)` 抄一遍（那就成了第二真相源）。
+##   ⚠️ 参数同时接受 `EveShip` 与船表 Dictionary（商店/抽奖手里都是 Dictionary）。
+static func is_ew_ship(s) -> bool:
+	return _is_ew(s)
+
+
 static func _is_ew(s) -> bool:
 	if s == null:
 		return false

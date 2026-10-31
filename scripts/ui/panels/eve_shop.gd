@@ -336,6 +336,22 @@ func _build_card() -> Dictionary:
 	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_row.add_child(nm)
 
+	# ★ 2026-10-31（用户：「巨鸟等船的卡牌上没有电子战羁绊标签，这不行，加上」）：
+	#   电子战船的卡面必须自带一个紫色「电子战」标签。
+	#   位置选在**名称行、费用左边**——卡面 1142px 分 5 张、单卡约 220px，
+	#   名称最长 7 字（66px）＋标签（24px）＋费用都塞得下；
+	#   ⛔ 别贴到立绘上做角标：2026-10-27 用户刚要求「去掉 CTN 定位小标」，
+	#     同一个位置再挂一个角标是往回走。
+	#   ⚠️ 颜色读 `EveTraitTable.EW_COLOR`（唯一真源），别在这里写死紫色。
+	var ew_tag := Label.new()
+	# 显示名走取词（与羁绊窗、档案行同一口径），逻辑键仍是 `ew`。
+	ew_tag.text = TERMS.trait_member(&"ew", "电子战")
+	ew_tag.add_theme_color_override("font_color", EveTraitTable.EW_COLOR)
+	FONT.fs(ew_tag, 8)
+	ew_tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ew_tag.visible = false
+	name_row.add_child(ew_tag)
+
 	var cost := Label.new()
 	cost.text = "0"
 	cost.add_theme_color_override("font_color", C_GOLD)
@@ -363,7 +379,7 @@ func _build_card() -> Dictionary:
 	col.add_child(pad)
 
 	return {"root": card, "top": top, "art": art,
-			"name": nm, "cost": cost, "stat": stat}
+			"name": nm, "cost": cost, "stat": stat, "ew": ew_tag}
 
 
 ## 设置 5 张卡的报价。offers 的元素是 EveShipDatabase 出来的 Dictionary
@@ -394,6 +410,7 @@ func _fill_card(w: Dictionary, offer, index: int) -> void:
 	var nm: Label = w["name"]
 	var cost: Label = w["cost"]
 	var stat: Label = w["stat"]
+	var ew_tag: Label = w["ew"]
 
 	# ★ 2026-10-01：买走的槽位是**空 Dictionary**（不补货）。
 	#   显示一张压暗的空卡而不是直接隐藏 —— 隐藏会让商店看起来"少了一格"，
@@ -405,6 +422,7 @@ func _fill_card(w: Dictionary, offer, index: int) -> void:
 		nm.text = T.t("SHOP_BOUGHT", "已买走")
 		cost.text = "—"
 		stat.text = ""
+		ew_tag.visible = false
 		art.accent = Color(0.35, 0.42, 0.46)
 		return
 	root.visible = true
@@ -438,6 +456,10 @@ func _fill_card(w: Dictionary, offer, index: int) -> void:
 	var wid := CIDS.weapon_id_of(String(d.get("weapon_type", "")))
 	var did := CIDS.defense_id_of(String(d.get("defense_type", "")))
 	var is_shield := did == CIDS.D_SHIELD
+	# ★ 电子战标签：判据唯一真源 = `EveTraitTable.EW_SHIP_KEYS`（走公开入口）。
+	#   `d` 是船表 Dictionary，`is_ew_ship()` 认它的 `ship_key`；
+	#   打捞来的「修复品」同样带 ship_key ⇒ 一条分支就够，不用另写。
+	ew_tag.visible = EveTraitTable.is_ew_ship(d)
 	stat.text = T.t("SHOP_CARD_STAT", "%s · %s\n攻 %d　%s %d") % [
 		TERMS.weapon(wid), TERMS.defense(did),
 		int(d.get("attack", 0)),
