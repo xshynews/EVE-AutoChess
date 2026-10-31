@@ -465,99 +465,81 @@ func key_mechanic() -> String:
 	return String(difficulty_row().get("key_mechanic", ""))
 
 
-## ★★ 2026-10-24（用户定案）：炼狱的解必须是**一整类**，不能只有激光。
+## ★★ 2026-11-01（用户定案）：**四族靠齐** —— 壁垒不再按武器类型分档。
 ##
-## 病象：原来 `armor_pierce` 只认「上场 ≥ 6 艘激光炮」。实测 16 局里只有
-##   2 局凑得出 6 激光 —— 于是炼狱变成「抽到那一套才过」，而那一套还恰好是
-##   **对装甲墙最差**的体系（见下表）。玩家体会到的不是"搏一把"，是"这关无解"。
+## 上一版（10-24 定案）的判据是「Σ 每艘船 × 该武器的破甲权重」：
+##   导弹 1.0 / 射弹炮 0.9 / 混合炮 0.5（盖伦特 4 档转 1.0）/ 激光 0.25（凑 6 艘转 1.0）。
 ##
-## 判据改成**按伤害类型算"破甲强度"**，理由完全来自战斗核的抗性表：
-##   甲抗 【EM 60% / 热能 35% / 动能 25% / 爆炸 10%】-（见 EveShipDatabase）
-##   ⇒ 打装甲墙最有效的是**爆炸**，其次**动能**；电磁（激光的主伤害）几乎打不动。
+## 病根（用户原话：「四族等靠齐，现在这样不是搞歧视？玩家该闹了」）：
+##   族与武器在本作里是 **100% 一一对应** 的（每族 13 艘：艾玛=激光、加达里=导弹、
+##   盖伦特=混合炮、米玛塔尔=射弹炮）⇒ 按武器分权重 = **按族分权重**。
+##   实测 8 艘满编：
+##     8 加达里 8.00 ✔ ｜ 8 米玛塔尔 7.20 ✔ ｜ 8 盖伦特 8.00 ✔ ｜ 8 艾玛 8.00 ✔
+##     4 加达里+4 射弹 7.60 ✔ ｜ 4 盖伦特+4 导弹 8.00 ✔
+##     4 艾玛+4 导弹 **5.00 ✘** ｜ 4 混合+4 激光 **5.00 ✘**    ← 只有艾玛崩
+##   ⇒ 同样八个上场位，玩艾玛的必须凑满 6 艘激光，玩加达里的随手混编就过。
 ##
-## 所以"破甲体系"天然是一类：
-##   导弹（纯爆炸）     1.0  ← 6 艘导弹就是一套解
-##   射弹炮（动能+爆炸）0.9  ← 6~7 艘射弹炮也是一套解
-##   混合炮（热能+动能）0.5  ← 12 艘混合炮（数学上算得出，**实战凑不满**）
-##                          → **盖伦特羁绊 4 档后转 1.0**（见 `GALLENTE_BREAK_TIER`）
-##   激光炮（电磁+热能）0.25 → **凑满 6 艘吃到「无视 25% 装甲」羁绊后转 1.0**
+## 而且这是**同一个克制收两次税**：抗性层已经按伤害类型分过档
+##   （甲抗 EM 60% / 热能 35% / 动能 25% / 爆炸 10%），壁垒层又按同一维度罚一遍。
+##   职责本该分开 —— 抗性管「这一发打进去还剩多少」，壁垒管「你有没有专精」。
 ##
-## 阈值仍是「等效 6 艘专职破甲船」：这保证它不是"随便带几艘就行"，
-## 但也不再是"只有一种船能过"。
-## ⚠️ 这里用字面量 `&"missile"` 而不是 `EveCombatIds.W_MISSILE`：
-##    后者的成员访问不满足 GDScript 的「常量表达式」，`const` 会直接报错。
-##    两者必须一致 —— 换了任一 id 都要同步这里。
-const ARMOR_BREAK_WEIGHT := {
-	&"missile": 1.0,
-	&"proj": 0.9,
-	&"hybrid": 0.5,
-	&"laser": 0.25,
-}
-## 破甲羁绊（激光炮 6/6：无视 25% 装甲）的触发门槛，见 EveTraitTable.EFFECTS
-const ARMOR_BREAK_TRAIT_COUNT := 6
-## ★★ 2026-11-01（用户定案）：**盖伦特种族羁绊 4 档 ⇒ 混合炮升为"整把钥匙"**。
-##
-## 病根（玩家实测 + 探针复核）：混合炮权重 0.5，要凑 **12 艘**才算 1 把钥匙，
-##   而场上位最多 9~10 艘 ⇒ **纯混合炮体系在数学上永远破不了炼狱 BOSS 的壁垒**
-##   （`boss_barrier_mult()` 给 0.1，敌方全体只吃 1/10 伤害）。
-##   玩家原话：「我方两艘战列，打不过敌方一艘鹏鲲」—— 探针复核就是这个：
-##   壁垒没破时两艘 ★2 战列合计 332 DPS 实际只剩 33，而鹏鲲有 1097 血。
-##
-## 口径与激光炮 6/6 **完全对称**（那条也是"半把钥匙 → 整把"）：
-##   盖伦特凑到 4 艘 ⇒ 混合炮的 0.5 抬成 1.0，6 艘混合炮刚好 = 6.0 破壁垒。
-##   ⚠️ 这同时把盖伦特 4 档那条**原本只是文案、从未实装**的效果换成了真机制
-##      （旧文案「每第 5 次普攻双倍」在 `EFFECTS` 里一直是 `pending`）。
-##   ⛔ 别把 `ARMOR_BREAK_WEIGHT[&"hybrid"]` 直接抬到 1.0 —— 那会绕过盖伦特羁绊，
-##      等于"任何混编队伍白拿钥匙"，4 档的奖励就没了。
-const GALLENTE_BREAK_TIER := 4
-## 盖伦特在 `EveShip.Faction` 里的序号（= `EveShipTable.FACTION_INDEX["盖伦特"]`）。
-## ⚠️ 写成数字而不是读 `EveShip.Faction.GALLENTE`：枚举成员访问不满足 GDScript 的
-##    「常量表达式」要求（同 `ARMOR_BREAK_WEIGHT` 用字面量 id 的理由）。
-const FACTION_INDEX_GALLENTE := 2
-## 破甲门槛（等效"专职破甲船"艘数）
+## 新口径（四族同构，只看船数，不看武器）：
+##     破甲强度 = 最大同族簇的艘数 + `BREAK_OFF_CLUSTER` × 其余艘数
+##     族羁绊 4 档再 +1（读 `EFFECTS` 的 `break_bonus`，四族各一条，见该表）
+##   8 艘同族 = 8.0 ｜ 7+1 = 7.5 ｜ 6+2 = 7.0 ｜ 4+4 = 6.0 ｜ 3+3+2 = 5.5 ｜ 2+2+2+2 = 5.0
+##   ⛔ 「专精」这个要求没变软：门槛仍是 6.0，4+4 混编刚好压线，
+##      四族大杂烩（2+2+2+2）依旧过不去 —— 变的是**四族站在同一起跑线上**。
 const ARMOR_BREAK_NEED := 6.0
+## 不属于最大簇的船，破甲只算半艘。
+## ⚠️ 0.5 是反推出来的、不是拍的：4+4 混编 = 4 + 0.5×4 = **6.0**，刚好压线。
+##    调它等于调「混编能有多滥」，改之前先跑 `tools/sim_winrate.gd` 的四族对照。
+const BREAK_OFF_CLUSTER := 0.5
 
 
 ## 当前上阵的**破甲强度**（单位：等效专职破甲船）。0 = 完全没有破甲能力。
 ##
+## 算法见上方 `ARMOR_BREAK_NEED` 的顶注：**最大同族簇 + 半艘 × 其余**，四族同构。
 ## ⚠️ 分母口径是"上阵"（`field_entries()`），不是备战席 —— 钥匙只认要上场的东西。
+## ⚠️ 按**族**统计而不是按武器：两者在本作里一一对应（13 艘/族），
+##    但族是"玩家看得见、能报出来的"单位，UI 也按族显示。⛔ 别改回按武器。
 func armor_break_power() -> float:
-	var laser := 0
-	var gallente := 0
-	var ids: Array[StringName] = []
+	var total := 0
+	var per_faction: Dictionary = {}
 	for e in field_entries():
 		var d := EveShipDatabase.by_id(String(e.get("ship_key", "")))
-		var wid := StringName(d.get("weapon_id", &""))
-		ids.append(wid)
-		if wid == EveCombatIds.W_LASER:
-			laser += 1
-		if int(d.get("faction", -1)) == FACTION_INDEX_GALLENTE:
-			gallente += 1
-	# 激光炮凑满羁绊 ⇒ 每一艘都从 0.25 升到 1.0（它的"无视 25% 装甲"是整组生效）
-	var laser_w := 1.0 if laser >= ARMOR_BREAK_TRAIT_COUNT \
-			else float(ARMOR_BREAK_WEIGHT[&"laser"])
-	# 盖伦特 4 档同理：混合炮从 0.5 升到 1.0（见 `GALLENTE_BREAK_TIER` 顶注）
-	var hybrid_w := 1.0 if gallente >= GALLENTE_BREAK_TIER \
-			else float(ARMOR_BREAK_WEIGHT[&"hybrid"])
-	var total := 0.0
-	for wid in ids:
-		if wid == EveCombatIds.W_LASER:
-			total += laser_w
-		elif wid == EveCombatIds.W_HYBRID:
-			total += hybrid_w
-		else:
-			total += float(ARMOR_BREAK_WEIGHT.get(wid, 0.0))
-	return total
+		var fac := int(d.get("faction", -1))
+		if fac < 0:
+			continue
+		total += 1
+		per_faction[fac] = int(per_faction.get(fac, 0)) + 1
+	if total == 0:
+		return 0.0
+	var best := 0
+	for f in per_faction:
+		best = maxi(best, int(per_faction[f]))
+	# 最大簇整艘计，其余船半艘 —— 见 `BREAK_OFF_CLUSTER` 的取值理由。
+	var power := float(best) + BREAK_OFF_CLUSTER * float(total - best)
+	power += _faction_break_bonus()
+	return power
+
+
+## 族羁绊 4 档给的破甲加成（四族同构，取 `EFFECTS[...][4].apply.break_bonus`）。
+##
+## ⚠️ 用 `maxf` 而不是累加：两族都到 4 档时不该叠成 +2 —— 4 档是「这一族专精了」，
+##    不是「多专精一族再多一份」。与 `tier_of` 的「替换不叠加」口径一致。
+func _faction_break_bonus() -> float:
+	var out := 0.0
+	for a in active_synergies():
+		if StringName(a["group"]) != &"faction":
+			continue
+		out = maxf(out, float(a.get("apply", {}).get("break_bonus", 0.0)))
+	return out
 
 
 ## 玩家阵容是否凑出了钥匙。
 ##
-## ★★ 2026-10-24（用户定案）：判据从「6 艘激光炮」放宽成「**任一破甲体系**
-##   达到等效 6 艘」。详细口径见 `ARMOR_BREAK_WEIGHT` 上方的注释。
-##
 ## ⚠️ 这仍然**只是阵容条件**，不是抽卡条件：玩家可以靠留船 / 换船去凑，
-##    只不过现在能凑的体系有四种（导弹 / 射弹 / 混合 / 激光羁绊），
-##    而不是死盯着一型船。
+##    而且四条路（四族）现在是同一把尺子量。
 func key_mechanic_satisfied() -> bool:
 	match key_mechanic():
 		"armor_pierce":
@@ -566,16 +548,44 @@ func key_mechanic_satisfied() -> bool:
 			return true
 
 
-## 本节点敌方全体受到的伤害倍率。
-##   1.0  = 正常
-##   0.1  = 壁垒未破（见 `key_mechanic_satisfied`）
-## 只在 BOSS 节点生效；其他节点恒 1.0（壁垒是 BOSS 的机制）。
-func boss_barrier_mult() -> float:
-	if key_mechanic() == "":
+## 壁垒未破时的**最低**受伤倍率（斜坡下限）。
+## ⚠️ 0.15 而不是 0.1：原来那个 0.1 是"开关"的下半段，现在它是曲线的最低点，
+##    留 1.5 成是因为 0 艘同族 = 你根本没在打这个机制，而不是"差一点"。
+##    真实对局里破甲强度很少低于 4（8 个上场位），所以玩家实际感受到的
+##    最低值大约是 `barrier_mult_for(4.0)` ≈ 0.62，不是这个 0.15。
+const BARRIER_FLOOR := 0.15
+## 斜坡的弯曲指数（>1 = 低破甲段爬得慢、越接近门槛涨得越快）。
+## 1.6 是拿下面这张表反推的，改之前先看表：
+##   破甲 0 → 0.15 ｜ 2 → 0.30 ｜ 4 → 0.62 ｜ 5 → 0.81 ｜ 6 → 1.00
+## 想要"差一艘就很疼"就把它调大（曲线更凸），想温柔就调小。
+const BARRIER_CURVE := 1.6
+
+
+## 破甲强度 → 敌方全体受伤倍率（**连续**，不再是 0.1/1.0 的开关）。
+##
+## ★★ 2026-11-01（用户定案，B 项）：用户原话「我看着这个词有点恶心」。
+##   开关的毛病不是"惩罚重"，是**没有中间态**：差 0.5 和差 5.0 结果一模一样，
+##   玩家在"差一点"那一格受的挫最重，而这一格恰好是唯一没有反馈的。
+##   改成斜坡之后，每多一艘同族船都能立刻看见伤害数字变大。
+##
+## ⚠️ 只在 `armor_pierce` 这个 key_mechanic 下有意义 —— 别的机制有自己的判据，
+##    别把这条曲线当通用公式套上去。
+func barrier_mult_for(power: float) -> float:
+	if power >= ARMOR_BREAK_NEED:
 		return 1.0
+	var t := clampf(power / ARMOR_BREAK_NEED, 0.0, 1.0)
+	return BARRIER_FLOOR + (1.0 - BARRIER_FLOOR) * pow(t, BARRIER_CURVE)
+
+
+## 本节点敌方全体受到的伤害倍率。
+##   1.0 = 无壁垒 / 已穿透；<1.0 = 壁垒部分穿透（见 `barrier_mult_for`）
+## 只在 BOSS 节点 + 该档声明了 `armor_pierce` 时生效；其余恒 1.0。
+func boss_barrier_mult() -> float:
 	if node_type() != &"boss":
 		return 1.0
-	return 1.0 if key_mechanic_satisfied() else 0.1
+	if key_mechanic() != "armor_pierce":
+		return 1.0
+	return barrier_mult_for(armor_break_power())
 
 
 ## 开一局新的。p_seed = 0 时用系统随机；>0 时固定种子（回归用）。
