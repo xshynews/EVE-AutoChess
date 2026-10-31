@@ -68,17 +68,38 @@ const BLOCK_MAX_COLS := 3
 const BLOCK_MAX := BLOCK_ROWS * BLOCK_MAX_COLS
 ## 块内卡片间距
 const POOL_GAP := 6
-## 同一标签组内，块与块之间
+## 费用栏与矩阵之间
 const BLOCK_GAP := 18
-## 标签组之间（常规 ↔ 电子战 ↔ 后勤）。必须明显大于 `BLOCK_GAP`，
-## 否则三块会连成一片，"特殊船被单独挑出来了"这件事就看不出来。
-const TAG_GAP := 40
 ## 费用带之间（3 费 ↔ 4 费 ↔ 5 费 ↔ ★2 段）
 const SECTION_GAP := 12
 ## 左侧费用栏宽度：竖排「3 费 / 巡洋」两行
 const POOL_GUTTER := 42.0
 ## 费用档 → 吨位简称（与图鉴顶部「吨位」筛选 chip 同一套说法）
 const COST_SHORT := {3: "巡洋", 4: "战巡", 5: "战列"}
+
+## ══════════════════════════════════════════════════════════════════
+##  ★★ 2026-11-01（用户：「能对齐的地方都给我对齐」）—— 全表一条列网格
+## ══════════════════════════════════════════════════════════════════
+## 上一版是「HBox 里塞若干个 GridContainer，块缝用 spacer 凑」，
+## 探针实测（`tools/probe_lot_layout.gd` dump 出来的 x 坐标）：
+##     3 费 块起点 531 / 789 / 1047　（组缝 40）
+##     4 费 块起点 531 / 767　　　　　（块缝 18）
+##     5 费 块起点 531 / 879　　　　　（3 列块，缝 18）
+##   ⇒ 同一个"第 2 块"，三个费用带落在三个不同的 x 上，
+##     竖列一跳一跳，整张表看着就是散的。
+##
+## 现在：**一行 = 一个 GridContainer**，分组的空隙不用像素凑，
+## 直接**空掉一整列**（宽度正好一张卡）。于是：
+##   ① 所有卡片（和占位格）都落在同一条网格 `左起 + k×(CARD_W+POOL_GAP)`；
+##   ② 块缝只剩下"空一列"这一种，⛔ 不再有 40 / 18 两种不同的缝；
+##   ③ 3 费 8 列（2+空+2+空+2）= 890px，仍在 910px 可用宽里，不溢出。
+##
+## ⚠️ 网格化的代价：块缝 = 一整张卡（112px），比原来的 40 大得多。
+##    这是**为了对齐付的账** —— 想让 2 列块和 3 列块的竖边都对齐，
+##    缝就只能按整列走，没有中间值。⛔ 别把块缝改回几十像素，
+##    一旦不是整列，竖列立刻又错开。
+## ⚠️ 因此 `TAG_GAP` 已删除：分组的强弱现在只由"空一列"表达。
+const COL_STEP := 112.0   # = CARD_W(106) + POOL_GAP(6)，仅作文档口径，代码走布局
 
 ## 势力顺序：**盾抗族先、甲抗族后**。
 ##
@@ -380,7 +401,7 @@ func _fill_grid(pool: Array) -> void:
 		c.queue_free()
 	_cards.clear()
 
-	_pool_head.text = "候选池 · 共 %d 艘　｜　同级一行 · 一块两行 · 同族一列（盾抗族在前）· 电子战/后勤单独成块　｜　青边 ★1 · 金边 ★2" \
+	_pool_head.text = "候选池 · 共 %d 艘　｜　同级一行 · 一块两行 · 电子战/后勤单独成块 · 全表同一条列网格　｜　青边 ★1 · 金边 ★2" \
 			% pool.size()
 
 	var stars := _bucket_stars(pool)
@@ -405,7 +426,12 @@ static func _sorted_costs(by_cost: Dictionary) -> Array:
 	return ks
 
 
-## 一条费用带 = 左侧「3 费 / 巡洋」+ 若干标签组，每组再折成 2 行的小块。
+## 一条费用带 = 左侧「3 费 / 巡洋」+ 一个**整行网格**（块只是网格里被空列隔开的列段）。
+##
+## ⚠️ 这里必须**逐行**往 GridContainer 里塞（它是行优先填充的）：
+##    先塞满第 1 行的所有列（含分组空列），再塞第 2 行。
+##    ⛔ 别按"块"依次塞 —— 那样第 2 块会接着第 1 块往右排，
+##       "一块两行"立刻退化成"一条长龙"，而且是那种图上看着像掉了一行的错法。
 func _build_cost_row(star: int, cost: int, ships: Array) -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", BLOCK_GAP)
@@ -421,46 +447,70 @@ func _build_cost_row(star: int, cost: int, ships: Array) -> Control:
 	tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(tag)
 
-	var groups := _section_groups(ships, star)
-	for gi in groups.size():
-		if gi > 0:
-			# 组间距只能靠 spacer 撑：HBox 的 `separation` 是全局的，
-			# 只有塞一个空控件才能"在这一处"拉开。
-			# ⚠️ spacer 两侧各还有一个 `BLOCK_GAP` 的 separation，必须减掉，
-			#    否则 `TAG_GAP` 就不是眼睛看到的那条缝（会多出 2×BLOCK_GAP）。
-			var sp := Control.new()
-			sp.custom_minimum_size = Vector2(float(maxi(0, TAG_GAP - BLOCK_GAP * 2)), 0)
-			sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			row.add_child(sp)
-		for block in _chunk(groups[gi]):
-			row.add_child(_build_block(block))
-	return row
+	# 先把这一带拍平成"块列表"（顺序就是最终从左到右的顺序）
+	var blocks: Array = []
+	for group in _section_groups(ships, star):
+		for chunk in _chunk(group):
+			blocks.append(chunk)
 
+	# 总列数 = Σ 各块列数 + 每组之间的一列空位
+	var total_cols := 0
+	for b in blocks:
+		total_cols += _block_cols(b)
+	total_cols += maxi(0, blocks.size() - 1)
 
-## 一块 = `BLOCK_ROWS` 行的卡片网格。列数 = ceil(张数 / 2)：
-## 4 张 → 2 列 × 2 行；6 张 → 3 列 × 2 行。
-##
-## ⚠️ `columns` 必须显式给：GridContainer 默认 1 列，忘了设就会竖成一条线
-##    ——「一块两行」会当场失效，而且缩略图里非常像"卡片掉了一列"，很难一眼看出。
-func _build_block(ships: Array) -> Control:
-	var cols := int(ceil(float(ships.size()) / float(BLOCK_ROWS)))
 	var grid := GridContainer.new()
-	grid.columns = maxi(1, cols)
+	# ⚠️ `columns` 必须显式给：默认 1 列会竖成一条线（老版踩过）
+	grid.columns = maxi(1, total_cols)
 	grid.add_theme_constant_override("h_separation", POOL_GAP)
 	grid.add_theme_constant_override("v_separation", POOL_GAP)
 	grid.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	grid.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	for d in ships:
-		var ship: Dictionary = d
-		var key := StringName(ship.get("ship_key", &""))
-		var star := clampi(int(ship.get("star", 1)), 1, 3)
-		var w := _build_card(ship, star)
-		var root: PanelContainer = w["root"]
-		root.gui_input.connect(_on_card_input.bind(key, star))
-		grid.add_child(root)
-		_cards[_card_id(key, star)] = w
-	return grid
+	row.add_child(grid)
+
+	for r in BLOCK_ROWS:
+		for bi in blocks.size():
+			var chunk: Array = blocks[bi]
+			if bi > 0:
+				# 分组沟 = **空一整列**（宽度 = 一张卡），不是随手填的几十像素
+				grid.add_child(_blank_cell())
+			var cols := _block_cols(chunk)
+			for c in cols:
+				var idx := r * cols + c
+				if idx < chunk.size():
+					grid.add_child(_card_cell(chunk[idx]))
+				else:
+					grid.add_child(_blank_cell())
+	return row
+
+
+## 一块占几列：`ceil(张数 / 2)`。4 张 → 2 列；5 张 → 3 列（末行空一格）；6 张 → 3 列。
+static func _block_cols(chunk: Array) -> int:
+	return maxi(1, int(ceil(float(chunk.size()) / float(BLOCK_ROWS))))
+
+
+## 空占位：撑住列宽（= 一张卡），让后面的卡不会因为缺格而往前挤。
+##
+## ⚠️ 必须显式给 `custom_minimum_size`：宽度为 0 的空 Control 会把这一列的
+##    宽度交给别的单元格，整条网格立刻塌成不齐 —— 而它自己肉眼完全看不见。
+func _blank_cell() -> Control:
+	var c := Control.new()
+	c.custom_minimum_size = Vector2(CARD_W, CARD_H)
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return c
+
+
+## 一张卡 = 建卡 + 接信号 + 登记进 `_cards`（许愿找卡全靠这张表）。
+func _card_cell(d) -> Control:
+	var ship: Dictionary = d
+	var key := StringName(ship.get("ship_key", &""))
+	var star := clampi(int(ship.get("star", 1)), 1, 3)
+	var w := _build_card(ship, star)
+	var root: PanelContainer = w["root"]
+	root.gui_input.connect(_on_card_input.bind(key, star))
+	_cards[_card_id(key, star)] = w
+	return root
 
 
 ## 分段标题（★2 那一段）：两条细线夹一行金字，与鸣谢面板的段头同版式。
