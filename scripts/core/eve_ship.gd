@@ -104,9 +104,22 @@ var body: EveDestinyMotion.Body = null
 # --- 三层血量 ---
 var hp: Dictionary = {&"shield": 0.0, &"armor": 0.0, &"hull": 0.0}
 var max_hp: Dictionary = {&"shield": 0.0, &"armor": 0.0, &"hull": 0.0}
+## ⚠️ 这里的**兜底值也必须是全 0**。
+##
+## 原来填的是 EVE 原生抗性（盾 0/20/40/50 · 甲 50/35/25/10）。那时它只是
+## 「还没 apply_stats 之前」的初始值，看起来无害 —— 但只要某艘船的 stats
+## 缺 `shield_resists` / `armor_resists`（新船表漏列、联机对端版本不一致、
+## 手搓测试单位…），`apply_stats()` 的 `.get()` 就会**静默回退到这一套**，
+## 「电磁打盾满伤、打甲只剩一半」的幽灵规则立刻复活，而且一条日志都没有。
+##
+## 现行口径见 `EveShipDatabase`「抗性全归 0」（2026-10-29 定案）：
+##   本作每艘船焊死一种武器，玩家没有「换弹种针对目标」这个动作，
+##   抗性退化成单向减伤税，只拉长 TTK。四类伤害分布 `PROFILE_*` 保留待用。
+##
+## ⛔ 别按 EVE 的直觉把数字填回来 —— 那不是遗漏，是故意的 0。
 var resists: Dictionary = {
-	&"shield": PackedFloat32Array([0.0, 0.2, 0.4, 0.5]),
-	&"armor": PackedFloat32Array([0.5, 0.35, 0.25, 0.1]),
+	&"shield": PackedFloat32Array([0.0, 0.0, 0.0, 0.0]),
+	&"armor": PackedFloat32Array([0.0, 0.0, 0.0, 0.0]),
 	&"hull": PackedFloat32Array([0.0, 0.0, 0.0, 0.0]),
 }
 
@@ -307,8 +320,10 @@ func apply_stats(stats: Dictionary) -> void:
 	hp[&"armor"] = max_hp[&"armor"]
 	hp[&"hull"] = max_hp[&"hull"]
 
-	resists[&"shield"] = stats.get("shield_resists", PackedFloat32Array([0.0, 0.2, 0.4, 0.5]))
-	resists[&"armor"] = stats.get("armor_resists", PackedFloat32Array([0.5, 0.35, 0.25, 0.1]))
+	# ⚠️ `.get()` 的默认值同样必须是全 0 —— 原因见 `resists` 声明处的注释：
+	#    缺字段时回退到 EVE 原生抗性会让「打盾高打甲低」悄悄复活。
+	resists[&"shield"] = stats.get("shield_resists", PackedFloat32Array([0.0, 0.0, 0.0, 0.0]))
+	resists[&"armor"] = stats.get("armor_resists", PackedFloat32Array([0.0, 0.0, 0.0, 0.0]))
 	resists[&"hull"] = stats.get("hull_resists", PackedFloat32Array([0.0, 0.0, 0.0, 0.0]))
 
 	passive_shield = float(stats.get("passive_shield", 0.0))
