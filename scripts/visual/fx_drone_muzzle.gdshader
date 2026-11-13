@@ -34,7 +34,10 @@ vec2 tile_uv(vec2 p, float frame) {
 	return (clamp(p, vec2(0.008), vec2(0.992)) + vec2(mod(frame, 4.0), floor(frame / 4.0))) / 4.0;
 }
 void fragment() {
-	if (age < 0.0 || age >= lifetime) { discard; }
+	// ⛔ 不用 discard —— 同 `fx_drone_contact`：Godot 4.7 D3D12 + Intel Arc 上
+	//    discard 会编译出发散分支并丢设备；blend_add + depth_draw_never 下
+	//    颜色压 0 与 discard 等价。（godotengine/godot#120857 / #118719）
+	float alive = (age < 0.0 || age >= lifetime) ? 0.0 : 1.0;
 	float k = clamp(age / lifetime, 0.0, 1.0);
 	vec2 p = UV * 2.0 - 1.0;
 	vec2 q = p - vec2(-0.30, 0.0);
@@ -86,6 +89,6 @@ void fragment() {
 		light = vec3(0.48, 0.09, 1.1) * halo * 0.16 + vec3(0.8, 0.65, 1.3) * (horizontal + vertical) * 0.18;
 		light *= exp(-k * 4.0);
 	}
-	ALBEDO = light * energy * outer_mask;
+	ALBEDO = light * energy * outer_mask * alive;
 	ALPHA = 1.0;
 }

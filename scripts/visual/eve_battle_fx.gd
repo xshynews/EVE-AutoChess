@@ -9,7 +9,19 @@ const BURST := preload("res://scripts/visual/fx_combat_burst.gdshader")
 const AURA := preload("res://scripts/visual/fx_combat_aura.gdshader")
 const EXHAUST := preload("res://scripts/visual/fx_missile_exhaust.gdshader")
 const MISSILE_IMPACT := preload("res://scripts/visual/eve_missile_impact.gd")
-const DRONE_SQUADRON := preload("res://scripts/visual/eve_drone_squadron.gd")
+## ⚠️ 无人机组件**目前没有接进正式对局**（只有 `deploy_drone_squadron()` 一个入口，
+##    全仓没有调用点）。这里刻意**不用 preload**：`eve_drone_squadron.gd` 顶部
+##    preload 了 `drone_models.gd`，而后者把 7 个 .obj + 28 张贴图全写成 preload
+##    （约 15MB）。preload 是编译期解析 ⇒ 每次进战斗场景都会连带加载这一整套，
+##    哪怕无人机一个都不出现。
+##    ⇒ 改成首次真正调用时才 load；等组件正式接入后再决定要不要换回 preload。
+static var _drone_squadron_cache: GDScript = null
+
+func _drone_squadron() -> GDScript:
+	if _drone_squadron_cache == null:
+		_drone_squadron_cache = load("res://scripts/visual/eve_drone_squadron.gd") as GDScript
+	return _drone_squadron_cache
+
 const DRONE_CONTACT := preload("res://scripts/visual/fx_drone_contact.gdshader")
 const ELECTRONIC := preload("res://scripts/visual/eve_electronic_fx.gd")
 const EXHAUST_NOISE := preload("res://assets/vfx/combat/scourge/caustic_05c.png")
@@ -1299,8 +1311,12 @@ func spawn_ship_destruction(visual: Node3D, tier: int = 3, seed_value: int = 1,
 func deploy_drone_squadron(source: Node3D, target: Node3D, model_index: int = 0) -> Node3D:
 	if not fx_enabled or not is_instance_valid(source) or not is_instance_valid(target):
 		return null
-	var group := _group(DRONE_SQUADRON.DURATION, "DroneSquadron")
-	var squadron := DRONE_SQUADRON.new()
+	var script := _drone_squadron()
+	# DURATION 走常量表而不是 `script.DURATION`：load() 回来的是 GDScript 资源，
+	# 运行时访问脚本常量只能通过 get_script_constant_map()。
+	var duration := float(script.get_script_constant_map().get("DURATION", 1.0))
+	var group := _group(duration, "DroneSquadron")
+	var squadron: Variant = script.new()
 	group.node.add_child(squadron)
 	squadron.configure(self, source, target, model_index)
 	group.drone_squadron = squadron

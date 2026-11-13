@@ -26,12 +26,21 @@ void vertex() {
 	MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
 }
 void fragment() {
+	// ⛔ 这里**不能**用 discard。Godot 4.7 的 D3D12 后端把 GLSL discard 编成
+	//    DXIL 发散分支，Intel Arc(Xe2) 上多个带 discard 的透明管线并存会直接
+	//    丢设备（DXGI_ERROR_DEVICE_REMOVED → 全屏黑）。上游 godotengine/godot
+	//    #120857 / #118719，修复 PR #122994 未进 4.7.2。
+	//    本材质是 blend_add + unshaded + depth_draw_never：把颜色压成 0 与
+	//    discard **视觉等价**（src.rgb=0 ⇒ 加 0），所以改用 alive 遮罩。
+	float alive = 1.0;
 	float t = age - delay;
-	if (t < 0.0 || t >= lifetime) { discard; }
+	if (t < 0.0 || t >= lifetime) { alive = 0.0; }
 	float k = t / lifetime;
 	float c = cos(rotation), s = sin(rotation);
 	vec2 p = mat2(vec2(c, s), vec2(-s, c)) * (UV - 0.5) + 0.5;
-	if (any(lessThan(p, vec2(0.0))) || any(greaterThan(p, vec2(1.0)))) { discard; }
+	// 旋转后落到图集外：用同一个遮罩代替第二个 discard。
+	// tile_uv() 内部已 clamp 到 [0.008, 0.992]，越界采样是安全的。
+	if (any(lessThan(p, vec2(0.0))) || any(greaterThan(p, vec2(1.0)))) { alive = 0.0; }
 	float frame = k * 32.0;
 	float f0 = floor(frame), f1 = min(f0 + 1.0, 63.0), blend = fract(frame);
 	vec2 v0 = texture(flow_atlas, tile_uv(p, f0)).rg * 2.0 - 1.0;
@@ -42,6 +51,6 @@ void fragment() {
 	float heat = max(texel.r, max(texel.g, texel.b));
 	float fade = (1.0 - smoothstep(0.35, 1.0, k)) * smoothstep(0.0, 0.006, t);
 	vec3 color = mix(vec3(0.46, 0.10, 1.0), vec3(1.25, 1.0, 1.5), smoothstep(0.35, 0.9, heat));
-	ALBEDO = color * heat * texel.a * fade * energy;
+	ALBEDO = color * heat * texel.a * fade * energy * alive;
 	ALPHA = 1.0;
 }
